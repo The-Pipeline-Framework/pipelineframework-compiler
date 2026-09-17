@@ -7,61 +7,61 @@
 
 package org.pipelineframework.proto;
 
-import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Descriptors.FieldDescriptor;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 
-/** Renders the shared generated schema into pipeline-local protobuf contracts. */
+/** Renders the shared protocol schema into pipeline-local protobuf contracts. */
 final class PayloadReferenceProtoSchema {
+    private static final String SCHEMA_RESOURCE = "/payload_reference_storage.proto";
+    private static final List<String> SHARED_MESSAGES = List.of("ConnectorPayloadOrigin", "PayloadReference");
+
     private PayloadReferenceProtoSchema() {
     }
 
     static void renderMessages(StringBuilder builder) {
-        renderMessage(builder, PayloadReferenceStorageProto.ConnectorPayloadOrigin.getDescriptor());
-        builder.append('\n');
-        renderMessage(builder, PayloadReferenceStorageProto.PayloadReference.getDescriptor());
-    }
-
-    private static void renderMessage(StringBuilder builder, Descriptor descriptor) {
-        builder.append("message ").append(descriptor.getName()).append(" {\n");
-        for (FieldDescriptor field : descriptor.getFields()) {
-            builder.append("  ");
-            if (field.isRepeated() && !field.isMapField()) {
-                builder.append("repeated ");
+        String schema = loadSchema();
+        for (int index = 0; index < SHARED_MESSAGES.size(); index++) {
+            if (index > 0) {
+                builder.append('\n');
             }
-            builder.append(field.isMapField() ? mapType(field) : type(field))
-                .append(' ')
-                .append(field.getName())
-                .append(" = ")
-                .append(field.getNumber())
-                .append(";\n");
+            builder.append(messageDeclaration(schema, SHARED_MESSAGES.get(index)));
         }
-        builder.append("}\n");
     }
 
-    private static String mapType(FieldDescriptor field) {
-        Descriptor entry = field.getMessageType();
-        return "map<" + type(entry.findFieldByName("key")) + ", " + type(entry.findFieldByName("value")) + ">";
+    private static String loadSchema() {
+        try (InputStream stream = PayloadReferenceProtoSchema.class.getResourceAsStream(SCHEMA_RESOURCE)) {
+            if (stream == null) {
+                throw new IllegalStateException("Missing shared protocol schema " + SCHEMA_RESOURCE);
+            }
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Cannot read shared protocol schema " + SCHEMA_RESOURCE, failure);
+        }
     }
 
-    private static String type(FieldDescriptor field) {
-        return switch (field.getType()) {
-            case BOOL -> "bool";
-            case BYTES -> "bytes";
-            case DOUBLE -> "double";
-            case ENUM -> field.getEnumType().getName();
-            case FIXED32 -> "fixed32";
-            case FIXED64 -> "fixed64";
-            case FLOAT -> "float";
-            case GROUP, MESSAGE -> field.getMessageType().getName();
-            case INT32 -> "int32";
-            case INT64 -> "int64";
-            case SFIXED32 -> "sfixed32";
-            case SFIXED64 -> "sfixed64";
-            case SINT32 -> "sint32";
-            case SINT64 -> "sint64";
-            case STRING -> "string";
-            case UINT32 -> "uint32";
-            case UINT64 -> "uint64";
-        };
+    private static String messageDeclaration(String schema, String messageName) {
+        String declaration = "message " + messageName;
+        int start = schema.indexOf(declaration);
+        if (start < 0) {
+            throw new IllegalStateException("Shared protocol schema does not declare " + messageName);
+        }
+        int openingBrace = schema.indexOf('{', start + declaration.length());
+        if (openingBrace < 0) {
+            throw new IllegalStateException("Shared protocol message has no body: " + messageName);
+        }
+        int depth = 0;
+        for (int index = openingBrace; index < schema.length(); index++) {
+            depth += switch (schema.charAt(index)) {
+                case '{' -> 1;
+                case '}' -> -1;
+                default -> 0;
+            };
+            if (depth == 0) {
+                return schema.substring(start, index + 1) + '\n';
+            }
+        }
+        throw new IllegalStateException("Shared protocol message has an unterminated body: " + messageName);
     }
 }
