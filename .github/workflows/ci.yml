@@ -19,5 +19,6 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+          cache-path: ${{ github.workspace }}/.m2/repository
       - name: Verify
         run: ./mvnw clean verify -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2/repository"
