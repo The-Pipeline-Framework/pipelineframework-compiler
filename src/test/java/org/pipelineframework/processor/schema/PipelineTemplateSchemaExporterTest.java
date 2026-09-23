@@ -477,6 +477,20 @@ class PipelineTemplateSchemaExporterTest {
     }
 
     @Test
+    void internalStepShapeIncludesPositivePagingLimit() {
+        JsonObject definitions = parse(PipelineTemplateSchemaExporter.schemaJson()).getAsJsonObject("$defs");
+        JsonObject properties = definitions.getAsJsonObject("delegatedOrInternalStep")
+            .getAsJsonObject("properties");
+
+        assertEquals("#/$defs/pagingConfig", properties.getAsJsonObject("paging").get("$ref").getAsString());
+        JsonObject paging = definitions.getAsJsonObject("pagingConfig");
+        assertEquals(1, paging.getAsJsonObject("properties")
+            .getAsJsonObject("maxRecords").get("minimum").getAsInt());
+        assertContains(paging.getAsJsonArray("required"), "maxRecords");
+        assertFalse(paging.get("additionalProperties").getAsBoolean());
+    }
+
+    @Test
     void branchAwareStepShapesExposeAcceptsAndTerminal() {
         JsonObject definitions = parse(PipelineTemplateSchemaExporter.schemaJson()).getAsJsonObject("$defs");
 
