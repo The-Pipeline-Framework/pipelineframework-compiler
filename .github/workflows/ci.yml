@@ -21,3 +21,13 @@ jobs:
           cache: maven
       - name: Verify
         run: ./mvnw clean verify -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2/repository"
+      - name: Publish compiler coverage report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compiler-coverage
+          path: |
+            target/site/jacoco/**
+            target/jacoco.exec
+          if-no-files-found: warn
+          retention-days: 14
