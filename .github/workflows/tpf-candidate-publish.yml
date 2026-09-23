@@ -1,0 +1,106 @@
+name: TPF Candidate Publish
+
+on:
+  workflow_run:
+    workflows: [TPF Candidate Build]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tpf-candidate-publish-${{ github.event.workflow_run.head_repository.full_name || github.event.workflow_run.repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.repository.full_name == 'The-Pipeline-Framework/pipelineframework-compiler' &&
+      vars.SYSTEM_TEST_APP_ID != '' &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'pull_request')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Download previously built candidate files
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v7.0.0
+        with:
+          name: tpf-candidate-build
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          path: candidate-build
+      - name: Read current pull request head
+        if: github.event.workflow_run.event == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=$(python3 -c 'import json; print(json.load(open("candidate-build/build-metadata.json"))["pullRequestNumber"])')
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > "$RUNNER_TEMP/current-pr.json"
+      - name: Validate build provenance, current PR, fork label, and Maven allowlist
+        env:
+          BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
+          BUILD_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          BUILD_RUN_EVENT: ${{ github.event.workflow_run.event }}
+          BUILD_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          BUILD_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          BUILD_RUN_PATH: ${{ github.event.workflow_run.path }}
+          BUILD_RUN_REPOSITORY: ${{ github.event.workflow_run.repository.full_name }}
+          BUILD_ASSOCIATED_PR_NUMBERS: ${{ toJSON(github.event.workflow_run.pull_requests.*.number) }}
+          CURRENT_PR_JSON: ${{ runner.temp }}/current-pr.json
+        run: bash scripts/validate-candidate-files.sh candidate-build "$CURRENT_PR_JSON"
+      - name: Create TPF system-test GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.0.6
+        with:
+          app-id: ${{ vars.SYSTEM_TEST_APP_ID }}
+          private-key: ${{ secrets.SYSTEM_TEST_APP_PRIVATE_KEY }}
+          owner: The-Pipeline-Framework
+          repositories: pipelineframework
+          permission-contents: write
+      - name: Set up Java and GitHub Packages authentication
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          server-id: github-candidates
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+      - name: Publish validated Maven files with deploy-file
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/publish-candidate-files.sh candidate-build
+      - name: Create final manifest and event
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: python3 scripts/finalize-candidate-manifest.py candidate-build
+      - name: Upload final candidate manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: tpf-candidate-manifest
+          path: candidate-build/candidate-manifest/candidate-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload final candidate event
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: tpf-candidate-event
+          path: candidate-build/candidate-event/event.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Dispatch candidate system test
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: gh api repos/The-Pipeline-Framework/pipelineframework/dispatches --input <(jq -n --slurpfile event candidate-build/candidate-event/event.json '{event_type:"tpf-candidate-v1",client_payload:$event[0]}')
