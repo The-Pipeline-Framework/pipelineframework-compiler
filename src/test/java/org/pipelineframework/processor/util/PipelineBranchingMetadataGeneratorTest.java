@@ -53,7 +53,7 @@ class PipelineBranchingMetadataGeneratorTest {
     Path tempDir;
 
     @Test
-    void writesGeneratedClientRuntimeClassForExplicitV3RootWhenLegacyFlagIsFalse() throws IOException {
+    void writesAuthoredRuntimeClassForDirectV3RootWithoutGeneratedClient() throws IOException {
         Path classOutput = tempDir.resolve("class-output-v3-root");
         ProcessingEnvironment processingEnv = mock(ProcessingEnvironment.class);
         when(processingEnv.getOptions()).thenReturn(Map.of());
@@ -65,8 +65,20 @@ class PipelineBranchingMetadataGeneratorTest {
         PipelineTemplateConfig template = mock(PipelineTemplateConfig.class);
         when(template.dialect()).thenReturn(PipelineTemplateDialect.V3);
         ctx.setPipelineTemplateConfig(template);
+        ctx.setGeneratedRootPipelineStepClasses(List.of("com.example.caseapp.RecordCaseRevisionService"));
         ctx.setStepModels(List.of(
-            stepModel("RecordCaseRevision", "com.example.caseapp", "AcceptedCaseRevision", "AcceptedCaseRevision")));
+            stepModel(
+                "RecordCaseRevision",
+                "com.example.caseapp",
+                "AcceptedCaseRevision",
+                "AcceptedCaseRevision",
+                Set.of(GenerationTarget.GRPC_SERVICE_SIDE_EFFECT_ONLY)),
+            stepModel(
+                "RecordCaseRevision",
+                "com.example.caseapp",
+                "AcceptedCaseRevision",
+                "AcceptedCaseRevision",
+                Set.of(GenerationTarget.LOCAL_CLIENT_STEP))));
         ctx.setBranchingPlan(new PipelineBranchingPlan(
             true,
             0,
@@ -85,7 +97,7 @@ class PipelineBranchingMetadataGeneratorTest {
         JsonObject metadata = new Gson().fromJson(
             Files.readString(classOutput.resolve("META-INF/pipeline/branching.json")), JsonObject.class);
         assertEquals(
-            "com.example.caseapp.pipeline.RecordCaseRevisionLocalClientStep",
+            "com.example.caseapp.RecordCaseRevisionService",
             metadata.getAsJsonArray("steps").get(0).getAsJsonObject().get("runtimeStepClass").getAsString());
     }
 

@@ -30,6 +30,7 @@ import org.pipelineframework.processor.ir.PipelineStepModel;
 import org.pipelineframework.processor.ir.StepDefinition;
 import org.pipelineframework.processor.phase.NamingPolicy;
 import org.pipelineframework.processor.util.ClientStepClassNames;
+import org.pipelineframework.processor.util.RuntimeStepClassNames;
 
 /** Generates the local CDI realization selected from compiler-owned invocation bindings. */
 public final class LocalPipelineInvocationRenderer {
@@ -164,23 +165,9 @@ public final class LocalPipelineInvocationRenderer {
             PipelineStepModel model = ctx.getStepModels().stream()
                 .filter(candidate -> candidate.serviceName().equals(toYamlServiceName(root.name())))
                 .findFirst().orElseThrow(() -> new IllegalStateException("No generated root step model for '" + root.name() + "'."));
-            if (hasGeneratedClient(model)) {
-                classes.add(ClientStepClassNames.className(model, ctx.getTransportMode()));
-            } else if (model.serviceClassName() != null) {
-                classes.add(model.serviceClassName().canonicalName());
-            } else {
-                throw new IllegalStateException("No local runtime class for root step '" + root.name() + "'.");
-            }
+            classes.add(RuntimeStepClassNames.className(model, ctx.getTransportMode()));
         }
         return List.copyOf(classes);
-    }
-
-    private boolean hasGeneratedClient(PipelineStepModel model) {
-        return model.enabledTargets().contains(GenerationTarget.LOCAL_CLIENT_STEP)
-            || model.enabledTargets().contains(GenerationTarget.DEFERRED_COMPLETION_STEP)
-            || model.enabledTargets().contains(GenerationTarget.COMMAND_CLIENT_STEP)
-            || model.enabledTargets().contains(GenerationTarget.QUERY_CLIENT_STEP)
-            || model.enabledTargets().contains(GenerationTarget.DYNAMIC_OPERATION_CLIENT_STEP);
     }
 
     private StepDefinition invocationCallsite(PipelineCompilationContext ctx, PipelineInvocationBinding binding) {
