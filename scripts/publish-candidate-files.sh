@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root=${1:?usage: publish-candidate-files.sh CANDIDATE_FILES}
+root_arg=${1:?usage: publish-candidate-files.sh CANDIDATE_FILES}
+root=$(cd "$root_arg" && pwd)
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 repository="$root/repository"
 version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["candidateVersion"])' "$root/build-metadata.json")
