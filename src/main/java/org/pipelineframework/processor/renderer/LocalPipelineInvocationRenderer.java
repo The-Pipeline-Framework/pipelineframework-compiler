@@ -165,7 +165,8 @@ public final class LocalPipelineInvocationRenderer {
             PipelineStepModel model = ctx.getStepModels().stream()
                 .filter(candidate -> candidate.serviceName().equals(toYamlServiceName(root.name())))
                 .findFirst().orElseThrow(() -> new IllegalStateException("No generated root step model for '" + root.name() + "'."));
-            classes.add(RuntimeStepClassNames.className(model, ctx.getTransportMode()));
+            classes.add(RuntimeStepClassNames.className(
+                model, ctx.getTransportMode(), ctx.isOrchestratorGenerated()));
         }
         return List.copyOf(classes);
     }
