@@ -41,7 +41,9 @@ for coordinate in "${coordinates[@]}"; do
       org.apache.maven.plugins:maven-dependency-plugin:3.8.1:get \
       "-Dartifact=$group_id:$artifact_id:$version:pom" -Dtransitive=false >"$log" 2>&1; then
     if grep -Fq "Could not find artifact $group_id:$artifact_id:pom:$version in github-candidates" "$log" \
-      || grep -Fq "Could not find artifact $group_id:$artifact_id:$version:pom in github-candidates" "$log"; then
+      || grep -Fq "Could not find artifact $group_id:$artifact_id:$version:pom in github-candidates" "$log" \
+      || { grep -Fq "artifacts could not be resolved: $group_id:$artifact_id:pom:$version (absent)" "$log" \
+        && grep -Fq "$group_id:$artifact_id:pom:$version was not found in " "$log"; }; then
       existing=false
     else
       cat "$log" >&2
