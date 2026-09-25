@@ -87,7 +87,7 @@ public class PipelineSemanticAnalysisPhase implements PipelineCompilationPhase {
         // This phase focuses on semantic analysis without building bindings or calling renderers
     }
 
-    private void validatePaging(PipelineCompilationContext ctx) {
+    void validatePaging(PipelineCompilationContext ctx) {
         if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
             || config.steps() == null) {
             return;
@@ -155,7 +155,8 @@ public class PipelineSemanticAnalysisPhase implements PipelineCompilationPhase {
             || isResolvable(ctx, delegateType)
             || isResolvable(ctx, boundaryType);
         if (!candidateResolved) {
-            throw new IllegalStateException("paged source service could not be resolved: " + delegateType);
+            // A downstream module can compile the shared pipeline YAML without owning the source service class.
+            return;
         }
         if (!isAssignable(ctx, sourceType, contract)
             && !isAssignable(ctx, delegateType, contract)
