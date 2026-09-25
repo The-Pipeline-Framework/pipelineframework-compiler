@@ -150,15 +150,16 @@ public class PipelineSemanticAnalysisPhase implements PipelineCompilationPhase {
         String boundaryType = ctx.getResolvedProviderBoundary(source.name())
             .map(boundary -> boundary.boundary().serviceTypeName())
             .orElse(sourceType);
-        boolean boundaryMatchesSource = boundaryType.equals(sourceType) || boundaryType.equals(delegateType);
         String contract = "org.pipelineframework.paging.PagedSourceOperation";
         boolean candidateResolved = isResolvable(ctx, sourceType)
             || isResolvable(ctx, delegateType)
-            || (boundaryMatchesSource && isResolvable(ctx, boundaryType));
-        if (candidateResolved
-            && !isAssignable(ctx, sourceType, contract)
+            || isResolvable(ctx, boundaryType);
+        if (!candidateResolved) {
+            throw new IllegalStateException("paged source service could not be resolved: " + delegateType);
+        }
+        if (!isAssignable(ctx, sourceType, contract)
             && !isAssignable(ctx, delegateType, contract)
-            && (!boundaryMatchesSource || !isAssignable(ctx, boundaryType, contract))) {
+            && !isAssignable(ctx, boundaryType, contract)) {
             throw new IllegalStateException("paged source service must implement " + contract
                 + ": " + delegateType);
         }
