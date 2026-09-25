@@ -35,6 +35,7 @@ import org.pipelineframework.processor.composition.PipelineReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -150,6 +151,32 @@ class PipelineOrderMetadataGeneratorTest {
                 "com.example.pipeline.PersistLocalClientStep",
                 "com.example.pipeline.PersistenceOutputSideEffectLocalClientStep"),
             order.asList().stream().map(element -> element.getAsString()).toList());
+    }
+
+    @Test
+    void explicitRootOrderRejectsRootOwnedSideEffectWithoutAnOwnedRootStep() throws IOException {
+        Path classOutput = tempDir.resolve("class-output-missing-root-side-effect");
+        Path moduleDir = tempDir.resolve("module-missing-root-side-effect");
+        Files.createDirectories(moduleDir);
+        ProcessingEnvironment processingEnv = mock(ProcessingEnvironment.class);
+        when(processingEnv.getOptions()).thenReturn(java.util.Map.of());
+        when(processingEnv.getFiler()).thenReturn(new PathResourceFiler(classOutput));
+        PipelineCompilationContext ctx = new PipelineCompilationContext(
+            processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        ctx.setTransportMode(PipelineTransport.LOCAL);
+        ctx.setOrchestratorGenerated(true);
+        ctx.setModuleDir(moduleDir);
+        ctx.setGeneratedRootPipelineStepClasses(List.of("com.example.pipeline.PipelineInvocation_deadbeef"));
+        ctx.setStepModels(List.of(
+            localModel("Detached", "DetachedService", false),
+            localModel("ObserveDetached", "PersistenceDetachedSideEffectService", true,
+                AspectPosition.AFTER_STEP)));
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+            () -> new PipelineOrderMetadataGenerator(processingEnv).writeOrderMetadata(ctx));
+
+        assertTrue(failure.getMessage().contains("missing generated side-effect client steps"));
+        assertTrue(failure.getMessage().contains("PersistenceDetachedSideEffectLocalClientStep"));
     }
 
     @Test

@@ -25,6 +25,7 @@ import org.pipelineframework.config.pipeline.PipelineYamlStep;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.AspectExpansionProcessor;
 import org.pipelineframework.processor.ResolvedStep;
+import org.pipelineframework.processor.ir.DeploymentRole;
 import org.pipelineframework.processor.ir.GenerationTarget;
 import org.pipelineframework.processor.ir.PipelineStepModel;
 import org.pipelineframework.processor.ir.PipelineTransport;
@@ -85,7 +86,7 @@ public final class PipelineBranchingMetadataGenerator {
                 entry.getKey().logicalId(), steps);
             appendSideEffectDescriptors(
                 ctx,
-                withSyntheticAspects(ctx, childModels),
+                definitionExecutionModels(ctx, entry.getKey(), childModels),
                 true,
                 entry.getKey().logicalId(),
                 entry.getValue().terminalStepIndex(),
@@ -104,6 +105,18 @@ public final class PipelineBranchingMetadataGenerator {
                 writer.write(gson.toJson(metadata));
             }
         }
+    }
+
+    private List<PipelineStepModel> definitionExecutionModels(
+        PipelineCompilationContext ctx,
+        PipelineReference definition,
+        List<PipelineStepModel> authoredModels
+    ) {
+        List<PipelineStepModel> expanded = ctx.getStepModels().stream()
+            .filter(model -> model.deploymentRole() == DeploymentRole.ORCHESTRATOR_CLIENT)
+            .filter(model -> definition.equals(model.definition()))
+            .toList();
+        return expanded.isEmpty() ? withSyntheticAspects(ctx, authoredModels) : expanded;
     }
 
     private List<PipelineStepModel> withSyntheticAspects(

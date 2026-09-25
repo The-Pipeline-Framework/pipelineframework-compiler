@@ -4,8 +4,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -20,7 +18,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import org.pipelineframework.config.pipeline.*;
 import org.pipelineframework.processor.PipelineCompilationContext;
-import org.pipelineframework.processor.ir.AspectPosition;
+import org.pipelineframework.processor.composition.PipelineReference;
 import org.pipelineframework.processor.ir.DeploymentRole;
 import org.pipelineframework.processor.ir.GenerationTarget;
 import org.pipelineframework.processor.ir.PipelineStepModel;
@@ -89,9 +87,13 @@ public class PipelineOrderMetadataGenerator {
             return;
         }
 
-        List<String> expanded = weaveGeneratedSideEffects(ctx, ordered);
+        List<String> expanded = new GeneratedExecutionOrderResolver().weave(
+            ctx, new PipelineReference("$root"), ordered,
+            ctx.isOrchestratorGenerated());
         if (expanded.isEmpty()) {
             expanded = PipelineOrderExpander.expand(ordered, config, null);
+        } else {
+            expanded = List.copyOf(new LinkedHashSet<>(expanded));
         }
         if (expanded == null || expanded.isEmpty()) {
             return;
@@ -116,80 +118,6 @@ public class PipelineOrderMetadataGenerator {
         }
     }
 
-    private List<String> weaveGeneratedSideEffects(
-            PipelineCompilationContext ctx, List<String> orderedFunctionalSteps) {
-        List<PipelineStepModel> clientModels = ctx.getStepModels().stream()
-            .filter(model -> model.deploymentRole() == DeploymentRole.ORCHESTRATOR_CLIENT)
-            .filter(model -> "$root".equals(model.definition().logicalId()))
-            .toList();
-        if (clientModels.stream().noneMatch(PipelineStepModel::sideEffect)
-            && clientModels.stream().noneMatch(this::hasDeferredCompletion)) {
-            return List.of();
-        }
-        Map<String, Deque<GeneratedStepGroup>> groupsByFunctionalStep = new LinkedHashMap<>();
-        List<String> pendingBefore = new ArrayList<>();
-        GeneratedStepGroup current = null;
-        for (PipelineStepModel model : clientModels) {
-            if (model.sideEffect()) {
-                String sideEffect = ClientStepClassNames.className(model, ctx.getTransportMode());
-                if (model.aspectPosition().filter(position -> position == AspectPosition.BEFORE_STEP).isPresent()
-                    || current == null) {
-                    pendingBefore.add(sideEffect);
-                } else {
-                    current.after().add(sideEffect);
-                }
-            } else {
-                String orderIdentity = ctx.isOrchestratorGenerated()
-                    ? ClientStepClassNames.className(model, ctx.getTransportMode())
-                    : localExecutionStepName(model, ctx.getTransportMode());
-                String operationStep = hasDeferredCompletion(model)
-                    ? ordinaryOperationClientStepName(model, ctx.getTransportMode())
-                    : orderIdentity;
-                String completionStep = hasDeferredCompletion(model) ? orderIdentity : "";
-                current = new GeneratedStepGroup(
-                    List.copyOf(pendingBefore), operationStep, new ArrayList<>(), completionStep);
-                pendingBefore.clear();
-                groupsByFunctionalStep.computeIfAbsent(orderIdentity, ignored -> new ArrayDeque<>()).add(current);
-            }
-        }
-        if (!pendingBefore.isEmpty()) {
-            // A side-effect-only context has no functional model to weave around. Preserve the
-            // existing YAML expansion fallback used by explicit root orders in that case.
-            if (groupsByFunctionalStep.isEmpty()) {
-                return List.of();
-            }
-            throw new IllegalStateException(
-                "Generated aspect order ends with before-step side effects without a functional step");
-        }
-
-        List<String> expanded = new ArrayList<>();
-        for (String functionalStep : orderedFunctionalSteps) {
-            Deque<GeneratedStepGroup> groups = groupsByFunctionalStep.get(functionalStep);
-            if (groups == null || groups.isEmpty()) {
-                // Statically linked named-pipeline invocation beans are root steps but do not have
-                // their own PipelineStepModel. They are already complete ordered child definitions.
-                expanded.add(functionalStep);
-                continue;
-            }
-            GeneratedStepGroup group = groups.removeFirst();
-            expanded.addAll(group.before());
-            expanded.add(group.operation());
-            expanded.addAll(group.after());
-            if (!group.completion().isBlank()) {
-                expanded.add(group.completion());
-            }
-        }
-        return List.copyOf(new LinkedHashSet<>(expanded));
-    }
-
-    private record GeneratedStepGroup(
-        List<String> before,
-        String operation,
-        List<String> after,
-        String completion
-    ) {
-    }
-
     private boolean hasDeferredCompletion(PipelineStepModel model) {
         return model.enabledTargets().contains(GenerationTarget.DEFERRED_COMPLETION_STEP);
     }
@@ -208,9 +136,13 @@ public class PipelineOrderMetadataGenerator {
         if (processingEnv == null) {
             return;
         }
-        List<String> expanded = weaveGeneratedSideEffects(ctx, List.copyOf(rootSteps));
+        List<String> expanded = new GeneratedExecutionOrderResolver().weave(
+            ctx, new PipelineReference("$root"),
+            List.copyOf(rootSteps), ctx.isOrchestratorGenerated());
         if (expanded.isEmpty()) {
             expanded = List.copyOf(rootSteps);
+        } else {
+            expanded = List.copyOf(new LinkedHashSet<>(expanded));
         }
         PipelineYamlConfig config = loadPipelineConfig(ctx);
         if (config != null) {
