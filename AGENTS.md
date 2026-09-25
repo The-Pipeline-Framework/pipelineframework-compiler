@@ -8,12 +8,15 @@ Owner-local verification is the first gate. `.github/tpf-system-tests.json` owns
 `TPF Candidate Build` and the trusted publisher create an immutable, commit-specific compiler candidate;
 `tpf/system-tests` records downstream evidence on that exact source SHA.
 
-For a coordinated compiler/runtime or contracts/compiler change, wait for `TPF Candidate Publish` to succeed for
-the current head SHA of every participating pull request. Then run `TPF System Tests — Compatibility Set` in
-`The-Pipeline-Framework/pipelineframework` with one stable set ID and the pull-request URLs. Any new commit
-invalidates the previous set: wait for its new candidate publisher and dispatch again. Require the same
-`tpf/system-tests` success on every participating SHA. Do not substitute snapshots, branch heads, source checkouts
-or a composite Maven reactor. See the canonical
+For an ordinary single-repository pull request, use the candidate publisher and singleton system-test path above.
+For a coordinated contracts/compiler/runtime change, do **not** wait for participating candidate publishers and do
+not merge or publish snapshots one repository at a time. Manually run
+[`TPF System Tests — Compatibility Set`](https://github.com/The-Pipeline-Framework/pipelineframework/actions/workflows/system-test-compatibility-set.yml)
+with one stable set ID and 2–10 pull-request URLs, one per line. The coordinator pins each PR head and tested merge
+commit, builds participating Maven reactors in dependency order into one isolated repository, and runs one product
+test over the resulting set. A new commit invalidates that PR's result: rerun the same set ID with the current URLs.
+Require the same `tpf/system-tests` success on every participating SHA. Do not substitute snapshots, branch heads,
+source checkouts or a composite Maven reactor. See the canonical
 [cross-repository system-test runbook](https://github.com/The-Pipeline-Framework/pipelineframework/blob/main/docs/evolve/cross-repository-system-tests.md).
 
 Repository setup requires repository-scoped dispatch credentials. If the workflow exposes them as
