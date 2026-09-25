@@ -134,17 +134,52 @@ public class PipelineSemanticAnalysisPhase implements PipelineCompilationPhase {
             "paged object output mapper");
         List<PipelineStepModel> models = ctx.getStepModels();
         if (models == null || models.isEmpty()) {
-            throw new IllegalStateException("paging requires a resolved source step");
+            return;
         }
-        PipelineStepModel sourceModel = models.getFirst();
-        String sourceType = sourceModel.delegateService() != null
-            ? sourceModel.delegateService().canonicalName()
-            : sourceModel.serviceClassName().canonicalName();
-        requireAssignable(
-            ctx,
-            sourceType,
-            "org.pipelineframework.paging.PagedSourceOperation",
-            "paged source service");
+        var resolvedSourceModel = models.stream()
+            .filter(model -> model.serviceName().equals(toYamlServiceName(source.name())))
+            .findFirst();
+        if (resolvedSourceModel.isEmpty()) {
+            return;
+        }
+        PipelineStepModel sourceModel = resolvedSourceModel.orElseThrow();
+        String sourceType = sourceModel.serviceClassName().canonicalName();
+        String delegateType = sourceModel.delegateService() == null
+            ? sourceType
+            : sourceModel.delegateService().canonicalName();
+        String boundaryType = ctx.getResolvedProviderBoundary(source.name())
+            .map(boundary -> boundary.boundary().serviceTypeName())
+            .orElse(sourceType);
+        boolean boundaryMatchesSource = boundaryType.equals(sourceType) || boundaryType.equals(delegateType);
+        String contract = "org.pipelineframework.paging.PagedSourceOperation";
+        boolean candidateResolved = isResolvable(ctx, sourceType)
+            || isResolvable(ctx, delegateType)
+            || (boundaryMatchesSource && isResolvable(ctx, boundaryType));
+        if (candidateResolved
+            && !isAssignable(ctx, sourceType, contract)
+            && !isAssignable(ctx, delegateType, contract)
+            && (!boundaryMatchesSource || !isAssignable(ctx, boundaryType, contract))) {
+            throw new IllegalStateException("paged source service must implement " + contract
+                + ": " + delegateType);
+        }
+    }
+
+    private boolean isResolvable(PipelineCompilationContext ctx, String typeName) {
+        return ctx.getProcessingEnv().getElementUtils().getTypeElement(typeName) != null;
+    }
+
+    private static String toYamlServiceName(String stepName) {
+        String formatted = NamingPolicy.formatForClassName(NamingPolicy.stripProcessPrefix(stepName));
+        return formatted == null || formatted.isBlank() ? "ProcessStepService" : "Process" + formatted + "Service";
+    }
+
+    private boolean isAssignable(PipelineCompilationContext ctx, String implementationName, String contractName) {
+        TypeElement implementation = ctx.getProcessingEnv().getElementUtils().getTypeElement(implementationName);
+        TypeElement contract = ctx.getProcessingEnv().getElementUtils().getTypeElement(contractName);
+        return implementation != null && contract != null
+            && ctx.getProcessingEnv().getTypeUtils().isAssignable(
+                ctx.getProcessingEnv().getTypeUtils().erasure(implementation.asType()),
+                ctx.getProcessingEnv().getTypeUtils().erasure(contract.asType()));
     }
 
     private void requireAssignable(

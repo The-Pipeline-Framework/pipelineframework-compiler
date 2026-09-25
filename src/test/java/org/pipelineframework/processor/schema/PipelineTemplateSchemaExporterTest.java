@@ -483,6 +483,7 @@ class PipelineTemplateSchemaExporterTest {
             .getAsJsonObject("properties");
 
         assertEquals("#/$defs/pagingConfig", properties.getAsJsonObject("paging").get("$ref").getAsString());
+        assertContains(properties.getAsJsonObject("cardinality").getAsJsonArray("enum"), "ONE_TO_MANY");
         JsonObject paging = definitions.getAsJsonObject("pagingConfig");
         assertEquals(1, paging.getAsJsonObject("properties")
             .getAsJsonObject("maxRecords").get("minimum").getAsInt());
