@@ -15,20 +15,30 @@ discovery, semantic phases, validation, renderers, processor registration, and c
 - Shared API, DSL, semantic model, runtime protocol, and representation-provider types are released dependencies.
   Do not mirror their source here.
 
-## Cross-repository changes
+## Cross-repository system tests
 
-Update canonical documentation or an ADR in `pipelineframework` when a change alters authored syntax, semantic
-ownership, generated contracts, or compiler/runtime compatibility. Use the GitNexus `tpf` group for cross-repository
-impact and verify findings in the owning worktree.
+Owner-local verification is the first gate. `.github/tpf-system-tests.json` owns the stable compiler suite command.
+`TPF Candidate Build` and the trusted publisher create an immutable, commit-specific compiler candidate;
+`tpf/system-tests` records downstream evidence on that exact source SHA.
 
-## Build and publication
+For an ordinary single-repository pull request, use the candidate publisher and singleton system-test path above.
+For a coordinated contracts/compiler/runtime change, do **not** wait for participating candidate publishers and do
+not merge or publish snapshots one repository at a time. Manually run
+[`TPF System Tests — Compatibility Set`](https://github.com/The-Pipeline-Framework/pipelineframework/actions/workflows/system-test-compatibility-set.yml)
+with one stable set ID and 2–10 pull-request URLs, one per line. The coordinator pins each PR head and tested merge
+commit, builds participating Maven reactors in dependency order into one isolated repository, and runs one product
+test over the resulting set. A new commit invalidates that PR's result: rerun the same set ID with the current URLs.
+Require the same `tpf/system-tests` success on every participating SHA. Do not substitute snapshots, branch heads,
+source checkouts or a composite Maven reactor. See the canonical
+[cross-repository system-test runbook](https://github.com/The-Pipeline-Framework/pipelineframework/blob/main/docs/evolve/cross-repository-system-tests.md).
 
-Owner-local verification is the first gate. `TPF Candidate Build` and the trusted publisher create an immutable,
-commit-specific compiler candidate for the coordination repository; `tpf/system-tests` records downstream evidence
-on that exact source SHA. Use a compatibility set for coordinated repository changes, and require a green full
-train for formal BOM or release promotion. Keep the stable owner suite command in `.github/tpf-system-tests.json`.
+Repository setup requires repository-scoped dispatch credentials. If the workflow exposes them as
+`SYSTEM_TEST_APP_ID` and `SYSTEM_TEST_APP_PRIVATE_KEY`, they must belong to a dispatch-only App installed solely on
+`pipelineframework`, never the coordinator App. The trusted publisher uses the repository `GITHUB_TOKEN` with
+`packages: write`; fork publication additionally requires the
+`safe-to-system-test` label. Never expose publication, dispatch or status credentials to owner-suite jobs.
 
-Always use the repository-local Maven cache:
+Always use an isolated Maven local repository for Maven commands:
 
 ```sh
 ./mvnw <goals> -Dmaven.repo.local="$PWD/.m2/repository"

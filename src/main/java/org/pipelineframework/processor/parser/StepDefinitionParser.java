@@ -116,6 +116,7 @@ public class StepDefinitionParser {
         "accepts",
         "terminal",
         "pipeline",
+        "paging",
         "runOnVirtualThreads");
     private final BiConsumer<Diagnostic.Kind, String> diagnosticReporter;
     private final String legacyInternalPackageSuffix;

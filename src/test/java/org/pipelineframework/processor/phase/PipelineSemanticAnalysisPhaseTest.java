@@ -2,6 +2,7 @@ package org.pipelineframework.processor.phase;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import javax.annotation.processing.Messager;
 import javax.annotation.processing.ProcessingEnvironment;
@@ -20,6 +21,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.pipelineframework.config.PlatformMode;
+import org.pipelineframework.config.boundary.PipelineObjectOutputConfig;
+import org.pipelineframework.config.boundary.PipelineObjectPublishConfig;
+import org.pipelineframework.config.boundary.PipelineOutputBoundaryConfig;
+import org.pipelineframework.config.pipeline.PipelineStepPaging;
+import org.pipelineframework.config.template.PipelineTemplateConfig;
+import org.pipelineframework.config.template.PipelineTemplateStep;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.ir.DeploymentRole;
 import org.pipelineframework.processor.ir.ExecutionMode;
@@ -172,6 +179,62 @@ public class PipelineSemanticAnalysisPhaseTest {
         phase.execute(context);
 
         verify(messager, never()).printMessage(eq(Diagnostic.Kind.ERROR), any());
+    }
+
+    @Test
+    public void pagingAllowsSourceServiceOwnedByAnotherModule() {
+        Elements elementUtils = mock(Elements.class);
+        Types typeUtils = mock(Types.class);
+        when(processingEnv.getElementUtils()).thenReturn(elementUtils);
+        when(processingEnv.getTypeUtils()).thenReturn(typeUtils);
+
+        TypeElement mapper = mock(TypeElement.class);
+        TypeElement mapperContract = mock(TypeElement.class);
+        DeclaredType mapperType = mock(DeclaredType.class);
+        DeclaredType mapperContractType = mock(DeclaredType.class);
+        when(elementUtils.getTypeElement("com.example.PaymentMapper")).thenReturn(mapper);
+        when(elementUtils.getTypeElement(
+            "org.pipelineframework.objectpublish.PagedStreamingObjectPublishMapper"))
+            .thenReturn(mapperContract);
+        when(mapper.asType()).thenReturn(mapperType);
+        when(mapperContract.asType()).thenReturn(mapperContractType);
+        when(typeUtils.erasure(mapperType)).thenReturn(mapperType);
+        when(typeUtils.erasure(mapperContractType)).thenReturn(mapperContractType);
+        when(typeUtils.isAssignable(mapperType, mapperContractType)).thenReturn(true);
+
+        PipelineTemplateStep source = mock(PipelineTemplateStep.class);
+        when(source.name()).thenReturn("Csv Payments Input");
+        when(source.cardinality()).thenReturn("ONE_TO_MANY");
+        when(source.paging()).thenReturn(Optional.of(new PipelineStepPaging(1_000)));
+        PipelineObjectPublishConfig target = mock(PipelineObjectPublishConfig.class);
+        when(target.provider()).thenReturn("filesystem");
+        PipelineOutputBoundaryConfig output = mock(PipelineOutputBoundaryConfig.class);
+        when(output.object()).thenReturn(new PipelineObjectOutputConfig(
+            "payments", "com.example.Payment", "Payment", "com.example.PaymentMapper"));
+        PipelineTemplateConfig config = mock(PipelineTemplateConfig.class);
+        when(config.steps()).thenReturn(List.of(source));
+        when(config.publish()).thenReturn(Map.of("payments", target));
+        when(config.output()).thenReturn(output);
+
+        PipelineStepModel sourceModel = new PipelineStepModel.Builder()
+            .serviceName("ProcessCsvPaymentsInputService")
+            .generatedName("ProcessCsvPaymentsInputService")
+            .servicePackage("org.pipelineframework.csv.service")
+            .serviceClassName(ClassName.get(
+                "org.pipelineframework.csv.service", "ProcessCsvPaymentsInputService"))
+            .streamingShape(StreamingShape.UNARY_STREAMING)
+            .executionMode(ExecutionMode.DEFAULT)
+            .deploymentRole(DeploymentRole.PIPELINE_SERVER)
+            .enabledTargets(Set.of(GenerationTarget.LOCAL_CLIENT_STEP))
+            .inputMapping(TypeMapping.withoutMapper(ClassName.get("com.example", "Input")))
+            .outputMapping(TypeMapping.withoutMapper(ClassName.get("com.example", "Payment")))
+            .build();
+        PipelineCompilationContext context = new PipelineCompilationContext(
+            processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        context.setPipelineTemplateConfig(config);
+        context.setStepModels(List.of(sourceModel));
+
+        assertDoesNotThrow(() -> phase.validatePaging(context));
     }
 
     @Test

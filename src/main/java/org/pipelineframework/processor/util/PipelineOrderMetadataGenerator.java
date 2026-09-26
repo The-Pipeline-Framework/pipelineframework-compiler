@@ -141,7 +141,7 @@ public class PipelineOrderMetadataGenerator {
             } else {
                 String orderIdentity = ctx.isOrchestratorGenerated()
                     ? ClientStepClassNames.className(model, ctx.getTransportMode())
-                    : localExecutionStepName(model);
+                    : localExecutionStepName(model, ctx.getTransportMode());
                 String operationStep = hasDeferredCompletion(model)
                     ? ordinaryOperationClientStepName(model, ctx.getTransportMode())
                     : orderIdentity;
@@ -343,7 +343,7 @@ public class PipelineOrderMetadataGenerator {
             if (model.sideEffect() || model.serviceClassName() == null) {
                 continue;
             }
-            ordered.add(localExecutionStepName(model));
+            ordered.add(localExecutionStepName(model, ctx.getTransportMode()));
         }
         return new ArrayList<>(ordered);
     }
@@ -354,29 +354,13 @@ public class PipelineOrderMetadataGenerator {
             if (model.sideEffect() || model.serviceClassName() == null) {
                 continue;
             }
-            identities.putIfAbsent(localExecutionStepName(model), model.serviceName());
+            identities.putIfAbsent(localExecutionStepName(model, ctx.getTransportMode()), model.serviceName());
         }
         return identities;
     }
 
-    private String localExecutionStepName(PipelineStepModel model) {
-        if (model.enabledTargets().contains(GenerationTarget.DEFERRED_COMPLETION_STEP)) {
-            return specialLocalClientStepName(model, "DeferredCompletionStep");
-        }
-        if (model.enabledTargets().contains(GenerationTarget.COMMAND_CLIENT_STEP)) {
-            return specialLocalClientStepName(model, "CommandClientStep");
-        }
-        if (model.enabledTargets().contains(GenerationTarget.QUERY_CLIENT_STEP)) {
-            return specialLocalClientStepName(model, "QueryClientStep");
-        }
-        if (model.enabledTargets().contains(GenerationTarget.DYNAMIC_OPERATION_CLIENT_STEP)) {
-            return specialLocalClientStepName(model, "DynamicOperationClientStep");
-        }
-        return model.serviceClassName().canonicalName();
-    }
-
-    private String specialLocalClientStepName(PipelineStepModel model, String suffix) {
-        return model.servicePackage() + ".pipeline." + stripTrailingService(model.generatedName()) + suffix;
+    private String localExecutionStepName(PipelineStepModel model, PipelineTransport transportMode) {
+        return RuntimeStepClassNames.className(model, transportMode);
     }
 
     private Set<String> resolveGeneratedOrderSteps(PipelineCompilationContext ctx) {
@@ -389,7 +373,7 @@ public class PipelineOrderMetadataGenerator {
                 if (hasDeferredCompletion(model)) {
                     generated.add(ordinaryOperationClientStepName(model, ctx.getTransportMode()));
                 }
-                generated.add(localExecutionStepName(model));
+                generated.add(localExecutionStepName(model, ctx.getTransportMode()));
             }
             return generated;
         }

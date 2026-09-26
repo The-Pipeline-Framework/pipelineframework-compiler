@@ -22,8 +22,6 @@ import org.pipelineframework.config.pipeline.PipelineYamlConfig;
 import org.pipelineframework.config.pipeline.PipelineYamlConfigLoader;
 import org.pipelineframework.config.pipeline.PipelineYamlConfigLocator;
 import org.pipelineframework.config.pipeline.PipelineYamlStep;
-import org.pipelineframework.config.template.PipelineTemplateConfig;
-import org.pipelineframework.config.template.PipelineTemplateDialect;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.AspectExpansionProcessor;
 import org.pipelineframework.processor.ResolvedStep;
@@ -65,7 +63,7 @@ public final class PipelineBranchingMetadataGenerator {
         List<StepMetadata> steps = new ArrayList<>();
         if (rootBranchAware) {
             appendPlan(ctx, rootPlan, indexModelsByStepName(orderedModels(ctx)),
-                usesGeneratedRootRuntime(ctx), "$root", steps);
+                ctx.isOrchestratorGenerated(), "$root", steps);
             appendSideEffectDescriptors(
                 ctx,
                 withSyntheticAspects(ctx, ctx.getStepModels()),
@@ -106,12 +104,6 @@ public final class PipelineBranchingMetadataGenerator {
                 writer.write(gson.toJson(metadata));
             }
         }
-    }
-
-    private boolean usesGeneratedRootRuntime(PipelineCompilationContext ctx) {
-        return ctx.isOrchestratorGenerated()
-            || ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-                && config.dialect() == PipelineTemplateDialect.V3;
     }
 
     private List<PipelineStepModel> withSyntheticAspects(
@@ -202,7 +194,7 @@ public final class PipelineBranchingMetadataGenerator {
         PipelineCompilationContext ctx,
         PipelineBranchingPlan plan,
         Map<String, PipelineStepModel> modelsByStepName,
-        boolean generatedLocalRuntime,
+        boolean requireGeneratedClient,
         String definitionId,
         List<StepMetadata> steps
     ) {
@@ -226,8 +218,11 @@ public final class PipelineBranchingMetadataGenerator {
                     + "' could not be matched to a runtime step model while generating branching metadata.");
                 continue;
             }
-            String runtimeStepClass = generatedLocalRuntime ? clientClass(model, ctx) : runtimeStepClass(model, ctx);
-            boolean transportMappedRuntime = usesTransportMappedRuntime(model, ctx);
+            Optional<String> resolvedRuntimeClass = resolvedRootRuntimeClass(ctx, definitionId, step.index());
+            String runtimeStepClass = RuntimeStepClassNames.className(
+                model, ctx.getTransportMode(), requireGeneratedClient, resolvedRuntimeClass);
+            boolean transportMappedRuntime = RuntimeStepClassNames.usesGeneratedClient(
+                model, requireGeneratedClient, resolvedRuntimeClass);
             String inputRuntimeClass = runtimeInputType(model, ctx, transportMappedRuntime).orElse(null);
             List<String> acceptedRuntimeClasses = step.acceptedDomainTypes().stream()
                 .map(type -> runtimeAcceptedType(type, ctx, transportMappedRuntime))
@@ -350,6 +345,18 @@ public final class PipelineBranchingMetadataGenerator {
             .toList();
     }
 
+    private Optional<String> resolvedRootRuntimeClass(
+        PipelineCompilationContext ctx,
+        String definitionId,
+        int stepIndex
+    ) {
+        if (!"$root".equals(definitionId) || stepIndex < 0
+            || stepIndex >= ctx.getGeneratedRootPipelineStepClasses().size()) {
+            return Optional.empty();
+        }
+        return Optional.of(ctx.getGeneratedRootPipelineStepClasses().get(stepIndex));
+    }
+
     private String invocationInputRuntimeClass(
         PipelineCompilationContext ctx,
         String definitionId,
@@ -382,9 +389,12 @@ public final class PipelineBranchingMetadataGenerator {
             if (model.sideEffect()) {
                 continue;
             }
-            byToken.put(normalizeStepToken(stepTokenFromModel(model)), model);
-            byToken.put(normalizeStepToken(stripTrailingService(model.generatedName())), model);
-            byToken.put(normalizeStepToken(model.serviceName()), model);
+            // The model list can contain both the direct local service and a generated adapter
+            // projection for the same authored step. Preserve the compiler-selected execution
+            // model that appears first, matching local root invocation/order selection.
+            byToken.putIfAbsent(normalizeStepToken(stepTokenFromModel(model)), model);
+            byToken.putIfAbsent(normalizeStepToken(stripTrailingService(model.generatedName())), model);
+            byToken.putIfAbsent(normalizeStepToken(model.serviceName()), model);
         }
         List<PipelineStepModel> ordered = new ArrayList<>();
         Set<PipelineStepModel> added = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
@@ -449,21 +459,8 @@ public final class PipelineBranchingMetadataGenerator {
         return new PipelineYamlConfigLocator().locate(ctx.getModuleDir());
     }
 
-    private String runtimeStepClass(PipelineStepModel model, PipelineCompilationContext ctx) {
-        if (!usesTransportMappedRuntime(model, ctx) && model.serviceClassName() != null) {
-            return model.serviceClassName().canonicalName();
-        }
-        return clientClass(model, ctx);
-    }
-
     private boolean usesTransportMappedRuntime(PipelineStepModel model, PipelineCompilationContext ctx) {
-        if (ctx.isOrchestratorGenerated()) {
-            return true;
-        }
-        return model.enabledTargets().contains(GenerationTarget.DEFERRED_COMPLETION_STEP)
-            || model.enabledTargets().contains(GenerationTarget.COMMAND_CLIENT_STEP)
-            || model.enabledTargets().contains(GenerationTarget.QUERY_CLIENT_STEP)
-            || model.enabledTargets().contains(GenerationTarget.DYNAMIC_OPERATION_CLIENT_STEP);
+        return RuntimeStepClassNames.usesGeneratedClient(model, ctx.isOrchestratorGenerated());
     }
 
     private String clientClass(PipelineStepModel model, PipelineCompilationContext ctx) {

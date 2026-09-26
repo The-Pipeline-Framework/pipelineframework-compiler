@@ -1,7 +1,18 @@
 # The Pipeline Framework Compiler
 
-This repository publishes `org.pipelineframework:pipelineframework-compiler`, the framework-neutral compiler and
-Java domain generation toolchain for TPF.
+## Test coverage
+
+`./mvnw clean verify` writes the JaCoCo report to `target/site/jacoco/`.
+CI publishes the HTML/XML report and execution data as the `compiler-coverage`
+artifact for inspection.
+
+Coverage is currently informational. No code is excluded from the report, and
+no percentage threshold is enforced until the repository has an observed,
+reviewed baseline. Unit tests continue to run through Surefire during `test`;
+integration or end-to-end tests must remain on the Failsafe lifecycle so the
+coverage setup does not conflate their execution with unit tests.
+
+This repository builds `org.pipelineframework:pipelineframework-compiler`, the framework-neutral compiler and Java domain generation toolchain. The compiler owns the production JSR-269 processor, semantic phases, and generated-source renderers. Its inputs and outputs use published TPF contracts from the API, semantic model, DSL, runtime-core, runtime protocol, and representation-provider API artifacts. Runtime and deployment implementations remain outside this artifact.
 
 The compiler owns:
 

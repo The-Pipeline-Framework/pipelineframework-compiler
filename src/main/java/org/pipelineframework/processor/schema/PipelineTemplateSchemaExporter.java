@@ -1722,6 +1722,22 @@ public final class PipelineTemplateSchemaExporter {
           "type": "boolean",
           "description": "Whether this YAML-declared internal blocking step should use virtual-thread offload."
         },
+        "cardinality": {
+          "type": "string",
+          "enum": [
+            "ONE_TO_ONE",
+            "EXPANSION",
+            "REDUCTION",
+            "COLLAPSE",
+            "SIDE_EFFECT",
+            "MANY_TO_MANY",
+            "ONE_TO_MANY",
+            "MANY_TO_ONE"
+          ]
+        },
+        "paging": {
+          "$ref": "#/$defs/pagingConfig"
+        },
         "await": {
           "$ref": "#/$defs/awaitConfig"
         },
@@ -1923,6 +1939,20 @@ public final class PipelineTemplateSchemaExporter {
         "type"
       ],
       "additionalProperties": true
+    },
+    "pagingConfig": {
+      "type": "object",
+      "description": "Bounds the logical source records consumed by each resumable source page.",
+      "properties": {
+        "maxRecords": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "maxRecords"
+      ],
+      "additionalProperties": false
     },
     "awaitConfig": {
       "type": "object",
