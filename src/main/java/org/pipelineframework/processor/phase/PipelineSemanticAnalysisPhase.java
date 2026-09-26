@@ -25,6 +25,9 @@ import org.pipelineframework.processor.ir.ServiceApiKind;
 import org.pipelineframework.processor.ir.StreamingShape;
 import org.pipelineframework.processor.routing.PipelineBranchingPlan;
 import org.pipelineframework.processor.routing.PipelineBranchRoutingPlanner;
+import org.pipelineframework.config.CardinalitySemantics;
+import org.pipelineframework.config.template.PipelineTemplateConfig;
+import org.pipelineframework.config.template.PipelineTemplateStep;
 
 /**
  * Performs semantic analysis and policy decisions on discovered models.
@@ -73,6 +76,7 @@ public class PipelineSemanticAnalysisPhase implements PipelineCompilationPhase {
         validateProviderHints(ctx);
         validateFunctionPlatformConstraints(ctx);
         validateYamlDrivenSteps(ctx);
+        validatePaging(ctx);
         if (ctx.getBranchingPlan() == null) {
             ctx.setBranchingPlan(new PipelineBranchRoutingPlanner().plan(ctx)
                 .orElseGet(PipelineBranchingPlan::disabled));
@@ -81,6 +85,123 @@ public class PipelineSemanticAnalysisPhase implements PipelineCompilationPhase {
 
         // Analyze streaming shapes and other semantic properties
         // This phase focuses on semantic analysis without building bindings or calling renderers
+    }
+
+    void validatePaging(PipelineCompilationContext ctx) {
+        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
+            || config.steps() == null) {
+            return;
+        }
+        List<PipelineTemplateStep> paged = config.steps().stream()
+            .filter(Objects::nonNull)
+            .filter(step -> step.paging().isPresent())
+            .toList();
+        if (paged.isEmpty()) {
+            return;
+        }
+        if (paged.size() != 1 || config.steps().getFirst() != paged.getFirst()) {
+            throw new IllegalStateException("paging may be declared only on the first source-producing step");
+        }
+        PipelineTemplateStep source = paged.getFirst();
+        if (CardinalitySemantics.fromString(source.cardinality()) != CardinalitySemantics.ONE_TO_MANY) {
+            throw new IllegalStateException("paging requires the first step to declare ONE_TO_MANY cardinality");
+        }
+        for (int index = 1; index < config.steps().size(); index++) {
+            PipelineTemplateStep step = config.steps().get(index);
+            if (step != null
+                && CardinalitySemantics.fromString(step.cardinality()) == CardinalitySemantics.MANY_TO_ONE) {
+                throw new IllegalStateException(
+                    "paging does not support an aggregate whose input spans page boundaries: " + step.name());
+            }
+        }
+        if (config.output() == null || config.output().object() == null) {
+            throw new IllegalStateException(
+                "paging requires a streaming terminal object output; MATERIALIZED_MULTI is not supported");
+        }
+        var target = config.publish().get(config.output().object().target());
+        if (target == null || !("filesystem".equalsIgnoreCase(target.provider())
+            || "s3".equalsIgnoreCase(target.provider()))) {
+            throw new IllegalStateException(
+                "paged object output requires a target provider with bounded composition: filesystem or s3");
+        }
+        if (ctx.getProcessingEnv() == null) {
+            return;
+        }
+        requireAssignable(
+            ctx,
+            config.output().object().mapper(),
+            "org.pipelineframework.objectpublish.PagedStreamingObjectPublishMapper",
+            "paged object output mapper");
+        List<PipelineStepModel> models = ctx.getStepModels();
+        if (models == null || models.isEmpty()) {
+            return;
+        }
+        var resolvedSourceModel = models.stream()
+            .filter(model -> model.serviceName().equals(toYamlServiceName(source.name())))
+            .findFirst();
+        if (resolvedSourceModel.isEmpty()) {
+            return;
+        }
+        PipelineStepModel sourceModel = resolvedSourceModel.orElseThrow();
+        String sourceType = sourceModel.serviceClassName().canonicalName();
+        String delegateType = sourceModel.delegateService() == null
+            ? sourceType
+            : sourceModel.delegateService().canonicalName();
+        String boundaryType = ctx.getResolvedProviderBoundary(source.name())
+            .map(boundary -> boundary.boundary().serviceTypeName())
+            .orElse(sourceType);
+        String contract = "org.pipelineframework.paging.PagedSourceOperation";
+        boolean candidateResolved = isResolvable(ctx, sourceType)
+            || isResolvable(ctx, delegateType)
+            || isResolvable(ctx, boundaryType);
+        if (!candidateResolved) {
+            // A downstream module can compile the shared pipeline YAML without owning the source service class.
+            return;
+        }
+        if (!isAssignable(ctx, sourceType, contract)
+            && !isAssignable(ctx, delegateType, contract)
+            && !isAssignable(ctx, boundaryType, contract)) {
+            throw new IllegalStateException("paged source service must implement " + contract
+                + ": " + delegateType);
+        }
+    }
+
+    private boolean isResolvable(PipelineCompilationContext ctx, String typeName) {
+        return ctx.getProcessingEnv().getElementUtils().getTypeElement(typeName) != null;
+    }
+
+    private static String toYamlServiceName(String stepName) {
+        String formatted = NamingPolicy.formatForClassName(NamingPolicy.stripProcessPrefix(stepName));
+        return formatted == null || formatted.isBlank() ? "ProcessStepService" : "Process" + formatted + "Service";
+    }
+
+    private boolean isAssignable(PipelineCompilationContext ctx, String implementationName, String contractName) {
+        TypeElement implementation = ctx.getProcessingEnv().getElementUtils().getTypeElement(implementationName);
+        TypeElement contract = ctx.getProcessingEnv().getElementUtils().getTypeElement(contractName);
+        return implementation != null && contract != null
+            && ctx.getProcessingEnv().getTypeUtils().isAssignable(
+                ctx.getProcessingEnv().getTypeUtils().erasure(implementation.asType()),
+                ctx.getProcessingEnv().getTypeUtils().erasure(contract.asType()));
+    }
+
+    private void requireAssignable(
+        PipelineCompilationContext ctx,
+        String implementationName,
+        String contractName,
+        String description) {
+        TypeElement implementation = ctx.getProcessingEnv().getElementUtils().getTypeElement(implementationName);
+        TypeElement contract = ctx.getProcessingEnv().getElementUtils().getTypeElement(contractName);
+        if (implementation == null) {
+            throw new IllegalStateException(description + " type not found: " + implementationName);
+        }
+        if (contract == null) {
+            throw new IllegalStateException(description + " contract not found: " + contractName);
+        }
+        Types types = ctx.getProcessingEnv().getTypeUtils();
+        if (!types.isAssignable(types.erasure(implementation.asType()), types.erasure(contract.asType()))) {
+            throw new IllegalStateException(description + " '" + implementationName
+                + "' must implement " + contractName);
+        }
     }
 
     private void validateFunctionPlatformConstraints(PipelineCompilationContext ctx) {

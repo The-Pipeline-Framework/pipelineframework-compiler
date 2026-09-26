@@ -325,6 +325,10 @@ public class PipelineContractMetadataGenerator {
                 .orElseGet(() -> typeId(model.outputMapping().domainType())));
             descriptor.put("runtimeClass", runtimeClass(model, ctx));
             descriptor.put("clientClass", clientClass(model, ctx));
+            if (yamlStep != null && yamlStep.paging().isPresent()) {
+                descriptor.put("paging", Map.of(
+                    "maxRecords", yamlStep.paging().orElseThrow().maxRecords()));
+            }
             model.deferredCompletionSelection().ifPresent(selection ->
                 descriptor.put("deferredCompletion", deferredCompletion(model, selection)));
             descriptors.add(descriptor);

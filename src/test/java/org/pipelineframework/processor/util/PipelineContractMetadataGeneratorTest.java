@@ -110,6 +110,34 @@ class PipelineContractMetadataGeneratorTest {
     }
 
     @Test
+    void writesPagingAsReleasePinnedStepControlMetadata() throws IOException {
+        Path yaml = tempDir.resolve("paged-pipeline.yaml");
+        Files.writeString(yaml, """
+            version: 2
+            appName: Paged contract
+            basePackage: org.example.restaurant
+            transport: REST
+            platform: COMPUTE
+            steps:
+              - name: Validate Order Request
+                service: org.example.restaurant.ProcessValidateOrderRequestService
+                cardinality: ONE_TO_MANY
+                paging:
+                  maxRecords: 750
+              - name: Await Restaurant Decision
+                service: org.example.restaurant.CreatePendingApprovalService
+                cardinality: ONE_TO_ONE
+            """);
+        Path output = tempDir.resolve("paged-output");
+
+        writeMetadata(yaml, output);
+
+        JsonObject paging = readContract(output).getAsJsonArray("steps").get(0)
+            .getAsJsonObject().getAsJsonObject("paging");
+        assertEquals(750, paging.get("maxRecords").getAsInt());
+    }
+
+    @Test
     void deferredCompletionFingerprintIgnoresTransportConfigInsertionOrder() throws IOException {
         Path pipelineYaml = writePipelineYaml();
         Map<String, Object> firstConfig = new LinkedHashMap<>();
