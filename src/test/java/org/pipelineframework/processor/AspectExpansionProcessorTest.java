@@ -11,6 +11,7 @@ import com.google.protobuf.DescriptorProtos;
 import com.squareup.javapoet.ClassName;
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.Test;
+import org.pipelineframework.processor.composition.PipelineReference;
 import org.pipelineframework.processor.ir.*;
 import org.pipelineframework.processor.util.GrpcBindingResolver;
 
@@ -20,7 +21,12 @@ class AspectExpansionProcessorTest {
 
     @Test
     void expandsGlobalAspectsAfterSteps() throws Exception {
-        ResolvedStep step = resolvedStep("ProcessFolderService");
+        PipelineReference definition = new PipelineReference("deployment-lifecycle");
+        ResolvedStep original = resolvedStep("ProcessFolderService");
+        ResolvedStep step = new ResolvedStep(
+            original.model().toBuilder().definition(definition).build(),
+            original.grpcBinding(),
+            original.restBinding());
         PipelineAspectModel aspect = new PipelineAspectModel(
             "persistence",
             AspectScope.GLOBAL,
@@ -37,6 +43,7 @@ class AspectExpansionProcessorTest {
         assertEquals(2, expanded.size(), "Expected original step and one synthetic step");
         assertEquals(step.model().serviceName(), expanded.get(0).model().serviceName());
         assertTrue(expanded.get(1).model().generatedName().contains("Persistence"));
+        assertEquals(definition, expanded.get(1).model().definition());
         assertEquals("ObservePersistenceCsvPaymentsInputFileSideEffectService", expanded.get(1).model().serviceName());
     }
 
