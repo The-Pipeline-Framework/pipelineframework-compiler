@@ -1,6 +1,9 @@
 name: Publish Maven Central Snapshot
 
 on:
+  schedule:
+    # Runs after Contracts in the dependency-ordered nightly snapshot train (UTC).
+    - cron: '17 19 * * *'
   workflow_dispatch:
 
 concurrency:
