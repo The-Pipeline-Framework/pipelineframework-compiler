@@ -30,6 +30,7 @@ import org.pipelineframework.processor.ir.PipelineStepModel;
 import org.pipelineframework.processor.ir.StepDefinition;
 import org.pipelineframework.processor.phase.NamingPolicy;
 import org.pipelineframework.processor.util.ClientStepClassNames;
+import org.pipelineframework.processor.util.GeneratedExecutionOrderResolver;
 import org.pipelineframework.processor.util.RuntimeStepClassNames;
 
 /** Generates the local CDI realization selected from compiler-owned invocation bindings. */
@@ -76,12 +77,28 @@ public final class LocalPipelineInvocationRenderer {
                 .addAnnotation(RuntimeSymbols.INJECT).build());
         ClassName iface = interfaceFor(binding.cardinality());
         type.addSuperinterface(ParameterizedTypeName.get(iface, input, output));
-        List<String> childFields = new ArrayList<>();
+        List<InvocationChild> authoredChildren = new ArrayList<>();
         for (PipelineDefinitionStep step : target.steps()) {
             ClassName childType = childType(ctx, binding, step, invocationTypes);
-            String field = "child" + childFields.size();
             boolean recursiveChild = binding.recursive()
                 && step.pipelineReference().filter(binding.target()::equals).isPresent();
+            authoredChildren.add(new InvocationChild(childType, recursiveChild));
+        }
+        List<String> authoredOrder = authoredChildren.stream()
+            .map(child -> child.type().canonicalName())
+            .toList();
+        List<String> expandedOrder = new GeneratedExecutionOrderResolver().weave(
+            ctx, binding.target(), authoredOrder, true);
+        if (expandedOrder.isEmpty()) {
+            expandedOrder = authoredOrder;
+        }
+        Map<String, Boolean> recursiveTypes = new LinkedHashMap<>();
+        authoredChildren.forEach(child -> recursiveTypes.put(child.type().canonicalName(), child.recursive()));
+        List<String> childFields = new ArrayList<>();
+        for (String childClass : expandedOrder) {
+            ClassName childType = ClassName.bestGuess(childClass);
+            String field = "child" + childFields.size();
+            boolean recursiveChild = recursiveTypes.getOrDefault(childClass, false);
             TypeName fieldType = recursiveChild
                 ? ParameterizedTypeName.get(PROVIDER, childType)
                 : childType;
@@ -104,6 +121,9 @@ public final class LocalPipelineInvocationRenderer {
                 targetPlan.terminalStepIndex(), childFields));
         }
         JavaFile.builder(invocationTypes.get(binding.invocationLocation()).packageName(), type.build()).build().writeTo(outputDir);
+    }
+
+    private record InvocationChild(ClassName type, boolean recursive) {
     }
 
     private ClassName childType(PipelineCompilationContext ctx, PipelineInvocationBinding parent,

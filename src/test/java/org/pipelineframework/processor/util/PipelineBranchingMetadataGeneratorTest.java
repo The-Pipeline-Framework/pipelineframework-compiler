@@ -31,6 +31,7 @@ import com.squareup.javapoet.ClassName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.pipelineframework.processor.PipelineCompilationContext;
+import org.pipelineframework.processor.composition.PipelineReference;
 import org.pipelineframework.processor.ir.AspectPosition;
 import org.pipelineframework.processor.ir.AspectScope;
 import org.pipelineframework.processor.ir.DeploymentRole;
@@ -350,6 +351,61 @@ class PipelineBranchingMetadataGeneratorTest {
             "com.example.common.domain.ArchiveResult",
             aspect.getAsJsonArray("acceptedRuntimeClasses").get(0).getAsString());
         assertFalse(aspect.get("terminal").getAsBoolean());
+        assertTrue(aspect.get("afterStepObserver").getAsBoolean());
+    }
+
+    @Test
+    void writesDefinitionOwnedStepScopedObserverMetadata() throws IOException {
+        Path classOutput = tempDir.resolve("class-output-named-aspects");
+        ProcessingEnvironment processingEnv = mock(ProcessingEnvironment.class);
+        when(processingEnv.getOptions()).thenReturn(Map.of());
+        when(processingEnv.getFiler()).thenReturn(new PathResourceFiler(classOutput));
+        PipelineCompilationContext ctx = new PipelineCompilationContext(
+            processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        ctx.setTransportMode(PipelineTransport.LOCAL);
+        ctx.setOrchestratorGenerated(true);
+        PipelineReference definition = new PipelineReference("deployment-lifecycle");
+        PipelineStepModel authored = stepModel(
+            "HandleApproved", "com.example.routed", "Approved", "ApprovedHandled")
+            .toBuilder().definition(definition).build();
+        PipelineStepModel observer = stepModel(
+            "ObservePersistenceApprovedHandledSideEffect",
+            "com.example.routed",
+            "ApprovedHandled",
+            "ApprovedHandled",
+            Set.of(GenerationTarget.LOCAL_CLIENT_STEP))
+            .toBuilder()
+            .generatedName("PersistenceApprovedHandledSideEffect")
+            .sideEffect(true)
+            .aspectPosition(AspectPosition.AFTER_STEP)
+            .definition(definition)
+            .build();
+        ctx.setLocalDefinitionStepModels(Map.of(definition.logicalId(), List.of(authored)));
+        ctx.setStepModels(List.of(authored, observer));
+        ctx.setLocalDefinitionBranchingPlans(Map.of(definition,
+            new PipelineBranchingPlan(true, 0, List.of(
+                new PipelineBranchingPlan.BranchStep(
+                    0,
+                    "Handle approved",
+                    "Approved",
+                    "ApprovedHandled",
+                    List.of("Approved"),
+                    List.of("ApprovedHandled"),
+                    List.of(ClassName.get("com.example.common.domain", "Approved")),
+                    true)))));
+
+        new PipelineBranchingMetadataGenerator(processingEnv).writeBranchingMetadata(ctx);
+
+        JsonObject metadata = new Gson().fromJson(Files.readString(
+            classOutput.resolve("META-INF/pipeline/branching.json")), JsonObject.class);
+        assertEquals(2, metadata.getAsJsonArray("steps").size());
+        JsonObject aspect = metadata.getAsJsonArray("steps").get(1).getAsJsonObject();
+        assertEquals(definition.logicalId(), aspect.get("definitionId").getAsString());
+        assertEquals(
+            "com.example.routed.pipeline.PersistenceApprovedHandledSideEffectLocalClientStep",
+            aspect.get("runtimeStepClass").getAsString());
+        assertEquals("ApprovedHandled",
+            aspect.getAsJsonArray("acceptedContracts").get(0).getAsString());
         assertTrue(aspect.get("afterStepObserver").getAsBoolean());
     }
 

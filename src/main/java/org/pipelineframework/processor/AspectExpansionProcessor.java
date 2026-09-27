@@ -144,6 +144,7 @@ public class AspectExpansionProcessor {
                 .sideEffect(true)
                 .aspectPosition(position)
                 .cacheKeyGenerator(originalModel.cacheKeyGenerator())
+                .definition(originalModel.definition())
                 .build();
 
         return new ResolvedStep(syntheticModel, null, null);
