@@ -4,7 +4,7 @@
 
     <groupId>org.pipelineframework</groupId>
     <artifactId>pipelineframework-compiler</artifactId>
-    <version>26.9.4-SNAPSHOT</version>
+    <version>26.9.4</version>
     <packaging>jar</packaging>
 
     <name>The Pipeline Framework Compiler</name>
@@ -35,7 +35,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>21</maven.compiler.release>
         <enablePreview>true</enablePreview>
-        <tpf.version>26.9.4-SNAPSHOT</tpf.version>
+        <tpf.version>26.9.4</tpf.version>
         <jackson.version>2.22.2</jackson.version>
         <protobuf.version>4.35.0</protobuf.version>
         <jboss-logging.version>3.6.3.Final</jboss-logging.version>
