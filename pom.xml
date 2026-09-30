@@ -4,7 +4,7 @@
 
     <groupId>org.pipelineframework</groupId>
     <artifactId>pipelineframework-compiler</artifactId>
-    <version>26.9.4</version>
+    <version>26.10.1-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>The Pipeline Framework Compiler</name>
