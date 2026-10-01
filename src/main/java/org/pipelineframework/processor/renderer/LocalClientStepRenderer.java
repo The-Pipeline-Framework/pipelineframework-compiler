@@ -131,6 +131,24 @@ public class LocalClientStepRenderer implements PipelineRenderer<LocalBinding> {
             case UNARY_STREAMING -> {
                 stepInterface = RuntimeSymbols.STEP_ONE_TO_MANY;
                 clientStepBuilder.addSuperinterface(ParameterizedTypeName.get(stepInterface, inputType, outputType));
+                ClassName pagedOperation = ClassName.get("org.pipelineframework.paging", "PagedSourceOperation");
+                ClassName pagedRequest = ClassName.get("org.pipelineframework.paging", "PagedSourceRequest");
+                ClassName pagedStream = ClassName.get("org.pipelineframework.paging", "PagedSourceStream");
+                clientStepBuilder.addSuperinterface(ParameterizedTypeName.get(pagedOperation, inputType, outputType));
+                clientStepBuilder.addMethod(MethodSpec.methodBuilder("openPage")
+                    .addAnnotation(Override.class)
+                    .addAnnotation(AnnotationSpec.builder(SuppressWarnings.class)
+                        .addMember("value", "$S", "unchecked")
+                        .build())
+                    .addModifiers(Modifier.PUBLIC)
+                    .returns(ParameterizedTypeName.get(pagedStream, outputType))
+                    .addParameter(ParameterizedTypeName.get(pagedRequest, inputType), "request")
+                    .beginControlFlow("if (!$T.class.isInstance(this.service))", pagedOperation)
+                    .addStatement("throw new $T($S)", IllegalStateException.class,
+                        "Local source does not support paged execution")
+                    .endControlFlow()
+                    .addStatement("return (($T<$T, $T>) this.service).openPage(request)", pagedOperation, inputType, outputType)
+                    .build());
             }
             case STREAMING_UNARY -> {
                 stepInterface = RuntimeSymbols.STEP_MANY_TO_ONE;

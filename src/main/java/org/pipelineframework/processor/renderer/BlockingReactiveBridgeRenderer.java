@@ -65,6 +65,26 @@ public class BlockingReactiveBridgeRenderer {
 
         boolean useVirtualThreads = model.executionMode() == org.pipelineframework.processor.ir.ExecutionMode.VIRTUAL_THREADS;
         builder.addMethod(buildProcessMethod(model, inputType, outputType, useVirtualThreads));
+        if (model.serviceApiKind() == ServiceApiKind.BLOCKING_ITERATOR) {
+            ClassName pagedOperation = ClassName.get("org.pipelineframework.paging", "PagedSourceOperation");
+            ClassName pagedRequest = ClassName.get("org.pipelineframework.paging", "PagedSourceRequest");
+            ClassName pagedStream = ClassName.get("org.pipelineframework.paging", "PagedSourceStream");
+            builder.addSuperinterface(ParameterizedTypeName.get(pagedOperation, inputType, outputType));
+            builder.addMethod(MethodSpec.methodBuilder("openPage")
+                .addAnnotation(Override.class)
+                .addAnnotation(AnnotationSpec.builder(SuppressWarnings.class)
+                    .addMember("value", "$S", "unchecked")
+                    .build())
+                .addModifiers(Modifier.PUBLIC)
+                .returns(ParameterizedTypeName.get(pagedStream, outputType))
+                .addParameter(ParameterizedTypeName.get(pagedRequest, inputType), "request")
+                .beginControlFlow("if (!$T.class.isInstance(this.blockingService))", pagedOperation)
+                .addStatement("throw new $T($S)", IllegalStateException.class,
+                    "Blocking source does not support paged execution")
+                .endControlFlow()
+                .addStatement("return (($T<$T, $T>) this.blockingService).openPage(request)", pagedOperation, inputType, outputType)
+                .build());
+        }
         return builder.build();
     }
 

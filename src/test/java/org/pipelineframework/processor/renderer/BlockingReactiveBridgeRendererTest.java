@@ -65,6 +65,8 @@ class BlockingReactiveBridgeRendererTest {
 
         assertTrue(source.contains("implements ReactiveStreamingService<CsvPaymentsInputFile, PaymentRecord>"));
         assertTrue(source.contains("emitIterator(false, () -> blockingService.iterateBlocking(processableObj))"));
+        assertTrue(source.contains("PagedSourceOperation<CsvPaymentsInputFile, PaymentRecord>"));
+        assertTrue(source.contains("this.blockingService).openPage(request)"));
     }
 
     @Test

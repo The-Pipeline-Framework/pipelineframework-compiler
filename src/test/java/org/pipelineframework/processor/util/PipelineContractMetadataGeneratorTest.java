@@ -119,7 +119,7 @@ class PipelineContractMetadataGeneratorTest {
             transport: REST
             platform: COMPUTE
             steps:
-              - name: Validate Order Request
+              - name: Process Validate Order Request
                 service: org.example.restaurant.ProcessValidateOrderRequestService
                 cardinality: ONE_TO_MANY
                 paging:

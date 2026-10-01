@@ -310,7 +310,10 @@ public class PipelineContractMetadataGenerator {
         List<Map<String, Object>> descriptors = new ArrayList<>();
         for (int i = 0; i < orderedModels.size(); i++) {
             PipelineStepModel model = orderedModels.get(i);
-            PipelineYamlStep yamlStep = yamlByName.get(normalizeStepToken(stepTokenFromModel(model)));
+            PipelineYamlStep yamlStep = yamlByName.get(normalizeStepToken(stripTrailingService(model.generatedName())));
+            if (yamlStep == null) {
+                yamlStep = yamlByName.get(normalizeStepToken(stepTokenFromModel(model)));
+            }
             if (yamlStep == null) {
                 yamlStep = yamlByName.get(normalizeStepToken(model.serviceName()));
             }
