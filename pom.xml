@@ -297,6 +297,7 @@
                 <extensions>true</extensions>
                 <configuration>
                     <publishingServerId>central</publishingServerId>
+                    <checksums>required</checksums>
                     <autoPublish>true</autoPublish>
                     <waitUntil>published</waitUntil>
                     <waitMaxTime>7200</waitMaxTime>
