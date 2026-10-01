@@ -147,7 +147,8 @@ public class LocalClientStepRenderer implements PipelineRenderer<LocalBinding> {
                     .addStatement("throw new $T($S)", IllegalStateException.class,
                         "Local source does not support paged execution")
                     .endControlFlow()
-                    .addStatement("return (($T<$T, $T>) this.service).openPage(request)", pagedOperation, inputType, outputType)
+                    .addStatement("return (($T<$T, $T>) $T.class.cast(this.service)).openPage(request)",
+                        pagedOperation, inputType, outputType, pagedOperation)
                     .build());
             }
             case STREAMING_UNARY -> {

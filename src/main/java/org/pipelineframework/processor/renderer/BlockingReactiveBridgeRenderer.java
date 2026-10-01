@@ -82,7 +82,8 @@ public class BlockingReactiveBridgeRenderer {
                 .addStatement("throw new $T($S)", IllegalStateException.class,
                     "Blocking source does not support paged execution")
                 .endControlFlow()
-                .addStatement("return (($T<$T, $T>) this.blockingService).openPage(request)", pagedOperation, inputType, outputType)
+                .addStatement("return (($T<$T, $T>) $T.class.cast(this.blockingService)).openPage(request)",
+                    pagedOperation, inputType, outputType, pagedOperation)
                 .build());
         }
         return builder.build();
