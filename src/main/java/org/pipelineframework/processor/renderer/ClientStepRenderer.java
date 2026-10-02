@@ -133,6 +133,13 @@ public record ClientStepRenderer(GenerationTarget target) implements PipelineRen
                 .build())
             .build();
         clientStepBuilder.addField(invocationRuntimeField);
+        if (model.pagedSource()) {
+            clientStepBuilder.addField(FieldSpec.builder(
+                ClassName.get("org.pipelineframework.paging", "RemotePagedSourceBridge"),
+                "pageBridge")
+                .addAnnotation(AnnotationSpec.builder(RuntimeSymbols.INJECT).build())
+                .build());
+        }
         // Add default constructor
         MethodSpec constructor = MethodSpec.constructorBuilder()
                 .addModifiers(Modifier.PUBLIC)
@@ -258,8 +265,77 @@ public record ClientStepRenderer(GenerationTarget target) implements PipelineRen
                     break;
             }
         }
+        if (model.pagedSource()) {
+            addRemoteOpenPage(clientStepBuilder, binding, messager, boundary);
+        }
 
         return clientStepBuilder.build();
+    }
+
+    private void addRemoteOpenPage(TypeSpec.Builder builder, GrpcBinding binding,
+            PipelineCompilerDiagnostics diagnostics,
+            TransportBoundaryResolver.RepresentationBoundary boundary) {
+        PipelineStepModel model = binding.model();
+        if (model.streamingShape() != org.pipelineframework.processor.ir.StreamingShape.UNARY_STREAMING
+            || !(binding.serviceDescriptor() instanceof com.google.protobuf.Descriptors.ServiceDescriptor serviceDescriptor)) {
+            throw new IllegalStateException("paged gRPC source requires a unary-streaming service descriptor");
+        }
+        var method = serviceDescriptor.findMethodByName("remoteOpenPage");
+        if (method == null || method.isClientStreaming() || !method.isServerStreaming()) {
+            throw new IllegalStateException("paged gRPC source is missing remoteOpenPage");
+        }
+        var pageTypes = new GrpcJavaTypeResolver().resolve(
+            new GrpcBinding(model, serviceDescriptor, method), diagnostics);
+        TypeName requestType = pageTypes.grpcParameterType();
+        TypeName frameType = pageTypes.grpcReturnType();
+        TypeName inputType = boundary.stepInputType();
+        TypeName outputType = boundary.stepOutputType();
+        ClassName operation = ClassName.get("org.pipelineframework.paging", "PagedSourceOperation");
+        ClassName pageRequest = ClassName.get("org.pipelineframework.paging", "PagedSourceRequest");
+        ClassName pageStream = ClassName.get("org.pipelineframework.paging", "PagedSourceStream");
+        ClassName frame = ClassName.get("org.pipelineframework.paging", "RemotePageFrame");
+        CodeBlock input = transportInput(boundary, CodeBlock.of("request.input()"));
+        CodeBlock output = boundary.convertsAtBoundary()
+            ? CodeBlock.of("$T.fromProto(wireFrame.getItem())", boundary.outputAdapterOrThrow())
+            : CodeBlock.of("wireFrame.getItem()");
+        builder.addSuperinterface(ParameterizedTypeName.get(operation, inputType, outputType));
+        builder.addMethod(MethodSpec.methodBuilder("openPage")
+            .addAnnotation(Override.class)
+            .addModifiers(Modifier.PUBLIC)
+            .returns(ParameterizedTypeName.get(pageStream, outputType))
+            .addParameter(ParameterizedTypeName.get(pageRequest, inputType), "request")
+            .addStatement("var identity = $T.get().orElseThrow(() -> new $T($S))",
+                ClassName.get("org.pipelineframework.execution", "PipelineExecutionContextHolder"),
+                IllegalStateException.class, "remote page requires a pinned execution identity")
+            .addStatement("var wire = $T.newBuilder().setInput($L)\n"
+                    + "    .setSourceIdentity(request.sourceIdentity())\n"
+                    + "    .setMaxRecords(request.maxRecords())\n"
+                    + "    .setPipelineId(identity.pipelineId())\n"
+                    + "    .setContractVersion(identity.contractVersion())\n"
+                    + "    .setReleaseVersion(identity.releaseVersion())\n"
+                    + "    .setCatalogFingerprint(pageBridge.catalogFingerprint())", requestType, input)
+            .addStatement("request.checkpoint().ifPresent(wire::setStartCheckpoint)")
+            .addCode("return pageBridge.open(request,\n")
+            .addCode("    invocationRuntime.invokeTransportMulti(this, () -> $T.traceMulti($S, $S, "
+                    + "grpcClient.remoteOpenPage(wire.build()))),\n",
+                ClassName.get("org.pipelineframework.telemetry", "GrpcClientTracing"),
+                model.serviceName(), "remoteOpenPage")
+            .addCode("    wireFrame -> {\n")
+            .addCode("      if (wireFrame.hasItem()) {\n")
+            .addCode("        return new $T.Item<>($L);\n", frame, output)
+            .addCode("      }\n")
+            .addCode("      if (wireFrame.hasCompletion()) {\n")
+            .addCode("        var result = wireFrame.getCompletion();\n")
+            .addCode("        return new $T.Completion<>(new $T(result.getConsumedRecords(), "
+                    + "result.hasNextCheckpoint() ? $T.of(result.getNextCheckpoint()) : $T.empty(), "
+                    + "result.getExhausted()));\n",
+                frame, ClassName.get("org.pipelineframework.paging", "PagedSourceCompletion"),
+                java.util.Optional.class, java.util.Optional.class)
+            .addCode("      }\n")
+            .addCode("      throw new $T($S);\n", IllegalStateException.class,
+                "remote page frame has no payload")
+            .addCode("    });\n")
+            .build());
     }
 
     private static CodeBlock transportUnaryInvocation(
