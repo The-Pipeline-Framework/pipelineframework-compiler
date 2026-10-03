@@ -453,6 +453,8 @@ public class PipelineContractMetadataGenerator {
             if (model != null && added.add(model)) {
                 ordered.add(model);
                 addedTokens.add(token);
+                // Generated server/client roles may use a token without the authored Process prefix.
+                addedTokens.add(normalizeStepToken(stepTokenFromModel(model)));
             }
         }
         for (PipelineStepModel model : models) {

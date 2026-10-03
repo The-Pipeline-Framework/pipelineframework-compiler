@@ -461,6 +461,55 @@ class PipelineContractMetadataGeneratorTest {
             contractSteps.get(1).getAsJsonObject().get("clientClass").getAsString());
     }
 
+    @Test
+    void emitsOneDescriptorPerProcessPrefixedAuthoredStepWithMultipleGeneratedRoles() throws IOException {
+        Path pipelineYaml = writePipelineYaml();
+        Files.writeString(pipelineYaml, Files.readString(pipelineYaml)
+            .replace("name: Validate Order Request", "name: ProcessValidateOrderRequest"));
+        Path output = tempDir.resolve("monolith");
+        ProcessingEnvironment processingEnv = processingEnv(output, Map.of("pipeline.config", pipelineYaml.toString()));
+        RoundEnvironment roundEnv = mock(RoundEnvironment.class);
+        PipelineCompilationContext ctx = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        ctx.setModuleName("orchestrator-svc");
+        ctx.setPlatformMode(PlatformMode.COMPUTE);
+        ctx.setTransportMode(PipelineTransport.REST);
+        ctx.setRuntimeMapping(new PipelineRuntimeMapping(
+            PipelineRuntimeMapping.Layout.MONOLITH,
+            PipelineRuntimeMapping.Validation.AUTO,
+            PipelineRuntimeMapping.Defaults.defaultValues(),
+            Map.of(),
+            Map.of(),
+            Map.of(),
+            Map.of()));
+
+        PipelineStepModel validateServer = step(
+            "ProcessValidateOrderRequestService", "PlaceRestaurantOrderRequest", "ValidatedRestaurantOrderRequest",
+            StreamingShape.UNARY_UNARY, Set.of(GenerationTarget.REST_RESOURCE));
+        PipelineStepModel validateClient = step(
+            "ProcessValidateOrderRequestService", "PlaceRestaurantOrderRequest", "ValidatedRestaurantOrderRequest",
+            StreamingShape.UNARY_UNARY, Set.of(GenerationTarget.REST_CLIENT_STEP));
+        ctx.setStepModels(java.util.List.of(
+            validateServer,
+            validateClient,
+            deferredStep()));
+
+        PipelineContractMetadataGenerator generator = new PipelineContractMetadataGenerator(processingEnv);
+        generator.writePipelineContract(ctx);
+
+        JsonArray contractSteps = readContract(output).getAsJsonArray("steps");
+        assertEquals(2, contractSteps.size());
+        assertEquals("ProcessValidateOrderRequest",
+            contractSteps.get(0).getAsJsonObject().get("authoredName").getAsString());
+        assertEquals(0, contractSteps.get(0).getAsJsonObject().get("index").getAsInt());
+        assertEquals(1, contractSteps.get(1).getAsJsonObject().get("index").getAsInt());
+        assertEquals(
+            "org.example.restaurant.pipeline.ProcessValidateOrderRequestRestClientStep",
+            contractSteps.get(0).getAsJsonObject().get("clientClass").getAsString());
+        assertEquals(
+            "org.example.restaurant.pipeline.ProcessAwaitRestaurantDecisionDeferredCompletionStep",
+            contractSteps.get(1).getAsJsonObject().get("clientClass").getAsString());
+    }
+
     private void writeMetadata(Path pipelineYaml, Path outputDir) throws IOException {
         writeMetadata(pipelineYaml, outputDir, Map.of());
     }
