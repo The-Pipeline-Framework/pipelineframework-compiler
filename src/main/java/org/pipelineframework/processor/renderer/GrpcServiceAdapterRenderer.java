@@ -124,6 +124,13 @@ public record GrpcServiceAdapterRenderer(GenerationTarget target) implements Pip
                 .addAnnotation(AnnotationSpec.builder(RuntimeSymbols.INJECT).build())
                 .build();
         grpcServiceBuilder.addField(serviceField);
+        if (model.pagedSource()) {
+            grpcServiceBuilder.addField(FieldSpec.builder(
+                ClassName.get("org.pipelineframework.paging", "RemotePagedSourceBridge"),
+                "pageBridge", Modifier.PRIVATE)
+                .addAnnotation(AnnotationSpec.builder(RuntimeSymbols.INJECT).build())
+                .build());
+        }
 
         // Add the required gRPC service method implementation based on streaming shape
         switch (model.streamingShape()) {
@@ -140,8 +147,81 @@ public record GrpcServiceAdapterRenderer(GenerationTarget target) implements Pip
                 addStreamingStreamingMethod(grpcServiceBuilder, binding, messager, boundary);
                 break;
         }
+        if (model.pagedSource()) {
+            addRemoteOpenPageMethod(grpcServiceBuilder, binding, messager, boundary);
+        }
 
         return grpcServiceBuilder.build();
+    }
+
+    private void addRemoteOpenPageMethod(TypeSpec.Builder builder, GrpcBinding binding,
+            PipelineCompilerDiagnostics diagnostics,
+            TransportBoundaryResolver.RepresentationBoundary boundary) {
+        PipelineStepModel model = binding.model();
+        if (model.streamingShape() != org.pipelineframework.processor.ir.StreamingShape.UNARY_STREAMING
+            || !(binding.serviceDescriptor() instanceof com.google.protobuf.Descriptors.ServiceDescriptor serviceDescriptor)) {
+            throw new IllegalStateException("paged gRPC source requires a unary-streaming service descriptor");
+        }
+        var method = serviceDescriptor.findMethodByName("remoteOpenPage");
+        if (method == null || method.isClientStreaming() || !method.isServerStreaming()) {
+            throw new IllegalStateException("paged gRPC source is missing remoteOpenPage");
+        }
+        var pageTypes = GRPC_TYPE_RESOLVER.resolve(
+            new GrpcBinding(model, serviceDescriptor, method), diagnostics);
+        TypeName requestType = pageTypes.grpcParameterType();
+        TypeName frameType = pageTypes.grpcReturnType();
+        ClassName completionType = ((ClassName) frameType)
+            .peerClass(((ClassName) frameType).simpleName().replaceFirst("PageFrame$", "PageCompletion"));
+        TypeName domainInput = boundary.stepInputType();
+        TypeName domainOutput = boundary.stepOutputType();
+        ClassName operation = ClassName.get("org.pipelineframework.paging", "PagedSourceOperation");
+        ClassName pageRequest = ClassName.get("org.pipelineframework.paging", "PagedSourceRequest");
+        ClassName pageStream = ClassName.get("org.pipelineframework.paging", "PagedSourceStream");
+        CodeBlock input = boundary.convertsAtBoundary()
+            ? CodeBlock.of("$T.fromProto(request.getInput())", boundary.inputAdapterOrThrow())
+            : CodeBlock.of("inboundMapper.fromExternal(request.getInput())");
+        CodeBlock output = boundary.convertsAtBoundary()
+            ? CodeBlock.of("$T.toProto(item)", boundary.outputAdapterOrThrow())
+            : CodeBlock.of("outboundMapper.toExternal(item)");
+        MethodSpec.Builder methodBuilder = MethodSpec.methodBuilder("remoteOpenPage")
+            .addAnnotation(Override.class)
+            .addAnnotation(AnnotationSpec.builder(SuppressWarnings.class)
+                .addMember("value", "$S", "unchecked").build())
+            .addModifiers(Modifier.PUBLIC)
+            .returns(ParameterizedTypeName.get(RuntimeSymbols.MULTI, frameType))
+            .addParameter(requestType, "request")
+            .beginControlFlow("try")
+            .addStatement("pageBridge.validateRelease(request.getPipelineId(), request.getContractVersion(), "
+                + "request.getReleaseVersion(), request.getCatalogFingerprint())")
+            .nextControlFlow("catch ($T mismatch)", IllegalArgumentException.class)
+            .addStatement("throw $T.FAILED_PRECONDITION.withDescription(mismatch.getMessage()).asRuntimeException()",
+                ClassName.get("io.grpc", "Status"))
+            .endControlFlow()
+            .beginControlFlow("if (!$T.class.isInstance(service))", operation)
+            .addStatement("throw $T.UNIMPLEMENTED.withDescription($S).asRuntimeException()",
+                ClassName.get("io.grpc", "Status"), "remote source does not implement PagedSourceOperation")
+            .endControlFlow()
+            .addStatement("$T input = $L", domainInput, input)
+            .addStatement("$T<$T> pageRequest = new $T<>(input, request.getSourceIdentity(), "
+                    + "request.hasStartCheckpoint() ? $T.of(request.getStartCheckpoint()) : $T.empty(), "
+                    + "request.getMaxRecords())",
+                pageRequest, domainInput, pageRequest, java.util.Optional.class, java.util.Optional.class)
+            .addStatement("$T<$T, $T> source = ($T<$T, $T>) $T.class.cast(service)",
+                operation, domainInput, domainOutput, operation, domainInput, domainOutput, operation)
+            .addStatement("$T<$T> opened = source.openPage(pageRequest)", pageStream, domainOutput)
+            .addCode("return pageBridge.serve(opened, pageRequest,\n")
+            .addCode("    item -> $T.newBuilder().setItem($L).build(),\n", frameType, output)
+            .addCode("    completion -> {\n")
+            .addCode("      var result = $T.newBuilder()\n", completionType)
+            .addCode("          .setConsumedRecords(completion.consumedRecords())\n")
+            .addCode("          .setExhausted(completion.exhausted());\n")
+            .addCode("      completion.nextCheckpoint().ifPresent(result::setNextCheckpoint);\n")
+            .addCode("      return $T.newBuilder().setCompletion(result.build()).build();\n", frameType)
+            .addCode("    });\n");
+        if (model.executionMode() == org.pipelineframework.processor.ir.ExecutionMode.VIRTUAL_THREADS) {
+            methodBuilder.addAnnotation(ClassName.get("io.smallrye.common.annotation", "RunOnVirtualThread"));
+        }
+        builder.addMethod(methodBuilder.build());
     }
 
     /**

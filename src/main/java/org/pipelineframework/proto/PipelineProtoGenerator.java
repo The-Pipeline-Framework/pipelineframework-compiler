@@ -141,7 +141,8 @@ public class PipelineProtoGenerator {
         }
 
         boolean sharedTypes = config.dialect() != org.pipelineframework.config.template.PipelineTemplateDialect.V1;
-        List<ResolvedStep> resolvedSteps = normalizeSteps(steps, sharedTypes);
+        List<ResolvedStep> resolvedSteps = normalizeSteps(steps, sharedTypes,
+            config.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3);
         if (config.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
             resolvedSteps = resolveV3AliasContracts(resolvedSteps, config.typeModel());
         }
@@ -317,7 +318,7 @@ public class PipelineProtoGenerator {
         }
     }
 
-    private List<ResolvedStep> normalizeSteps(List<PipelineTemplateStep> steps, boolean v2) {
+    private List<ResolvedStep> normalizeSteps(List<PipelineTemplateStep> steps, boolean v2, boolean v3) {
         List<ResolvedStep> resolved = new ArrayList<>();
         ResolvedStep previous = null;
         for (int i = 0; i < steps.size(); i++) {
@@ -340,7 +341,8 @@ public class PipelineProtoGenerator {
                 step.outputTypeName(),
                 step.operationOutputTypeName(),
                 step.outputFields(),
-                step.execution());
+                step.execution(),
+                v3 && step.paging().isPresent());
             resolved.add(resolvedStep);
             previous = resolvedStep;
         }
@@ -361,7 +363,8 @@ public class PipelineProtoGenerator {
             resolveV3ProtoContract(step.outputTypeName(), typeModel),
             resolveV3ProtoContract(step.operationOutputTypeName(), typeModel),
             step.outputFields(),
-            step.execution())).toList();
+            step.execution(),
+            step.pagedSource())).toList();
     }
 
     private String resolveV3ProtoContract(
@@ -704,6 +707,9 @@ public class PipelineProtoGenerator {
             builder.append('\n');
         }
 
+        if (step.pagedSource()) {
+            renderPageMessages(builder, step, firstStep ? step.inputTypeName() : previous.outputTypeName());
+        }
         renderService(builder, step, previous, firstStep, v2);
         builder.append('\n');
         renderAspectServices(builder, step, firstStep, aspects);
@@ -902,6 +908,12 @@ public class PipelineProtoGenerator {
                 .append(") returns (stream ")
                 .append(outputType)
                 .append(");\n");
+            if (step.pagedSource()) {
+                builder.append("  rpc remoteOpenPage(")
+                    .append(step.serviceNameFormatted()).append("PageRequest)")
+                    .append(" returns (stream ")
+                    .append(step.serviceNameFormatted()).append("PageFrame);\n");
+            }
         } else if (canonicalCardinality == CardinalitySemantics.MANY_TO_MANY) {
             builder.append("  rpc remoteProcess(stream ")
                 .append(inputType)
@@ -922,6 +934,30 @@ public class PipelineProtoGenerator {
                 .append(");\n");
         }
         builder.append("}\n");
+    }
+
+    private void renderPageMessages(StringBuilder builder, ResolvedStep step, String inputType) {
+        String prefix = step.serviceNameFormatted();
+        builder.append("message ").append(prefix).append("PageRequest {\n")
+            .append("  ").append(inputType).append(" input = 1;\n")
+            .append("  string source_identity = 2;\n")
+            .append("  optional string start_checkpoint = 3;\n")
+            .append("  int32 max_records = 4;\n")
+            .append("  string pipeline_id = 5;\n")
+            .append("  string contract_version = 6;\n")
+            .append("  string release_version = 7;\n")
+            .append("  string catalog_fingerprint = 8;\n")
+            .append("}\n\n")
+            .append("message ").append(prefix).append("PageCompletion {\n")
+            .append("  int32 consumed_records = 1;\n")
+            .append("  optional string next_checkpoint = 2;\n")
+            .append("  bool exhausted = 3;\n")
+            .append("}\n\n")
+            .append("message ").append(prefix).append("PageFrame {\n")
+            .append("  oneof payload {\n")
+            .append("    ").append(step.operationOutputTypeName()).append(" item = 1;\n")
+            .append("    ").append(prefix).append("PageCompletion completion = 2;\n")
+            .append("  }\n}\n\n");
     }
 
     private void renderAspectServices(
@@ -1313,7 +1349,8 @@ public class PipelineProtoGenerator {
         String outputTypeName,
         String operationOutputTypeName,
         List<PipelineTemplateField> outputFields,
-        PipelineTemplateStepExecution execution
+        PipelineTemplateStepExecution execution,
+        boolean pagedSource
     ) {
     }
 

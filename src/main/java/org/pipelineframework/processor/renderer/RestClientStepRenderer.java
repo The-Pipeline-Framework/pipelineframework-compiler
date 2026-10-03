@@ -118,6 +118,23 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
         };
 
         interfaceBuilder.addMethod(processMethod);
+        if (model.pagedSource()) {
+            ClassName pageRequest = ClassName.get("org.pipelineframework.paging", "RemotePageRequest");
+            ClassName pageFrame = ClassName.get("org.pipelineframework.paging", "RemotePageWireFrame");
+            interfaceBuilder.addMethod(MethodSpec.methodBuilder("openPage")
+                .addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "POST")).build())
+                .addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Path"))
+                    .addMember("value", "$S", operationPath.endsWith("/")
+                        ? operationPath + "page" : operationPath + "/page").build())
+                .addAnnotation(AnnotationSpec.builder(
+                    ClassName.get("org.jboss.resteasy.reactive", "RestStreamElementType"))
+                    .addMember("value", "$S", "application/json").build())
+                .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
+                .returns(ParameterizedTypeName.get(RuntimeSymbols.MULTI,
+                    ParameterizedTypeName.get(pageFrame, outputDto)))
+                .addParameter(ParameterizedTypeName.get(pageRequest, inputDto), "request")
+                .build());
+        }
         return interfaceBuilder.build();
     }
 
@@ -195,6 +212,11 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
 
         clientStepBuilder.addField(restClientField);
         clientStepBuilder.addField(invocationRuntimeField);
+        if (model.pagedSource()) {
+            clientStepBuilder.addField(FieldSpec.builder(
+                ClassName.get("org.pipelineframework.paging", "RemotePagedSourceBridge"), "pageBridge")
+                .addAnnotation(AnnotationSpec.builder(RuntimeSymbols.INJECT).build()).build());
+        }
         MethodSpec constructor = MethodSpec.constructorBuilder()
             .addModifiers(Modifier.PUBLIC)
             .build();
@@ -301,6 +323,38 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
                     .build();
                 clientStepBuilder.addMethod(applyTransformMethod);
             }
+        }
+        if (model.pagedSource()) {
+            ClassName operation = ClassName.get("org.pipelineframework.paging", "PagedSourceOperation");
+            ClassName request = ClassName.get("org.pipelineframework.paging", "PagedSourceRequest");
+            ClassName stream = ClassName.get("org.pipelineframework.paging", "PagedSourceStream");
+            ClassName frame = ClassName.get("org.pipelineframework.paging", "RemotePageFrame");
+            ClassName wireRequest = ClassName.get("org.pipelineframework.paging", "RemotePageRequest");
+            clientStepBuilder.addSuperinterface(ParameterizedTypeName.get(operation, inputDto, outputDto));
+            clientStepBuilder.addMethod(MethodSpec.methodBuilder("openPage")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .returns(ParameterizedTypeName.get(stream, outputDto))
+                .addParameter(ParameterizedTypeName.get(request, inputDto), "request")
+                .addStatement("var identity = $T.get().orElseThrow(() -> new $T($S))",
+                    ClassName.get("org.pipelineframework.execution", "PipelineExecutionContextHolder"),
+                    IllegalStateException.class, "remote page requires a pinned execution identity")
+                .addStatement("var wire = new $T<>(request.input(), request.sourceIdentity(), request.checkpoint(), "
+                    + "request.maxRecords(), identity.pipelineId(), identity.contractVersion(), "
+                    + "identity.releaseVersion(), pageBridge.catalogFingerprint())",
+                    wireRequest)
+                .addCode("return pageBridge.open(request,\n")
+                .addCode("    invocationRuntime.invokeTransportMulti(this, () -> $T.instrumentClient($S, $S, "
+                    + "restClient.openPage(wire))),\n",
+                    ClassName.get("org.pipelineframework.telemetry", "HttpMetrics"),
+                    model.serviceName(), "openPage")
+                .addCode("    wireFrame -> {\n")
+                .addCode("      if (wireFrame.item().isPresent()) {\n")
+                .addCode("        return new $T.Item<>(wireFrame.item().orElseThrow());\n", frame)
+                .addCode("      }\n")
+                .addCode("      return new $T.Completion<>(wireFrame.completion().orElseThrow());\n", frame)
+                .addCode("    });\n")
+                .build());
         }
 
         return clientStepBuilder.build();

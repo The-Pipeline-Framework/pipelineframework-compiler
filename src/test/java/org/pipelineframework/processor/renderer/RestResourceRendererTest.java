@@ -22,6 +22,33 @@ class RestResourceRendererTest {
     Path tempDir;
 
     @Test
+    void pagedSourceResourceDelegatesToProviderAndEmitsPageFrames() throws IOException {
+        PipelineStepModel model = new PipelineStepModel.Builder()
+            .serviceName("ReadPaymentsService")
+            .servicePackage("org.pipelineframework.csv.service")
+            .serviceClassName(ClassName.get("org.pipelineframework.csv.service", "ReadPaymentsService"))
+            .streamingShape(StreamingShape.UNARY_STREAMING)
+            .executionMode(ExecutionMode.DEFAULT)
+            .pagedSource(true)
+            .inputMapping(new TypeMapping(ClassName.get("org.pipelineframework.csv.domain", "Input"),
+                ClassName.get("org.pipelineframework.csv.mapper", "InputMapper"), true))
+            .outputMapping(new TypeMapping(ClassName.get("org.pipelineframework.csv.domain", "Record"),
+                ClassName.get("org.pipelineframework.csv.mapper", "RecordMapper"), true))
+            .enabledTargets(Set.of(GenerationTarget.REST_RESOURCE))
+            .build();
+        ProcessingEnvironment env = mock(ProcessingEnvironment.class);
+        GenerationContext context = Jsr269GenerationContext.create(env, tempDir,
+            DeploymentRole.REST_SERVER, Set.of(), null, null);
+        new RestResourceRenderer().render(new RestBinding(model, "/source"), context);
+        String source = Files.readString(tempDir.resolve(
+            "org/pipelineframework/csv/service/pipeline/ReadPaymentsResource.java"));
+        assertTrue(source.contains("@Path(\"/page\")"));
+        assertTrue(source.contains("pageBridge.validateRelease"));
+        assertTrue(source.contains("source.openPage(pageRequest)"));
+        assertTrue(source.contains("pageBridge.serve(opened, pageRequest"));
+    }
+
+    @Test
     void rendersUnaryResourceMatchingCsvPaymentExample() throws IOException {
         PipelineStepModel model = new PipelineStepModel.Builder()
             .serviceName("ProcessPaymentStatusReactiveService")
