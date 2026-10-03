@@ -432,14 +432,13 @@ public class PipelineContractMetadataGenerator {
         if (config == null || config.steps() == null || config.steps().isEmpty()) {
             return models.stream().filter(model -> !model.sideEffect()).toList();
         }
+        Set<String> authoredTokens = indexYamlSteps(config).keySet();
         Map<String, PipelineStepModel> byToken = new LinkedHashMap<>();
         for (PipelineStepModel model : models) {
             if (model.sideEffect()) {
                 continue;
             }
-            byToken.put(normalizeStepToken(stepTokenFromModel(model)), model);
-            byToken.put(normalizeStepToken(stripTrailingService(model.generatedName())), model);
-            byToken.put(normalizeStepToken(model.serviceName()), model);
+            byToken.put(matchedStepToken(model, authoredTokens), model);
         }
         List<PipelineStepModel> ordered = new ArrayList<>();
         Set<PipelineStepModel> added = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
@@ -453,19 +452,30 @@ public class PipelineContractMetadataGenerator {
             if (model != null && added.add(model)) {
                 ordered.add(model);
                 addedTokens.add(token);
-                // stepTokenFromModel strips Process: ProcessCsvPaymentsInput becomes CsvPaymentsInput.
-                // Remember that alias so the second generated role cannot append the authored step again.
-                addedTokens.add(normalizeStepToken(stepTokenFromModel(model)));
             }
         }
         for (PipelineStepModel model : models) {
-            String token = normalizeStepToken(stepTokenFromModel(model));
+            String token = matchedStepToken(model, authoredTokens);
             if (!model.sideEffect() && !addedTokens.contains(token) && added.add(model)) {
                 ordered.add(model);
                 addedTokens.add(token);
             }
         }
         return ordered;
+    }
+
+    private static String matchedStepToken(PipelineStepModel model, Set<String> authoredTokens) {
+        String token = normalizeStepToken(stepTokenFromModel(model));
+        if (authoredTokens.contains(token)) {
+            return token;
+        }
+        // Generated-name aliases only apply when no authored step owns the primary token.
+        String generatedToken = normalizeStepToken(stripTrailingService(model.generatedName()));
+        if (authoredTokens.contains(generatedToken)) {
+            return generatedToken;
+        }
+        String serviceToken = normalizeStepToken(model.serviceName());
+        return authoredTokens.contains(serviceToken) ? serviceToken : token;
     }
 
     private static Map<String, Object> capabilities() {
