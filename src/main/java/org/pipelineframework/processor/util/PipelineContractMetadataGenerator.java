@@ -453,7 +453,8 @@ public class PipelineContractMetadataGenerator {
             if (model != null && added.add(model)) {
                 ordered.add(model);
                 addedTokens.add(token);
-                // Generated server/client roles may use a token without the authored Process prefix.
+                // stepTokenFromModel strips Process: ProcessCsvPaymentsInput becomes CsvPaymentsInput.
+                // Remember that alias so the second generated role cannot append the authored step again.
                 addedTokens.add(normalizeStepToken(stepTokenFromModel(model)));
             }
         }
