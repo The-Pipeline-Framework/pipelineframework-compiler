@@ -461,6 +461,105 @@ class PipelineContractMetadataGeneratorTest {
             contractSteps.get(1).getAsJsonObject().get("clientClass").getAsString());
     }
 
+    @Test
+    void emitsOneDescriptorPerProcessPrefixedAuthoredStepWithMultipleGeneratedRoles() throws IOException {
+        Path pipelineYaml = writePipelineYaml();
+        Files.writeString(pipelineYaml, Files.readString(pipelineYaml)
+            .replace("name: Validate Order Request", "name: ProcessValidateOrderRequest"));
+        Path output = tempDir.resolve("monolith");
+        ProcessingEnvironment processingEnv = processingEnv(output, Map.of("pipeline.config", pipelineYaml.toString()));
+        RoundEnvironment roundEnv = mock(RoundEnvironment.class);
+        PipelineCompilationContext ctx = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        ctx.setModuleName("orchestrator-svc");
+        ctx.setPlatformMode(PlatformMode.COMPUTE);
+        ctx.setTransportMode(PipelineTransport.REST);
+        ctx.setRuntimeMapping(new PipelineRuntimeMapping(
+            PipelineRuntimeMapping.Layout.MONOLITH,
+            PipelineRuntimeMapping.Validation.AUTO,
+            PipelineRuntimeMapping.Defaults.defaultValues(),
+            Map.of(),
+            Map.of(),
+            Map.of(),
+            Map.of()));
+
+        PipelineStepModel validateServer = step(
+            "ProcessValidateOrderRequestService", "PlaceRestaurantOrderRequest", "ValidatedRestaurantOrderRequest",
+            StreamingShape.UNARY_UNARY, Set.of(GenerationTarget.REST_RESOURCE));
+        PipelineStepModel validateClient = step(
+            "ProcessValidateOrderRequestService", "PlaceRestaurantOrderRequest", "ValidatedRestaurantOrderRequest",
+            StreamingShape.UNARY_UNARY, Set.of(GenerationTarget.REST_CLIENT_STEP));
+        ctx.setStepModels(java.util.List.of(
+            validateServer,
+            validateClient,
+            deferredStep()));
+
+        PipelineContractMetadataGenerator generator = new PipelineContractMetadataGenerator(processingEnv);
+        generator.writePipelineContract(ctx);
+
+        JsonArray contractSteps = readContract(output).getAsJsonArray("steps");
+        assertEquals(2, contractSteps.size());
+        assertEquals("ProcessValidateOrderRequest",
+            contractSteps.get(0).getAsJsonObject().get("authoredName").getAsString());
+        assertEquals(0, contractSteps.get(0).getAsJsonObject().get("index").getAsInt());
+        assertEquals(1, contractSteps.get(1).getAsJsonObject().get("index").getAsInt());
+        assertEquals(
+            "org.example.restaurant.pipeline.ProcessValidateOrderRequestRestClientStep",
+            contractSteps.get(0).getAsJsonObject().get("clientClass").getAsString());
+        assertEquals(
+            "org.example.restaurant.pipeline.ProcessAwaitRestaurantDecisionDeferredCompletionStep",
+            contractSteps.get(1).getAsJsonObject().get("clientClass").getAsString());
+    }
+
+    @Test
+    void preservesCommandWhenInternalStepSharesItsGeneratedServiceName() throws IOException {
+        Path yaml = tempDir.resolve("shared-service.yaml");
+        Files.writeString(yaml, """
+            version: 2
+            appName: Shared service contract
+            basePackage: org.example.restaurant
+            transport: REST
+            platform: COMPUTE
+            steps:
+              - name: Process Foo
+                cardinality: ONE_TO_ONE
+              - name: Foo
+                cardinality: ONE_TO_ONE
+            """);
+        var operation = org.pipelineframework.processor.ir.ConnectorOperationSelection.command("Process Foo",
+            org.pipelineframework.connector.ConnectorBindingName.of("jobs"),
+            new org.pipelineframework.connector.ConnectorOperationIdentity(ConnectorProviderId.of("test.jobs"),
+                "start", org.pipelineframework.connector.ConnectorOperationKind.COMMAND, 1), 1, Map.of(),
+            new org.pipelineframework.processor.ir.ConnectorOperationSelection.CommandSelection(
+                ClassName.get("org.example", "IdGenerator"), org.pipelineframework.command.CommandDuplicatePolicy.RETURN_RECORDED,
+                org.pipelineframework.connector.CommandPolicy.none()));
+        var command = step("ProcessFooService", "CommandInput", "CommandOutput", StreamingShape.UNARY_UNARY,
+            Set.of(GenerationTarget.COMMAND_CLIENT_STEP)).toBuilder().connectorOperationSelection(operation).build();
+        var server = step("ProcessFooService", "InternalInput", "InternalOutput", StreamingShape.UNARY_UNARY,
+            Set.of(GenerationTarget.REST_RESOURCE));
+        var client = step("ProcessFooService", "InternalInput", "InternalOutput", StreamingShape.UNARY_UNARY,
+            Set.of(GenerationTarget.REST_CLIENT_STEP));
+        for (var models : List.of(List.of(command, server, client), List.of(server, client, command))) {
+            Path output = tempDir.resolve("shared-service-" + models.indexOf(command));
+            var processing = processingEnv(output, Map.of("pipeline.config", yaml.toString()));
+            var context = new PipelineCompilationContext(processing, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+            context.setModuleName("orchestrator-svc");
+            context.setPlatformMode(PlatformMode.COMPUTE);
+            context.setTransportMode(PipelineTransport.REST);
+            context.setStepModels(models);
+            new PipelineContractMetadataGenerator(processing).writePipelineContract(context);
+            var steps = readContract(output).getAsJsonArray("steps");
+            assertEquals(2, steps.size());
+            var commandDescriptor = steps.get(0).getAsJsonObject();
+            assertEquals("Process Foo", commandDescriptor.get("authoredName").getAsString());
+            assertEquals("command", commandDescriptor.get("kind").getAsString());
+            assertEquals("org.example.restaurant.domain.CommandInput", commandDescriptor.get("inputTypeId").getAsString());
+            var internalDescriptor = steps.get(1).getAsJsonObject();
+            assertEquals("Foo", internalDescriptor.get("authoredName").getAsString());
+            assertEquals("internal", internalDescriptor.get("kind").getAsString());
+            assertEquals("org.example.restaurant.domain.InternalInput", internalDescriptor.get("inputTypeId").getAsString());
+        }
+    }
+
     private void writeMetadata(Path pipelineYaml, Path outputDir) throws IOException {
         writeMetadata(pipelineYaml, outputDir, Map.of());
     }
