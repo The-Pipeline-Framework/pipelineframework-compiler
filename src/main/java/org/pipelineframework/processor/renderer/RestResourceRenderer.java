@@ -108,6 +108,13 @@ public class RestResourceRenderer implements PipelineRenderer<RestBinding> {
             .addAnnotation(AnnotationSpec.builder(RuntimeSymbols.INJECT).build())
             .build();
         resourceBuilder.addField(serviceField);
+        if (model.pagedSource()) {
+            resourceBuilder.addField(FieldSpec.builder(
+                ClassName.get("org.pipelineframework.paging", "RemotePagedSourceBridge"),
+                "pageBridge")
+                .addAnnotation(AnnotationSpec.builder(RuntimeSymbols.INJECT).build())
+                .build());
+        }
         CanonicalTransportBindingPair normalizedTransport = CanonicalTransportBindingResolver.resolveAndEnsure(
             ctx, model, PipelineTransport.REST);
         // Legacy templates derive DTOs from Java package conventions; v3 uses the normalized type model.
@@ -187,8 +194,65 @@ public class RestResourceRenderer implements PipelineRenderer<RestBinding> {
         };
 
         resourceBuilder.addMethod(processMethod);
+        if (model.pagedSource()) {
+            addRemoteOpenPage(resourceBuilder, model, inputDtoClassName, outputDtoClassName,
+                domainInputType, domainOutputType, operationPath);
+        }
 
         return resourceBuilder.build();
+    }
+
+    private void addRemoteOpenPage(TypeSpec.Builder builder, PipelineStepModel model,
+            TypeName inputDto, TypeName outputDto, TypeName domainInput, TypeName domainOutput,
+            String operationPath) {
+        if (model.streamingShape() != org.pipelineframework.processor.ir.StreamingShape.UNARY_STREAMING) {
+            throw new IllegalStateException("paged REST source requires ONE_TO_MANY cardinality");
+        }
+        ClassName wireRequest = ClassName.get("org.pipelineframework.paging", "RemotePageRequest");
+        ClassName wireFrame = ClassName.get("org.pipelineframework.paging", "RemotePageWireFrame");
+        ClassName operation = ClassName.get("org.pipelineframework.paging", "PagedSourceOperation");
+        ClassName pageRequest = ClassName.get("org.pipelineframework.paging", "PagedSourceRequest");
+        ClassName pageStream = ClassName.get("org.pipelineframework.paging", "PagedSourceStream");
+        MethodSpec.Builder method = MethodSpec.methodBuilder("openPage")
+            .addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "POST")).build())
+            .addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Path"))
+                .addMember("value", "$S", operationPath.endsWith("/")
+                    ? operationPath + "page" : operationPath + "/page").build())
+            .addAnnotation(AnnotationSpec.builder(
+                ClassName.get("org.jboss.resteasy.reactive", "RestStreamElementType"))
+                .addMember("value", "$S", "application/json").build())
+            .addAnnotation(AnnotationSpec.builder(SuppressWarnings.class)
+                .addMember("value", "$S", "unchecked").build())
+            .addModifiers(Modifier.PUBLIC)
+            .returns(ParameterizedTypeName.get(RuntimeSymbols.MULTI,
+                ParameterizedTypeName.get(wireFrame, outputDto)))
+            .addParameter(ParameterizedTypeName.get(wireRequest, inputDto), "request")
+            .beginControlFlow("try")
+            .addStatement("pageBridge.validateRelease(request.pipelineId(), request.contractVersion(), "
+                + "request.releaseVersion(), request.catalogFingerprint())")
+            .nextControlFlow("catch ($T mismatch)", IllegalArgumentException.class)
+            .addStatement("throw new $T(mismatch.getMessage(), 409)",
+                ClassName.get("jakarta.ws.rs", "WebApplicationException"))
+            .endControlFlow()
+            .beginControlFlow("if (!$T.class.isInstance(domainService))", operation)
+            .addStatement("throw new $T($S, 501)",
+                ClassName.get("jakarta.ws.rs", "WebApplicationException"),
+                "remote source does not implement PagedSourceOperation")
+            .endControlFlow()
+            .addStatement("$T input = inboundMapper.fromExternal(request.input())", domainInput)
+            .addStatement("$T<$T> pageRequest = new $T<>(input, request.sourceIdentity(), "
+                    + "request.startCheckpoint(), request.maxRecords())",
+                pageRequest, domainInput, pageRequest)
+            .addStatement("$T<$T, $T> source = ($T<$T, $T>) $T.class.cast(domainService)",
+                operation, domainInput, domainOutput, operation, domainInput, domainOutput, operation)
+            .addStatement("$T<$T> opened = source.openPage(pageRequest)", pageStream, domainOutput)
+            .addStatement("return pageBridge.serve(opened, pageRequest, "
+                    + "item -> $T.item(outboundMapper.toExternal(item)), $T::completion)",
+                wireFrame, wireFrame);
+        if (model.executionMode() == org.pipelineframework.processor.ir.ExecutionMode.VIRTUAL_THREADS) {
+            method.addAnnotation(ClassName.get("io.smallrye.common.annotation", "RunOnVirtualThread"));
+        }
+        builder.addMethod(method.build());
     }
 
     /**

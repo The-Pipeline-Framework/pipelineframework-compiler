@@ -23,6 +23,35 @@ class RestClientStepRendererTest {
     Path tempDir;
 
     @Test
+    void pagedSourceGetsSeparateRestPageEndpointAndOperation() throws IOException {
+        PipelineStepModel model = new PipelineStepModel.Builder()
+            .serviceName("ReadPaymentsService")
+            .servicePackage("org.pipelineframework.csv.service")
+            .serviceClassName(ClassName.get("org.pipelineframework.csv.service", "ReadPaymentsService"))
+            .streamingShape(StreamingShape.UNARY_STREAMING)
+            .executionMode(ExecutionMode.DEFAULT)
+            .pagedSource(true)
+            .inputMapping(new TypeMapping(ClassName.get("org.pipelineframework.csv.domain", "Input"),
+                ClassName.get("org.pipelineframework.csv.mapper", "InputMapper"), true))
+            .outputMapping(new TypeMapping(ClassName.get("org.pipelineframework.csv.domain", "Record"),
+                ClassName.get("org.pipelineframework.csv.mapper", "RecordMapper"), true))
+            .enabledTargets(java.util.Set.of(GenerationTarget.REST_CLIENT_STEP))
+            .build();
+        ProcessingEnvironment env = mock(ProcessingEnvironment.class);
+        when(env.getOptions()).thenReturn(Map.of());
+        GenerationContext context = Jsr269GenerationContext.create(env, tempDir,
+            DeploymentRole.ORCHESTRATOR_CLIENT, java.util.Set.of(), null, null);
+        new RestClientStepRenderer().render(new RestBinding(model, "/source"), context);
+        Path path = tempDir.resolve("org/pipelineframework/csv/service/pipeline");
+        String client = Files.readString(path.resolve("ReadPaymentsRestClient.java"));
+        String step = Files.readString(path.resolve("ReadPaymentsRestClientStep.java"));
+        assertTrue(client.contains("@Path(\"/page\")"));
+        assertTrue(client.contains("Multi<RemotePageWireFrame<RecordDto>> openPage("));
+        assertTrue(step.contains("PagedSourceOperation<InputDto, RecordDto>"));
+        assertTrue(step.contains("pageBridge.open(request"));
+    }
+
+    @Test
     void rendersUnaryRestClientStepWithConfigKey() throws IOException {
         PipelineStepModel model = new PipelineStepModel.Builder()
             .serviceName("ProcessPaymentStatusReactiveService")

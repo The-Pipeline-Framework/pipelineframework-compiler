@@ -47,6 +47,40 @@ class PipelineProtoGeneratorTest {
     Path tempDir;
 
     @Test
+    void v3PagedSourceAddsPageRpcWithoutChangingRemoteProcess() throws Exception {
+        Path config = tempDir.resolve("paged.yaml");
+        Path output = tempDir.resolve("paged-generated");
+        Files.writeString(config, """
+            version: 3
+            appName: Paged
+            basePackage: com.example.paged
+            transport: GRPC
+            types:
+              Source: { fields: [[id, string]] }
+              Record: { fields: [[id, string]] }
+            steps:
+              - name: Read source
+                cardinality: ONE_TO_MANY
+                input: Source
+                output: Record
+                paging: { maxRecords: 10 }
+            """);
+        System.setProperty("pipeline.idl.bootstrap", "true");
+        try {
+            new PipelineProtoGenerator().generate(tempDir, config, output);
+        } finally {
+            System.clearProperty("pipeline.idl.bootstrap");
+        }
+        String source = Files.readString(output.resolve("read-source-svc.proto"));
+        assertTrue(source.contains("rpc remoteProcess(Source) returns (stream Record);"));
+        assertTrue(source.contains("rpc remoteOpenPage(ReadSourcePageRequest) returns (stream ReadSourcePageFrame);"));
+        assertTrue(source.contains("optional string start_checkpoint = 3;"));
+        assertTrue(source.contains("string catalog_fingerprint = 8;"));
+        assertTrue(source.contains("oneof payload"));
+        assertTrue(source.contains("ReadSourcePageCompletion completion = 2;"));
+    }
+
+    @Test
     void conciseAndVerboseTemplatesGenerateIdenticalArtifacts() throws Exception {
         String header = """
             version: 2

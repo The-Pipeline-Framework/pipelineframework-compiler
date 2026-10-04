@@ -64,7 +64,8 @@ public record PipelineStepModel(
         PipelineReference definition,
         Optional<ConnectorOperationSelection> connectorOperationSelection,
         Optional<DynamicOperationSelection> dynamicOperationSelection,
-        Optional<DeferredCompletionSelection> deferredCompletionSelection
+        Optional<DeferredCompletionSelection> deferredCompletionSelection,
+        boolean pagedSource
 ) {
     /** Returns this immutable semantic model with a provider-generated canonical facade as its service implementation. */
     public PipelineStepModel withServiceClassName(ClassName replacement) {
@@ -72,7 +73,7 @@ public record PipelineStepModel(
             streamingShape, enabledTargets, executionMode, deploymentRole, sideEffect, cacheKeyGenerator,
             orderingRequirement, threadSafety, delegateService, delegateMethodName, externalMapper, mapperFallbackMode,
             remoteExecution, serviceApiKind, reactiveReturnKind, aspectPosition, definition, connectorOperationSelection,
-            dynamicOperationSelection, deferredCompletionSelection);
+            dynamicOperationSelection, deferredCompletionSelection, pagedSource);
     }
 
     /** Returns this model with the implementation contract exposed by a provider-generated facade. */
@@ -87,7 +88,7 @@ public record PipelineStepModel(
             facadeStreamingShape, enabledTargets, executionMode, deploymentRole, sideEffect, cacheKeyGenerator,
             orderingRequirement, threadSafety, delegateService, delegateMethodName, externalMapper, mapperFallbackMode,
             remoteExecution, facadeApiKind, facadeReturnKind, aspectPosition, definition, connectorOperationSelection,
-            dynamicOperationSelection, deferredCompletionSelection);
+            dynamicOperationSelection, deferredCompletionSelection, pagedSource);
     }
 
     /**
@@ -302,6 +303,14 @@ public record PipelineStepModel(
             Optional<ConnectorOperationSelection> connectorOperationSelection,
             Optional<DynamicOperationSelection> dynamicOperationSelection,
             Optional<DeferredCompletionSelection> deferredCompletionSelection) {
+        this(serviceName, generatedName, servicePackage, serviceClassName, inputMapping, outputMapping,
+            streamingShape, enabledTargets, executionMode, deploymentRole, sideEffect, cacheKeyGenerator,
+            orderingRequirement, threadSafety, delegateService, delegateMethodName, externalMapper,
+            mapperFallbackMode, remoteExecution, serviceApiKind, reactiveReturnKind, aspectPosition,
+            definition, connectorOperationSelection, dynamicOperationSelection, deferredCompletionSelection, false);
+    }
+
+    public PipelineStepModel {
         // Validate non-null invariants
         if (serviceName == null)
             throw new IllegalArgumentException("serviceName cannot be null");
@@ -320,34 +329,22 @@ public record PipelineStepModel(
         if (deploymentRole == null)
             throw new IllegalArgumentException("deploymentRole cannot be null");
 
-        this.serviceName = serviceName;
-        this.generatedName = generatedName;
-        this.servicePackage = servicePackage;
-        this.serviceClassName = serviceClassName;
-        this.inputMapping = inputMapping != null ? inputMapping : TypeMapping.unresolved();
-        this.outputMapping = outputMapping != null ? outputMapping : TypeMapping.unresolved();
-        this.streamingShape = streamingShape;
-        this.enabledTargets = Set.copyOf(enabledTargets); // Defensive copy
-        this.executionMode = executionMode;
-        this.deploymentRole = deploymentRole;
-        this.sideEffect = sideEffect;
-        this.cacheKeyGenerator = cacheKeyGenerator;
-        this.orderingRequirement = orderingRequirement != null ? orderingRequirement : OrderingRequirement.RELAXED;
-        this.threadSafety = threadSafety != null ? threadSafety : ThreadSafety.SAFE;
-        this.delegateService = delegateService;
-        this.delegateMethodName = normalizeOptionalString(delegateMethodName);
-        this.externalMapper = externalMapper;
-        this.mapperFallbackMode = mapperFallbackMode == null ? MapperFallbackMode.NONE : mapperFallbackMode;
-        this.remoteExecution = remoteExecution;
-        this.serviceApiKind = serviceApiKind == null ? ServiceApiKind.REACTIVE : serviceApiKind;
-        this.reactiveReturnKind = reactiveReturnKind == null ? ReactiveReturnKind.MUTINY_UNI : reactiveReturnKind;
-        this.aspectPosition = aspectPosition == null ? Optional.empty() : aspectPosition;
-        this.definition = java.util.Objects.requireNonNull(definition, "definition cannot be null");
-        this.connectorOperationSelection = connectorOperationSelection == null
+        inputMapping = inputMapping != null ? inputMapping : TypeMapping.unresolved();
+        outputMapping = outputMapping != null ? outputMapping : TypeMapping.unresolved();
+        enabledTargets = Set.copyOf(enabledTargets);
+        orderingRequirement = orderingRequirement != null ? orderingRequirement : OrderingRequirement.RELAXED;
+        threadSafety = threadSafety != null ? threadSafety : ThreadSafety.SAFE;
+        delegateMethodName = normalizeOptionalString(delegateMethodName);
+        mapperFallbackMode = mapperFallbackMode == null ? MapperFallbackMode.NONE : mapperFallbackMode;
+        serviceApiKind = serviceApiKind == null ? ServiceApiKind.REACTIVE : serviceApiKind;
+        reactiveReturnKind = reactiveReturnKind == null ? ReactiveReturnKind.MUTINY_UNI : reactiveReturnKind;
+        aspectPosition = aspectPosition == null ? Optional.empty() : aspectPosition;
+        definition = java.util.Objects.requireNonNull(definition, "definition cannot be null");
+        connectorOperationSelection = connectorOperationSelection == null
             ? Optional.empty() : connectorOperationSelection;
-        this.dynamicOperationSelection = java.util.Objects.requireNonNull(
+        dynamicOperationSelection = java.util.Objects.requireNonNull(
             dynamicOperationSelection, "dynamicOperationSelection cannot be null");
-        this.deferredCompletionSelection = java.util.Objects.requireNonNull(
+        deferredCompletionSelection = java.util.Objects.requireNonNull(
             deferredCompletionSelection, "deferredCompletionSelection cannot be null");
     }
 
@@ -608,6 +605,7 @@ public record PipelineStepModel(
         private Optional<ConnectorOperationSelection> connectorOperationSelection = Optional.empty();
         private Optional<DynamicOperationSelection> dynamicOperationSelection = Optional.empty();
         private Optional<DeferredCompletionSelection> deferredCompletionSelection = Optional.empty();
+        private boolean pagedSource;
 
         /**
          * Sets the service name.
@@ -911,6 +909,11 @@ public record PipelineStepModel(
                 java.util.Objects.requireNonNull(selection, "deferredCompletionSelection cannot be null")));
         }
 
+        public Builder pagedSource(boolean value) {
+            this.pagedSource = value;
+            return this;
+        }
+
         /**
          * Create a PipelineStepModel populated from the builder's current state.
          *
@@ -962,7 +965,8 @@ public record PipelineStepModel(
                 definition,
                 connectorOperationSelection,
                 dynamicOperationSelection,
-                deferredCompletionSelection);
+                deferredCompletionSelection,
+                pagedSource);
         }
     }
     
@@ -999,7 +1003,8 @@ public record PipelineStepModel(
             definition,
             connectorOperationSelection,
             dynamicOperationSelection,
-            deferredCompletionSelection
+            deferredCompletionSelection,
+            pagedSource
         );
     }
 
@@ -1042,6 +1047,7 @@ public record PipelineStepModel(
             .definition(definition)
             .connectorOperationSelection(connectorOperationSelection)
             .dynamicOperationSelection(dynamicOperationSelection)
-            .deferredCompletionSelection(deferredCompletionSelection);
+            .deferredCompletionSelection(deferredCompletionSelection)
+            .pagedSource(pagedSource);
     }
 }

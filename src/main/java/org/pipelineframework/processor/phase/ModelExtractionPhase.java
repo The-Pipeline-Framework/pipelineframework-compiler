@@ -33,6 +33,18 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
     private static final String MAPPER_FALLBACK_GLOBAL_OPTION = "pipeline.mapper.fallback.enabled";
     private static final String DEFAULT_SERVICE_PACKAGE = "org.pipelineframework.pipeline.service";
 
+    private static boolean isPagedSource(
+        PipelineCompilationContext ctx, PipelineReference definition, String stepName) {
+        if (!ROOT.equals(definition)
+            || !(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
+            || config.dialect() != org.pipelineframework.config.template.PipelineTemplateDialect.V3
+            || config.steps() == null) {
+            return false;
+        }
+        return config.steps().stream().anyMatch(step -> step != null
+            && stepName.equals(step.name()) && step.paging().isPresent());
+    }
+
     private final ModelContextRoleEnricher contextRoleEnricher;
     private final AwaitStepTypeBindingResolver awaitTypeBindings;
 
@@ -638,6 +650,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             .inputMapping(new TypeMapping(inputType, java.util.Optional.ofNullable(inboundMapper), inboundMapper != null, inputType))
             .outputMapping(new TypeMapping(outputType, java.util.Optional.ofNullable(outboundMapper), outboundMapper != null, outputType))
             .streamingShape(serviceSignature.shape())
+            .pagedSource(isPagedSource(ctx, definition, stepDef.name()))
             .executionMode(resolvedExecutionMode)
             .serviceApiKind(serviceSignature.apiKind())
             .reactiveReturnKind(serviceSignature.reactiveReturnKind());
@@ -778,6 +791,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                 stepDef.outboundMapper() != null,
                 outputType))
             .streamingShape(streamingShape)
+            .pagedSource(isPagedSource(ctx, ROOT, stepDef.name()))
             .enabledTargets(targets)
             .executionMode(resolvedExecutionMode)
             .deploymentRole(crossModuleRole)
