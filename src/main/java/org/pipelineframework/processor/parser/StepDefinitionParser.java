@@ -51,6 +51,7 @@ import org.pipelineframework.processor.ir.MapperFallbackMode;
 import org.pipelineframework.processor.ir.ConnectorOperationSelection;
 import org.pipelineframework.processor.ir.DeferredCompletionDefinition;
 import org.pipelineframework.processor.ir.StepDefinition;
+import org.pipelineframework.processor.ir.StepExecutionShape;
 import org.pipelineframework.processor.ir.StepKind;
 import org.pipelineframework.processor.ir.StreamingShape;
 import org.pipelineframework.processor.routing.V3JavaTypeResolver;
@@ -414,102 +415,27 @@ public class StepDefinitionParser {
             delegatedMethodName = delegatedReference.get().methodName();
         }
 
-        if (!isBlank(delegatedClassName) && !isBlank(serviceClassName)) {
-            String message = "Skipping step '" + name + "': 'service' and delegated execution ('operator'/'delegate') are mutually exclusive";
-            LOG.warn(message);
-            report(Diagnostic.Kind.ERROR, message);
+        Optional<StepExecutionShape> selectedShape = selectStepExecutionShape(
+            name, rawKind, pipelineStep, commandStep, queryStep, dynamicOperationStep, remoteExecution,
+            delegatedClassName, serviceClassName);
+        if (selectedShape.isEmpty()) {
             return null;
         }
-        if (pipelineStep && (!isBlank(rawKind) || !isBlank(delegatedClassName) || !isBlank(serviceClassName) || remoteExecution != null)) {
-            String message = "Skipping step '" + name
-                + "': pipeline invocation may declare only pipeline plus ordinary typed step contracts";
-            LOG.warn(message);
-            report(Diagnostic.Kind.ERROR, message);
-            throw new StepSkippedException();
-        }
-        if (commandStep && (!isBlank(delegatedClassName) || !isBlank(serviceClassName) || remoteExecution != null)) {
-            String message = "Skipping step '" + name
-                + "': command steps are framework-owned effect boundaries and cannot declare 'service', 'operator', 'delegate',"
-                + " or remote 'execution'; use 'kind: command' with a command connector and id generator";
-            LOG.warn(message);
-            report(Diagnostic.Kind.ERROR, message);
-            return null;
-        }
-        if (queryStep && (!isBlank(delegatedClassName) || !isBlank(serviceClassName) || remoteExecution != null)) {
-            String message = "Skipping step '" + name
-                + "': query steps are framework-owned read boundaries and cannot declare 'service', 'operator', 'delegate',"
-                + " or remote 'execution'; use 'kind: query' with a referenced query connector definition";
-            LOG.warn(message);
-            report(Diagnostic.Kind.ERROR, message);
-            return null;
-        }
-        if (dynamicOperationStep && (!isBlank(rawKind) || !isBlank(delegatedClassName)
-            || !isBlank(serviceClassName) || remoteExecution != null || pipelineStep)) {
-            String message = "Skipping step '" + name
-                + "': operation.mode dynamic is an invocation binding and cannot declare kind or authored execution";
-            LOG.warn(message);
-            report(Diagnostic.Kind.ERROR, message);
-            return null;
-        }
-        if (!isBlank(rawKind)
-            && !commandStep
-            && !queryStep
-            && !"internal".equalsIgnoreCase(rawKind)
-            && !"delegated".equalsIgnoreCase(rawKind)
-            && !"delegate".equalsIgnoreCase(rawKind)
-            && !"remote".equalsIgnoreCase(rawKind)) {
-            String message = "Skipping step '" + name + "': unsupported kind '" + rawKind
-                + "'. Allowed values: internal, delegated, remote, command, query";
-            LOG.warn(message);
-            report(Diagnostic.Kind.ERROR, message);
-            return null;
-        }
-        if (remoteExecution != null && (!isBlank(delegatedClassName) || !isBlank(serviceClassName))) {
-            String message = "Skipping step '" + name
-                + "': remote execution is mutually exclusive with 'service', 'operator', and 'delegate'";
-            LOG.warn(message);
-            report(Diagnostic.Kind.ERROR, message);
+        StepExecutionShape executionShape = selectedShape.orElseThrow();
+        boolean inferredInternalService = executionShape == StepExecutionShape.INTERNAL && isBlank(serviceClassName);
+        StepKind kind = executionShape.kind();
+        String executionClassName = switch (executionShape) {
+            case INTERNAL -> inferredInternalService ? deriveLegacyServiceClassName(basePackage, name) : serviceClassName;
+            case DELEGATED -> delegatedClassName;
+            default -> "";
+        };
+        if (inferredInternalService && isBlank(executionClassName)) {
+            LOG.debugf("Skipping legacy step '%s' from YAML-driven StepDefinition parsing", name);
             return null;
         }
         boolean runOnVirtualThreads = parseOptionalBoolean(stepData, name, "runOnVirtualThreads");
-        boolean inferredLegacyInternal = !pipelineStep && !commandStep && !queryStep && !dynamicOperationStep
-            && isBlank(delegatedClassName) && isBlank(serviceClassName);
-
-        StepKind kind;
-        String executionClassName;
-
-        if (pipelineStep) {
-            kind = StepKind.PIPELINE;
-            executionClassName = null;
-        } else if (commandStep) {
-            kind = StepKind.COMMAND;
-            executionClassName = null;
-        } else if (queryStep) {
-            kind = StepKind.QUERY;
-            executionClassName = null;
-        } else if (dynamicOperationStep) {
-            kind = StepKind.INTERNAL;
-            executionClassName = null;
-        } else if (remoteExecution != null) {
-            kind = StepKind.REMOTE;
-            executionClassName = null;
-        } else if (!isBlank(delegatedClassName)) {
-            kind = StepKind.DELEGATED;
-            executionClassName = delegatedClassName;
-        } else if (!isBlank(serviceClassName)) {
-            kind = StepKind.INTERNAL;
-            executionClassName = serviceClassName;
-        } else {
-            String inferredService = deriveLegacyServiceClassName(basePackage, name);
-            if (isBlank(inferredService)) {
-                // Legacy template-format steps without basePackage cannot be mapped to an internal service class.
-                LOG.debugf("Skipping legacy step '%s' from YAML-driven StepDefinition parsing", name);
-                return null;
-            }
-            kind = StepKind.INTERNAL;
-            executionClassName = inferredService;
-        }
-        if (stepData.containsKey("runOnVirtualThreads") && kind != StepKind.INTERNAL) {
+        if (stepData.containsKey("runOnVirtualThreads")
+            && executionShape != StepExecutionShape.INTERNAL) {
             String message = "Skipping step '" + name
                 + "': runOnVirtualThreads is valid only for internal service steps";
             LOG.warn(message);
@@ -527,8 +453,8 @@ public class StepDefinitionParser {
         String outputTypeName = contracts.javaOutput().orElse(null);
 
         // Keep delegated input/output optional so they can be derived from delegate generics.
-        ClassName inputType = parseOptionalClassName(inputTypeName, name, "input", basePackage, inferredLegacyInternal);
-        ClassName outputType = parseOptionalClassName(outputTypeName, name, "output", basePackage, inferredLegacyInternal);
+        ClassName inputType = parseOptionalClassName(inputTypeName, name, "input", basePackage, inferredInternalService);
+        ClassName outputType = parseOptionalClassName(outputTypeName, name, "output", basePackage, inferredInternalService);
         if (!isBlank(inputTypeName) && inputType == null) {
             return null;
         }
@@ -595,8 +521,8 @@ public class StepDefinitionParser {
                 report(Diagnostic.Kind.ERROR, message);
                 return null;
             }
-            if ((kind != StepKind.INTERNAL && kind != StepKind.COMMAND) || dynamicOperationStep || !isBlank(delegatedClassName)
-                || remoteExecution != null || pipelineStep) {
+            if (executionShape != StepExecutionShape.INTERNAL
+                && executionShape != StepExecutionShape.COMMAND) {
                 String message = "Skipping step '" + name
                     + "': await decorates an authored internal service or an application-bound native Command";
                 LOG.warn(message);
@@ -622,8 +548,8 @@ public class StepDefinitionParser {
                 return null;
             }
             deferredCompletion = Optional.of(parsed);
-            if ((kind == StepKind.COMMAND) != parsed.callback().isPresent()
-                || (kind == StepKind.COMMAND && (requireExactOperationTypes || version != 3
+            if ((executionShape == StepExecutionShape.COMMAND) != parsed.callback().isPresent()
+                || (executionShape == StepExecutionShape.COMMAND && (requireExactOperationTypes || version != 3
                     || !(stepData.get("operation") instanceof String) || !(stepData.get("using") instanceof String)))) {
                 report(Diagnostic.Kind.ERROR, "Step '" + name
                     + "': await requires INTERNAL + transport or application-local native COMMAND + callback (version 3)");
@@ -631,15 +557,16 @@ public class StepDefinitionParser {
             }
         }
 
-        if (kind == StepKind.INTERNAL && !inferredLegacyInternal) {
-            if (externalMapper != null) {
+        switch (executionShape) {
+        case INTERNAL -> {
+            if (!inferredInternalService && externalMapper != null) {
                 String message = "Skipping step '" + name
                     + "': 'operatorMapper'/'externalMapper' are only valid for delegated steps; use 'inboundMapper'/'outboundMapper' for internal service steps";
                 LOG.warn(message);
                 report(Diagnostic.Kind.ERROR, message);
                 return null;
             }
-            if (mapperFallback != MapperFallbackMode.NONE) {
+            if (!inferredInternalService && mapperFallback != MapperFallbackMode.NONE) {
                 String message = "Ignoring 'mapperFallback' on internal step '" + name
                     + "'; mapper fallback is only used for delegated steps";
                 LOG.warn(message);
@@ -648,7 +575,7 @@ public class StepDefinitionParser {
             }
         }
 
-        if (kind == StepKind.DELEGATED) {
+        case DELEGATED -> {
             if (inboundMapper != null || outboundMapper != null) {
                 String message = "Skipping step '" + name
                     + "': delegated steps cannot declare 'inboundMapper'/'outboundMapper'; use 'operatorMapper' for delegated mapping";
@@ -667,7 +594,7 @@ public class StepDefinitionParser {
             }
         }
 
-        if (kind == StepKind.REMOTE) {
+        case REMOTE -> {
             if (inboundMapper != null || outboundMapper != null) {
                 String message = "Skipping step '" + name
                     + "': remote execution cannot be combined with inboundMapper/outboundMapper";
@@ -744,10 +671,10 @@ public class StepDefinitionParser {
                 StreamingShape.UNARY_UNARY,
                 false,
                 accepts,
-                terminal);
+                terminal).withExecutionShape(executionShape);
         }
 
-        if (kind == StepKind.COMMAND) {
+        case COMMAND -> {
             if (inboundMapper != null || outboundMapper != null || externalMapper != null || mapperFallback != MapperFallbackMode.NONE) {
                 String message = "Skipping step '" + name
                     + "': command steps cannot declare mapper fields in this slice; use typed command input/output contracts";
@@ -898,7 +825,7 @@ public class StepDefinitionParser {
                 StreamingShape.UNARY_UNARY,
                 false,
                 accepts,
-                terminal);
+                terminal).withExecutionShape(executionShape);
             if (!operationFirst) {
                 return commandDefinition;
             }
@@ -920,7 +847,7 @@ public class StepDefinitionParser {
                     selected.commandPolicy())));
         }
 
-        if (kind == StepKind.QUERY) {
+        case QUERY -> {
             if (inboundMapper != null || outboundMapper != null || externalMapper != null || mapperFallback != MapperFallbackMode.NONE) {
                 String message = "Skipping step '" + name
                     + "': query steps cannot declare mapper fields in this slice; use typed query input/output contracts";
@@ -1019,7 +946,7 @@ public class StepDefinitionParser {
                     resolvedShape,
                     false,
                     accepts,
-                    terminal);
+                    terminal).withExecutionShape(executionShape);
                 ParsedConnectorBinding binding = connectorBindings.get(bindingName);
                 return queryDefinition.withConnectorOperationSelection(ConnectorOperationSelection.query(
                     name,
@@ -1094,10 +1021,10 @@ public class StepDefinitionParser {
                 StreamingShape.UNARY_UNARY,
                 false,
                 accepts,
-                terminal);
+                terminal).withExecutionShape(executionShape);
         }
 
-        if (dynamicOperationStep) {
+        case DYNAMIC_OPERATION -> {
             if (inboundMapper != null || outboundMapper != null || externalMapper != null
                 || mapperFallback != MapperFallbackMode.NONE) {
                 report(Diagnostic.Kind.ERROR, "Skipping step '" + name
@@ -1128,10 +1055,10 @@ public class StepDefinitionParser {
                 name, StepKind.INTERNAL, null, Optional.empty(), null, Map.of(), null, List.of(), null, null, null,
                 Map.of(), null, Map.of(), List.of(), null, null, null, MapperFallbackMode.NONE,
                 inputType, outputType, StreamingShape.UNARY_UNARY, false, accepts, terminal,
-                Optional.empty(), dynamicOperationSource);
+                Optional.empty(), dynamicOperationSource).withExecutionShape(executionShape);
         }
 
-        if (kind == StepKind.PIPELINE) {
+        case PIPELINE -> {
             if (inboundMapper != null || outboundMapper != null || externalMapper != null || mapperFallback != MapperFallbackMode.NONE) {
                 String message = "Skipping step '" + name + "': pipeline invocation cannot declare mapper fields";
                 LOG.warn(message);
@@ -1161,7 +1088,9 @@ public class StepDefinitionParser {
                 shape == null ? StreamingShape.UNARY_UNARY : shape,
                 accepts,
                 terminal,
-                pipelineReference);
+                pipelineReference).withExecutionShape(executionShape);
+        }
+
         }
 
         // Create the execution class name
@@ -1186,7 +1115,8 @@ public class StepDefinitionParser {
             runOnVirtualThreads,
             accepts,
             terminal);
-        return deferredCompletion.map(definition::withDeferredCompletion).orElse(definition);
+        return deferredCompletion.map(definition::withDeferredCompletion).orElse(definition)
+            .withExecutionShape(executionShape);
     }
 
     private Map<String, Object> withCallableCatalogue(
@@ -1358,6 +1288,97 @@ public class StepDefinitionParser {
                 + "' operation.mode dynamic requires a non-blank from step");
         }
         return Optional.of(source);
+    }
+
+    private Optional<StepExecutionShape> selectStepExecutionShape(
+        String name, String rawKind, boolean pipelineStep, boolean commandStep, boolean queryStep,
+        boolean dynamicOperationStep, PipelineTemplateStepExecution remoteExecution,
+        String delegatedClassName, String serviceClassName
+    ) {
+        if (!isBlank(delegatedClassName) && !isBlank(serviceClassName)) {
+            String message = "Skipping step '" + name + "': 'service' and delegated execution ('operator'/'delegate') are mutually exclusive";
+            LOG.warn(message);
+            report(Diagnostic.Kind.ERROR, message);
+            return Optional.empty();
+        }
+        if (pipelineStep && (!isBlank(rawKind) || !isBlank(delegatedClassName) || !isBlank(serviceClassName) || remoteExecution != null)) {
+            String message = "Skipping step '" + name
+                + "': pipeline invocation may declare only pipeline plus ordinary typed step contracts";
+            LOG.warn(message);
+            report(Diagnostic.Kind.ERROR, message);
+            throw new StepSkippedException();
+        }
+        if (commandStep && (!isBlank(delegatedClassName) || !isBlank(serviceClassName) || remoteExecution != null)) {
+            String message = "Skipping step '" + name
+                + "': command steps are framework-owned effect boundaries and cannot declare 'service', 'operator', 'delegate',"
+                + " or remote 'execution'; use 'kind: command' with a command connector and id generator";
+            LOG.warn(message);
+            report(Diagnostic.Kind.ERROR, message);
+            return Optional.empty();
+        }
+        if (queryStep && (!isBlank(delegatedClassName) || !isBlank(serviceClassName) || remoteExecution != null)) {
+            String message = "Skipping step '" + name
+                + "': query steps are framework-owned read boundaries and cannot declare 'service', 'operator', 'delegate',"
+                + " or remote 'execution'; use 'kind: query' with a referenced query connector definition";
+            LOG.warn(message);
+            report(Diagnostic.Kind.ERROR, message);
+            return Optional.empty();
+        }
+        if (dynamicOperationStep && (!isBlank(rawKind) || !isBlank(delegatedClassName)
+            || !isBlank(serviceClassName) || remoteExecution != null || pipelineStep)) {
+            String message = "Skipping step '" + name
+                + "': operation.mode dynamic is an invocation binding and cannot declare kind or authored execution";
+            LOG.warn(message);
+            report(Diagnostic.Kind.ERROR, message);
+            return Optional.empty();
+        }
+        if (!isBlank(rawKind)
+            && !commandStep
+            && !queryStep
+            && !"internal".equalsIgnoreCase(rawKind)
+            && !"delegated".equalsIgnoreCase(rawKind)
+            && !"delegate".equalsIgnoreCase(rawKind)
+            && !"remote".equalsIgnoreCase(rawKind)) {
+            String message = "Skipping step '" + name + "': unsupported kind '" + rawKind
+                + "'. Allowed values: internal, delegated, remote, command, query";
+            LOG.warn(message);
+            report(Diagnostic.Kind.ERROR, message);
+            return Optional.empty();
+        }
+        if (remoteExecution != null && (!isBlank(delegatedClassName) || !isBlank(serviceClassName))) {
+            String message = "Skipping step '" + name
+                + "': remote execution is mutually exclusive with 'service', 'operator', and 'delegate'";
+            LOG.warn(message);
+            report(Diagnostic.Kind.ERROR, message);
+            return Optional.empty();
+        }
+
+        List<StepExecutionShape> declared = new ArrayList<>();
+        if (pipelineStep) {
+            declared.add(StepExecutionShape.PIPELINE);
+        }
+        if (commandStep) {
+            declared.add(StepExecutionShape.COMMAND);
+        }
+        if (queryStep) {
+            declared.add(StepExecutionShape.QUERY);
+        }
+        if (dynamicOperationStep) {
+            declared.add(StepExecutionShape.DYNAMIC_OPERATION);
+        }
+        if (remoteExecution != null) {
+            declared.add(StepExecutionShape.REMOTE);
+        }
+        if (!isBlank(delegatedClassName)) {
+            declared.add(StepExecutionShape.DELEGATED);
+        }
+        if (!isBlank(serviceClassName)) {
+            declared.add(StepExecutionShape.INTERNAL);
+        }
+        if (declared.size() > 1) {
+            throw new IllegalStateException("execution form conflicts must be diagnosed before selection: " + declared);
+        }
+        return Optional.of(declared.isEmpty() ? StepExecutionShape.INTERNAL : declared.getFirst());
     }
 
     private void validateCommandCallback(String stepName, NativeCommandSelection selected,
