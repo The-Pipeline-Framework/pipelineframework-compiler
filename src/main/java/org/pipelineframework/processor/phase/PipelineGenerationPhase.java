@@ -746,21 +746,6 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
     }
 
     /**
-     * Resolves the client role based on the server role.
-     *
-     * @param serverRole the original server role
-     * @return the corresponding client role
-     */
-    private org.pipelineframework.processor.ir.DeploymentRole resolveClientRole(
-            org.pipelineframework.processor.ir.DeploymentRole serverRole) {
-        if (serverRole == null) {
-            return org.pipelineframework.processor.ir.DeploymentRole.ORCHESTRATOR_CLIENT;
-        }
-        org.pipelineframework.processor.ir.DeploymentRole mapped = generationPolicy.resolveClientRole(serverRole);
-        return mapped != null ? mapped : org.pipelineframework.processor.ir.DeploymentRole.ORCHESTRATOR_CLIENT;
-    }
-
-    /**
      * Resolve and ensure existence of the output directory for the given deployment role under the generated sources root.
      *
      * @param ctx  the compilation context used to obtain the generated sources root and the processing environment for reporting

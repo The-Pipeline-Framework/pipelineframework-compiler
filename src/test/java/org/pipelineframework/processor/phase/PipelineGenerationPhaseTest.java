@@ -44,6 +44,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -125,15 +126,60 @@ class PipelineGenerationPhaseTest {
     }
 
     @Test
-    void resolveClientRoleDefaultsToOrchestratorClientWhenNull() throws Exception {
-        PipelineGenerationPhase phase = new PipelineGenerationPhase();
-        java.lang.reflect.Method method = PipelineGenerationPhase.class.getDeclaredMethod(
-            "resolveClientRole",
-            org.pipelineframework.processor.ir.DeploymentRole.class);
-        method.setAccessible(true);
-
-        Object role = method.invoke(phase, new Object[]{null});
+    void resolveClientRoleDefaultsToOrchestratorClientWhenNull() {
+        ObjectIoGenerationService service = new ObjectIoGenerationService(
+            new GenerationPathResolver(), new GenerationPolicy());
+        org.pipelineframework.processor.ir.DeploymentRole role = service.resolveClientRole(null);
         assertEquals(org.pipelineframework.processor.ir.DeploymentRole.ORCHESTRATOR_CLIENT, role);
+    }
+
+    @Test
+    void reportsLegacyTemplateObjectBoundaries() {
+        org.pipelineframework.processor.PipelineCompilationContext context =
+            new org.pipelineframework.processor.PipelineCompilationContext(processingEnv,
+                org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        org.pipelineframework.config.template.PipelineTemplateConfig template =
+            mock(org.pipelineframework.config.template.PipelineTemplateConfig.class);
+        when(template.version()).thenReturn(2);
+        when(template.input()).thenReturn(new org.pipelineframework.config.boundary.PipelineInputBoundaryConfig(
+            null, new org.pipelineframework.config.boundary.PipelineObjectInputConfig(
+                "input-files", "com.example.Input", "Input", "com.example.InputMapper")));
+        when(template.output()).thenReturn(new org.pipelineframework.config.boundary.PipelineOutputBoundaryConfig(
+            null, new org.pipelineframework.config.boundary.PipelineObjectOutputConfig(
+                "output-files", "com.example.Output", "Output", "com.example.OutputMapper")));
+        context.setPipelineTemplateConfig(template);
+
+        ObjectIoGenerationConfigResolver resolver = new ObjectIoGenerationConfigResolver();
+        assertTrue(resolver.objectIngestGenerationConfig(context).isEmpty());
+        assertTrue(resolver.objectPublishGenerationConfig(context).isEmpty());
+        verify(messager).printMessage(javax.tools.Diagnostic.Kind.ERROR,
+            "Object Ingest requires a v3 pipeline template");
+        verify(messager).printMessage(javax.tools.Diagnostic.Kind.ERROR,
+            "Object Publish requires a v3 pipeline template");
+    }
+
+    @Test
+    void reportsEffectiveObjectBoundariesWithoutATemplate() {
+        org.pipelineframework.processor.PipelineCompilationContext context =
+            new org.pipelineframework.processor.PipelineCompilationContext(processingEnv,
+                org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        org.pipelineframework.config.pipeline.PipelineYamlConfig effective =
+            mock(org.pipelineframework.config.pipeline.PipelineYamlConfig.class);
+        when(effective.input()).thenReturn(new org.pipelineframework.config.boundary.PipelineInputBoundaryConfig(
+            null, new org.pipelineframework.config.boundary.PipelineObjectInputConfig(
+                "input-files", "com.example.Input", "Input", "com.example.InputMapper")));
+        when(effective.output()).thenReturn(new org.pipelineframework.config.boundary.PipelineOutputBoundaryConfig(
+            null, new org.pipelineframework.config.boundary.PipelineObjectOutputConfig(
+                "output-files", "com.example.Output", "Output", "com.example.OutputMapper")));
+        context.setEffectivePipelineConfig(effective);
+
+        ObjectIoGenerationConfigResolver resolver = new ObjectIoGenerationConfigResolver();
+        assertTrue(resolver.objectIngestGenerationConfig(context).isEmpty());
+        assertTrue(resolver.objectPublishGenerationConfig(context).isEmpty());
+        verify(messager).printMessage(javax.tools.Diagnostic.Kind.ERROR,
+            "Object Ingest requires a v3 pipeline template");
+        verify(messager).printMessage(javax.tools.Diagnostic.Kind.ERROR,
+            "Object Publish requires a v3 pipeline template");
     }
 
     @Test
@@ -236,6 +282,11 @@ class PipelineGenerationPhaseTest {
         context.setStepModels(java.util.List.of());
 
         assertDoesNotThrow(() -> phase.execute(context));
+        javax.annotation.processing.Filer filer = processingEnv.getFiler();
+        verify(filer, never()).createSourceFile(eq("com.example.pipeline.ObjectIngestPipelineInputAdapter"),
+            any(javax.lang.model.element.Element[].class));
+        verify(filer, never()).createSourceFile(eq("com.example.pipeline.ObjectPublishTerminalOutputAdapter"),
+            any(javax.lang.model.element.Element[].class));
     }
 
     @Test

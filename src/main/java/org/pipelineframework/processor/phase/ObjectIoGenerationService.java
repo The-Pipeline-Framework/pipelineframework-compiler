@@ -35,8 +35,11 @@ final class ObjectIoGenerationService {
         ClassName cacheKeyGenerator,
         DescriptorProtos.FileDescriptorSet descriptorSet
     ) {
+        if (ctx.isPluginHost()) {
+            return;
+        }
         Optional<String> objectPublishConfig = configResolver.objectPublishGenerationConfig(ctx);
-        if (objectPublishConfig.isEmpty() || ctx.isTransportModeLocal() || ctx.isPluginHost()) {
+        if (objectPublishConfig.isEmpty() || ctx.isTransportModeLocal()) {
             return;
         }
         Optional<PipelineStepModel> terminalModel = stepResolver.terminalBusinessStepWithDeploymentRole(ctx);
@@ -76,8 +79,11 @@ final class ObjectIoGenerationService {
         ClassName cacheKeyGenerator,
         DescriptorProtos.FileDescriptorSet descriptorSet
     ) {
+        if (ctx.isPluginHost()) {
+            return;
+        }
         Optional<String> objectIngestConfig = configResolver.objectIngestGenerationConfig(ctx);
-        if (objectIngestConfig.isEmpty() || ctx.isTransportModeLocal() || ctx.isPluginHost()) {
+        if (objectIngestConfig.isEmpty() || ctx.isTransportModeLocal()) {
             return;
         }
         Optional<PipelineStepModel> firstModel = stepResolver.firstBusinessStepWithDeploymentRole(ctx);
@@ -155,7 +161,7 @@ final class ObjectIoGenerationService {
         }
     }
 
-    private DeploymentRole resolveClientRole(DeploymentRole serverRole) {
+    DeploymentRole resolveClientRole(DeploymentRole serverRole) {
         if (serverRole == null) {
             return DeploymentRole.ORCHESTRATOR_CLIENT;
         }
