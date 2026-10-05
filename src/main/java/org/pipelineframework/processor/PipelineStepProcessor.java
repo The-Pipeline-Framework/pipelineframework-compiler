@@ -59,6 +59,7 @@ import org.pipelineframework.processor.util.RoleMetadataGenerator;
     "project.basedir", // Optional: project base directory used for config discovery fallback
     "pipeline.function.httpBridge", // Optional: prefer HTTP bridge over generated direct function handlers
     "pipeline.platform", // Optional: target deployment platform (COMPUTE|FUNCTION; legacy: STANDARD|LAMBDA)
+    "pipeline.coordination.host", // Optional: QUEUE_ASYNC coordination host (NATIVE|AWS_DURABLE)
     "pipeline.transport", // Optional: transport mode (GRPC|REST|LOCAL)
     "pipeline.rest.naming.strategy", // Optional: REST naming strategy (LEGACY|RESOURCEFUL)
     "pipeline.mapper.fallback.enabled", // Optional: enables delegated mapper fallback engine
