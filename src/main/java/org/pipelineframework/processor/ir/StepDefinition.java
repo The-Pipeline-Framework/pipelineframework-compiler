@@ -52,8 +52,7 @@ public record StepDefinition(
     Optional<String> pipelineReference,
     Optional<String> dynamicOperationSource,
     Optional<ConnectorOperationSelection> connectorOperationSelection,
-    Optional<DeferredCompletionDefinition> deferredCompletion,
-    StepExecutionShape executionShape
+    Optional<DeferredCompletionDefinition> deferredCompletion
 ) {
     public StepDefinition {
         Objects.requireNonNull(name, "name");
@@ -64,11 +63,6 @@ public record StepDefinition(
         delegatedMethodName = normalized(delegatedMethodName);
         pipelineReference = normalized(pipelineReference);
         dynamicOperationSource = normalized(dynamicOperationSource);
-        Objects.requireNonNull(executionShape, "executionShape");
-        if (executionShape.kind() != kind
-            || (executionShape == StepExecutionShape.DYNAMIC_OPERATION) != dynamicOperationSource.isPresent()) {
-            throw new IllegalArgumentException("executionShape does not match step semantics or binding provenance");
-        }
         connectorOperationSelection = connectorOperationSelection == null ? Optional.empty() : connectorOperationSelection;
         deferredCompletion = deferredCompletion == null ? Optional.empty() : deferredCompletion;
         commandConfig = commandConfig == null ? Map.of() : Map.copyOf(commandConfig);
@@ -90,37 +84,13 @@ public record StepDefinition(
             }
         });
 
-        executionShape.validate(new StepExecutionShape.Contract(
+        StepExecutionShape.from(kind, dynamicOperationSource).validate(new StepExecutionShape.Contract(
             kind, executionClass, remoteExecution, inputType, outputType, pipelineReference,
             command, commandIdGenerator, queryId));
     }
 
-    /** Compatibility constructor for compiler fixtures and callers that do not select a shape while parsing. */
-    public StepDefinition(
-        String name, StepKind kind, @Nullable ClassName executionClass, Optional<String> delegatedMethodName,
-        @Nullable PipelineTemplateStepExecution remoteExecution, @Nullable String command,
-        @Nullable ClassName commandIdGenerator, @Nullable String duplicatePolicy, Map<String, Object> commandConfig,
-        @Nullable String queryId, Map<String, Object> queryConfig, List<String> queryKeyFields,
-        @Nullable ClassName inboundMapper, @Nullable ClassName outboundMapper, @Nullable ClassName externalMapper,
-        MapperFallbackMode mapperFallback, @Nullable ClassName inputType, @Nullable ClassName outputType,
-        @Nullable StreamingShape streamingShapeHint, boolean runOnVirtualThreads, List<String> accepts,
-        boolean terminal, Optional<String> pipelineReference, Optional<String> dynamicOperationSource,
-        Optional<ConnectorOperationSelection> connectorOperationSelection,
-        Optional<DeferredCompletionDefinition> deferredCompletion
-    ) {
-        this(name, kind, executionClass, delegatedMethodName, remoteExecution, command, commandIdGenerator,
-            duplicatePolicy, commandConfig, queryId, queryConfig, queryKeyFields, inboundMapper, outboundMapper,
-            externalMapper, mapperFallback, inputType, outputType, streamingShapeHint, runOnVirtualThreads,
-            accepts, terminal, pipelineReference, dynamicOperationSource, connectorOperationSelection,
-            deferredCompletion, StepExecutionShape.from(kind, normalized(dynamicOperationSource)));
-    }
-
-    public StepDefinition withExecutionShape(StepExecutionShape selectedShape) {
-        return new StepDefinition(name, kind, executionClass, delegatedMethodName, remoteExecution,
-            command, commandIdGenerator, duplicatePolicy, commandConfig, queryId, queryConfig, queryKeyFields,
-            inboundMapper, outboundMapper, externalMapper, mapperFallback, inputType, outputType,
-            streamingShapeHint, runOnVirtualThreads, accepts, terminal, pipelineReference, dynamicOperationSource,
-            connectorOperationSelection, deferredCompletion, Objects.requireNonNull(selectedShape, "selectedShape"));
+    public StepExecutionShape executionShape() {
+        return StepExecutionShape.from(kind, dynamicOperationSource);
     }
 
     public static StepDefinition pipeline(
@@ -143,7 +113,7 @@ public record StepDefinition(
             command, commandIdGenerator, duplicatePolicy, commandConfig, queryId, queryConfig, queryKeyFields,
             inboundMapper, outboundMapper, externalMapper, mapperFallback, inputType, outputType,
             streamingShapeHint, runOnVirtualThreads, accepts, terminal, pipelineReference, dynamicOperationSource,
-            Optional.of(Objects.requireNonNull(selection, "selection")), deferredCompletion, executionShape);
+            Optional.of(Objects.requireNonNull(selection, "selection")), deferredCompletion);
     }
 
     public StepDefinition withDeferredCompletion(DeferredCompletionDefinition completion) {
@@ -151,7 +121,7 @@ public record StepDefinition(
             command, commandIdGenerator, duplicatePolicy, commandConfig, queryId, queryConfig, queryKeyFields,
             inboundMapper, outboundMapper, externalMapper, mapperFallback, inputType, outputType,
             streamingShapeHint, runOnVirtualThreads, accepts, terminal, pipelineReference, dynamicOperationSource,
-            connectorOperationSelection, Optional.of(Objects.requireNonNull(completion, "completion")), executionShape);
+            connectorOperationSelection, Optional.of(Objects.requireNonNull(completion, "completion")));
     }
 
     /** Convenience constructor for ordinary authored operations used by compiler tests. */

@@ -2257,6 +2257,43 @@ class StepDefinitionParserTest {
     }
 
     @Test
+    void rejectsAuthoredKindThatDisagreesWithExecutionForm() throws IOException {
+        List<String> diagnostics = new ArrayList<>();
+        List<StepDefinition> steps = parse("""
+            version: 2
+            appName: Test
+            basePackage: com.example
+            steps:
+              - name: Service marked delegated
+                kind: delegated
+                service: com.example.Service
+                input: com.example.Input
+                output: com.example.Output
+              - name: Operator marked internal
+                kind: internal
+                operator: com.example.Operator
+                input: com.example.Input
+                output: com.example.Output
+              - name: Inferred service marked remote
+                kind: remote
+                input: com.example.Input
+                output: com.example.Output
+              - name: Correct internal
+                kind: internal
+                service: com.example.Service
+                input: com.example.Input
+                output: com.example.Output
+            """, diagnostics);
+
+        assertEquals(List.of("Correct internal"), steps.stream().map(StepDefinition::name).toList());
+        for (String name : List.of("Service marked delegated", "Operator marked internal",
+            "Inferred service marked remote")) {
+            assertTrue(diagnostics.stream().anyMatch(message -> message.contains(name)
+                && message.contains("does not match the declared execution form")), diagnostics.toString());
+        }
+    }
+
+    @Test
     void acceptsAwaitStepWithMultipleIdempotencyKeyFields() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""

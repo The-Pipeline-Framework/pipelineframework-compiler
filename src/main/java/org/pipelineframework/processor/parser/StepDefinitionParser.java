@@ -671,7 +671,7 @@ public class StepDefinitionParser {
                 StreamingShape.UNARY_UNARY,
                 false,
                 accepts,
-                terminal).withExecutionShape(executionShape);
+                terminal);
         }
 
         case COMMAND -> {
@@ -825,7 +825,7 @@ public class StepDefinitionParser {
                 StreamingShape.UNARY_UNARY,
                 false,
                 accepts,
-                terminal).withExecutionShape(executionShape);
+                terminal);
             if (!operationFirst) {
                 return commandDefinition;
             }
@@ -946,7 +946,7 @@ public class StepDefinitionParser {
                     resolvedShape,
                     false,
                     accepts,
-                    terminal).withExecutionShape(executionShape);
+                    terminal);
                 ParsedConnectorBinding binding = connectorBindings.get(bindingName);
                 return queryDefinition.withConnectorOperationSelection(ConnectorOperationSelection.query(
                     name,
@@ -1021,7 +1021,7 @@ public class StepDefinitionParser {
                 StreamingShape.UNARY_UNARY,
                 false,
                 accepts,
-                terminal).withExecutionShape(executionShape);
+                terminal);
         }
 
         case DYNAMIC_OPERATION -> {
@@ -1055,7 +1055,7 @@ public class StepDefinitionParser {
                 name, StepKind.INTERNAL, null, Optional.empty(), null, Map.of(), null, List.of(), null, null, null,
                 Map.of(), null, Map.of(), List.of(), null, null, null, MapperFallbackMode.NONE,
                 inputType, outputType, StreamingShape.UNARY_UNARY, false, accepts, terminal,
-                Optional.empty(), dynamicOperationSource).withExecutionShape(executionShape);
+                Optional.empty(), dynamicOperationSource);
         }
 
         case PIPELINE -> {
@@ -1088,7 +1088,7 @@ public class StepDefinitionParser {
                 shape == null ? StreamingShape.UNARY_UNARY : shape,
                 accepts,
                 terminal,
-                pipelineReference).withExecutionShape(executionShape);
+                pipelineReference);
         }
 
         }
@@ -1115,8 +1115,7 @@ public class StepDefinitionParser {
             runOnVirtualThreads,
             accepts,
             terminal);
-        return deferredCompletion.map(definition::withDeferredCompletion).orElse(definition)
-            .withExecutionShape(executionShape);
+        return deferredCompletion.map(definition::withDeferredCompletion).orElse(definition);
     }
 
     private Map<String, Object> withCallableCatalogue(
@@ -1378,7 +1377,23 @@ public class StepDefinitionParser {
         if (declared.size() > 1) {
             throw new IllegalStateException("execution form conflicts must be diagnosed before selection: " + declared);
         }
-        return Optional.of(declared.isEmpty() ? StepExecutionShape.INTERNAL : declared.getFirst());
+        StepExecutionShape selected = declared.isEmpty() ? StepExecutionShape.INTERNAL : declared.getFirst();
+        Optional<StepKind> authoredKind = switch (isBlank(rawKind) ? "" : rawKind.toLowerCase(Locale.ROOT)) {
+            case "internal" -> Optional.of(StepKind.INTERNAL);
+            case "delegated", "delegate" -> Optional.of(StepKind.DELEGATED);
+            case "remote" -> Optional.of(StepKind.REMOTE);
+            case "command" -> Optional.of(StepKind.COMMAND);
+            case "query" -> Optional.of(StepKind.QUERY);
+            default -> Optional.empty();
+        };
+        if (authoredKind.isPresent() && authoredKind.orElseThrow() != selected.kind()) {
+            String message = "Skipping step '" + name + "': kind '" + rawKind
+                + "' does not match the declared execution form (" + selected.kind() + ")";
+            LOG.warn(message);
+            report(Diagnostic.Kind.ERROR, message);
+            return Optional.empty();
+        }
+        return Optional.of(selected);
     }
 
     private void validateCommandCallback(String stepName, NativeCommandSelection selected,
