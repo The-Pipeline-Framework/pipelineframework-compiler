@@ -383,6 +383,51 @@ class PipelineGenerationPhaseTest {
     }
 
     @Test
+    void generatesAwsDurableDecoderForPipelineServerHost(@TempDir Path tempDir) throws Exception {
+        PipelineGenerationPhase phase = new PipelineGenerationPhase();
+        org.pipelineframework.processor.PipelineCompilationContext context =
+            new org.pipelineframework.processor.PipelineCompilationContext(
+                processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        context.setGeneratedSourcesRoot(tempDir.resolve("generated-sources-test"));
+        context.setCoordinationHost(org.pipelineframework.processor.ir.CoordinationHost.AWS_DURABLE);
+        context.setPlatformMode(org.pipelineframework.config.PlatformMode.FUNCTION);
+        var type = com.squareup.javapoet.ClassName.get("com.example.common.domain", "Order");
+        var model = new org.pipelineframework.processor.ir.PipelineStepModel(
+            "OrchestratorService", "OrchestratorService", "com.example.orchestrator.service",
+            com.squareup.javapoet.ClassName.get("com.example.orchestrator.service", "OrchestratorService"),
+            org.pipelineframework.processor.ir.TypeMapping.canonical(type, "Order"),
+            org.pipelineframework.processor.ir.TypeMapping.canonical(type, "Order"),
+            org.pipelineframework.processor.ir.StreamingShape.UNARY_UNARY,
+            Set.of(org.pipelineframework.processor.ir.GenerationTarget.GRPC_SERVICE),
+            org.pipelineframework.processor.ir.ExecutionMode.DEFAULT,
+            org.pipelineframework.processor.ir.DeploymentRole.ORCHESTRATOR_CLIENT, false, null);
+        var binding = new org.pipelineframework.processor.ir.OrchestratorBinding(
+            model, "com.example", "REST", "Order", "Order", false, false,
+            "ProcessOrderService", org.pipelineframework.processor.ir.StreamingShape.UNARY_UNARY,
+            null, null, null);
+        var roles = org.mockito.Mockito.mock(org.pipelineframework.processor.util.RoleMetadataGenerator.class);
+        java.lang.reflect.Method method = PipelineGenerationPhase.class.getDeclaredMethod(
+            "generateAwsDurableInputDecoder",
+            org.pipelineframework.processor.PipelineCompilationContext.class,
+            org.pipelineframework.processor.ir.OrchestratorBinding.class,
+            org.pipelineframework.processor.renderer.AwsDurableInputDecoderRenderer.class,
+            org.pipelineframework.processor.util.RoleMetadataGenerator.class,
+            com.squareup.javapoet.ClassName.class,
+            com.google.protobuf.DescriptorProtos.FileDescriptorSet.class);
+        method.setAccessible(true);
+
+        method.invoke(phase, context, binding,
+            new org.pipelineframework.processor.renderer.AwsDurableInputDecoderRenderer(), roles, null, null);
+
+        assertTrue(Files.exists(tempDir.resolve(
+            "generated-sources-test/pipeline-server/com/example/orchestrator/service/AwsDurablePipelineInputDecoder.java")));
+        assertFalse(Files.exists(tempDir.resolve(
+            "generated-sources-test/rest-server/com/example/orchestrator/service/AwsDurablePipelineInputDecoder.java")));
+        org.mockito.Mockito.verify(roles).recordClassWithRole(
+            "com.example.orchestrator.service.AwsDurablePipelineInputDecoder", "PIPELINE_SERVER");
+    }
+
+    @Test
     void computesEnabledAspectsFromContext() throws Exception {
         PipelineGenerationPhase phase = new PipelineGenerationPhase();
         org.pipelineframework.processor.PipelineCompilationContext context =

@@ -378,10 +378,18 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
                 "pipeline.coordination.host=AWS_DURABLE requires pipeline.platform=FUNCTION");
         }
         try {
-            DeploymentRole role = DeploymentRole.REST_SERVER;
+            DeploymentRole role = DeploymentRole.PIPELINE_SERVER;
+            org.pipelineframework.config.template.PipelineTemplateConfig templateConfig =
+                ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig config
+                    ? config
+                    : null;
+            boolean v3GeneratedDomainTypes = templateConfig != null
+                && templateConfig.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3;
             renderer.render(binding, Jsr269GenerationContext.create(
                 ctx.getProcessingEnv(), resolveRoleOutputDir(ctx, role), role, Set.of(),
-                cacheKeyGenerator, descriptorSet));
+                cacheKeyGenerator, descriptorSet, org.pipelineframework.processor.ir.PipelineTransport.REST,
+                binding.basePackage(), null, v3GeneratedDomainTypes,
+                v3GeneratedDomainTypes ? java.util.Optional.of(templateConfig.typeModel()) : java.util.Optional.empty()));
             roleMetadataGenerator.recordClassWithRole(renderer.decoderFqcn(binding.basePackage()), role.name());
         } catch (IOException failure) {
             throw new IllegalStateException("Failed to generate AWS Durable input decoder", failure);

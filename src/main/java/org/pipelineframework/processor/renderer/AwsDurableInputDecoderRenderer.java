@@ -10,6 +10,7 @@ import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.MethodSpec;
 import com.squareup.javapoet.TypeSpec;
 import org.pipelineframework.processor.ir.OrchestratorBinding;
+import org.pipelineframework.processor.ir.PipelineTransport;
 
 /** Generates the only application-specific seam required by the generic AWS Durable host. */
 public final class AwsDurableInputDecoderRenderer {
@@ -33,8 +34,11 @@ public final class AwsDurableInputDecoderRenderer {
             throw new IllegalArgumentException(
                 "AWS_DURABLE coordination currently requires a non-streaming pipeline input");
         }
-        ClassName inputDto = ClassName.get(
-            binding.basePackage() + ".common.dto", binding.inputTypeName() + "Dto");
+        ClassName inputDto = CanonicalTransportBindingResolver.resolveAndEnsure(
+            context, binding.model(), PipelineTransport.REST).input()
+            .map(CanonicalTransportTypeBinding::restDtoType)
+            .orElseGet(() -> ClassName.get(
+                binding.basePackage() + ".common.dto", binding.inputTypeName() + "Dto"));
         MethodSpec decode = MethodSpec.methodBuilder("decode")
             .addAnnotation(Override.class)
             .addModifiers(Modifier.PUBLIC)
