@@ -11,12 +11,15 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.Isolated;
+import org.junitpioneer.jupiter.ClearSystemProperty;
 import org.pipelineframework.config.template.PipelineIdlSnapshot;
 import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.config.template.PipelineTemplateConfigLoader;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@Isolated
 class PipelineProtoRenderersTest {
 
     @TempDir
@@ -98,6 +101,7 @@ class PipelineProtoRenderersTest {
     }
 
     @Test
+    @ClearSystemProperty(key = "tpf.idl.compat.baseline")
     void checksLockBaselineBeforeBootstrapReplacesIt() throws Exception {
         Path baselineConfigPath = tempDir.resolve("baseline.yaml");
         Files.writeString(baselineConfigPath, """
