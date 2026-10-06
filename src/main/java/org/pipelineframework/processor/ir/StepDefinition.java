@@ -84,36 +84,13 @@ public record StepDefinition(
             }
         });
 
-        if (kind == StepKind.REMOTE) {
-            Objects.requireNonNull(remoteExecution, "remoteExecution");
-        } else if (dynamicOperationSource.isPresent()) {
-            if (kind != StepKind.INTERNAL || executionClass != null || remoteExecution != null) {
-                throw new IllegalArgumentException(
-                    "dynamic operation bindings use INTERNAL semantics without authored execution");
-            }
-            Objects.requireNonNull(inputType, "inputType");
-            Objects.requireNonNull(outputType, "outputType");
-        } else if (kind == StepKind.COMMAND || kind == StepKind.QUERY || kind == StepKind.PIPELINE) {
-            if (executionClass != null || remoteExecution != null) {
-                throw new IllegalArgumentException(kind + " steps cannot declare authored execution");
-            }
-            Objects.requireNonNull(inputType, "inputType");
-            Objects.requireNonNull(outputType, "outputType");
-            if (kind == StepKind.PIPELINE && pipelineReference.isEmpty()) {
-                throw new IllegalArgumentException("pipelineReference cannot be blank for PIPELINE steps");
-            }
-            if (kind == StepKind.COMMAND) {
-                if (command == null || command.isBlank()) {
-                    throw new IllegalArgumentException("command cannot be blank for COMMAND steps");
-                }
-                Objects.requireNonNull(commandIdGenerator, "commandIdGenerator");
-            }
-            if (kind == StepKind.QUERY && (queryId == null || queryId.isBlank())) {
-                throw new IllegalArgumentException("queryId cannot be blank for QUERY steps");
-            }
-        } else {
-            Objects.requireNonNull(executionClass, "executionClass");
-        }
+        StepExecutionShape.from(kind, dynamicOperationSource).validate(new StepExecutionShape.Contract(
+            kind, executionClass, remoteExecution, inputType, outputType, pipelineReference,
+            command, commandIdGenerator, queryId));
+    }
+
+    public StepExecutionShape executionShape() {
+        return StepExecutionShape.from(kind, dynamicOperationSource);
     }
 
     public static StepDefinition pipeline(

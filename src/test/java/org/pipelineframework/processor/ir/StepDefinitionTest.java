@@ -101,6 +101,7 @@ class StepDefinitionTest {
 
         assertEquals(completion, step.deferredCompletion().orElseThrow());
         assertEquals(selection, step.connectorOperationSelection().orElseThrow());
+        assertEquals(StepExecutionShape.INTERNAL, step.executionShape());
     }
 
     private StepDefinition authored() {

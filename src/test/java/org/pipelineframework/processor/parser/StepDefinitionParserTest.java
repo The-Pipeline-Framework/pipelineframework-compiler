@@ -33,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.pipelineframework.processor.ir.MapperFallbackMode;
 import org.pipelineframework.processor.ir.StepDefinition;
+import org.pipelineframework.processor.ir.StepExecutionShape;
 import org.pipelineframework.processor.ir.StepKind;
 import org.pipelineframework.processor.ir.StreamingShape;
 
@@ -42,6 +43,25 @@ class StepDefinitionParserTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void inferredServiceUsesInternalExecutionShape() throws IOException {
+        List<StepDefinition> steps = parse("""
+            version: 2
+            appName: Test
+            basePackage: com.example
+            steps:
+              - name: Normalize invoice
+                input: com.example.Input
+                output: com.example.Output
+            """);
+
+        assertEquals(1, steps.size());
+        assertEquals(StepKind.INTERNAL, steps.getFirst().kind());
+        assertEquals(StepExecutionShape.INTERNAL, steps.getFirst().executionShape());
+        assertEquals(ClassName.get("com.example.service", "NormalizeInvoiceService"),
+            steps.getFirst().executionClass());
+    }
 
     @Test
     void parsesLocalDefinitionsAndPipelineInvocationWithTheSameStepGrammar() throws Exception {
@@ -77,6 +97,7 @@ class StepDefinitionParserTest {
         ParsedPipelineDefinitionCatalog catalog = new StepDefinitionParser().parseDefinitionCatalog(file);
 
         assertEquals(StepKind.PIPELINE, catalog.rootSteps().getFirst().kind());
+        assertEquals(StepExecutionShape.PIPELINE, catalog.rootSteps().getFirst().executionShape());
         assertEquals(Optional.of("inner"), catalog.rootSteps().getFirst().pipelineReference());
         assertEquals(List.of("inner"), catalog.localDefinitions().keySet().stream().toList());
         assertEquals("X", catalog.localDefinitions().get("inner").getFirst().name());
@@ -241,6 +262,7 @@ class StepDefinitionParserTest {
         assertEquals(1, steps.size(), diagnostics.toString());
         StepDefinition step = steps.getFirst();
         assertEquals(StepKind.INTERNAL, step.kind());
+        assertEquals(StepExecutionShape.INTERNAL, step.executionShape());
         assertEquals(ClassName.get("com.example.app", "InputType"), step.inputType());
         assertEquals(ClassName.get("com.example.app", "OutputType"), step.outputType());
         assertEquals(ClassName.get("com.example.app", "InputMapper"), step.inboundMapper());
@@ -322,6 +344,7 @@ class StepDefinitionParserTest {
         assertEquals(1, steps.size(), diagnostics.toString());
         StepDefinition step = steps.getFirst();
         assertEquals(StepKind.DELEGATED, step.kind());
+        assertEquals(StepExecutionShape.DELEGATED, step.executionShape());
         assertEquals(ClassName.get("com.example", "PaymentOperators"), step.executionClass());
         assertEquals(java.util.Optional.of("approve"), step.delegatedMethodName());
     }
@@ -691,6 +714,7 @@ class StepDefinitionParserTest {
         assertEquals(1, steps.size());
         StepDefinition step = steps.getFirst();
         assertEquals(StepKind.COMMAND, step.kind());
+        assertEquals(StepExecutionShape.COMMAND, step.executionShape());
         assertNull(step.executionClass());
         assertEquals("opensearch-index-document", step.command());
         assertEquals(ClassName.get("com.example", "SearchIndexDocumentCommandIdGenerator"), step.commandIdGenerator());
@@ -1350,7 +1374,98 @@ class StepDefinitionParserTest {
 
         assertEquals(1, steps.size());
         assertEquals(StepKind.INTERNAL, steps.getFirst().kind());
+        assertEquals(StepExecutionShape.DYNAMIC_OPERATION, steps.getFirst().executionShape());
         assertEquals("Decide invoice", steps.getFirst().dynamicOperationSource().orElseThrow());
+    }
+
+    @Test
+    void rejectsDynamicBindingCombinedWithOtherExecutionForms() throws IOException {
+        List<String> diagnostics = new ArrayList<>();
+        List<StepDefinition> steps = parse("""
+            version: 3
+            appName: Test
+            basePackage: com.example
+            types:
+              Value: { fields: [[id, string]] }
+            steps:
+              - name: With service
+                input: Value
+                output: Value
+                java: { input: com.example.Value, output: com.example.Value }
+                service: com.example.Service
+                operation: { mode: dynamic, from: Decide }
+              - name: With delegate
+                input: Value
+                output: Value
+                java: { input: com.example.Value, output: com.example.Value }
+                operator: com.example.Operator
+                operation: { mode: dynamic, from: Decide }
+              - name: With kind
+                input: Value
+                output: Value
+                java: { input: com.example.Value, output: com.example.Value }
+                kind: internal
+                operation: { mode: dynamic, from: Decide }
+              - name: With pipeline
+                input: Value
+                output: Value
+                java: { input: com.example.Value, output: com.example.Value }
+                pipeline: inner
+                operation: { mode: dynamic, from: Decide }
+              - name: With remote
+                input: Value
+                output: Value
+                java: { input: com.example.Value, output: com.example.Value }
+                execution:
+                  mode: REMOTE
+                  operatorId: invoke
+                  protocol: PROTOBUF_HTTP_V1
+                  target: { url: https://example.com/invoke }
+                operation: { mode: dynamic, from: Decide }
+            """, diagnostics);
+
+        assertTrue(steps.isEmpty(), diagnostics.toString());
+        for (String name : List.of("With service", "With delegate", "With kind", "With pipeline", "With remote")) {
+            assertTrue(diagnostics.stream().anyMatch(message -> message.contains(name)
+                && message.contains("operation.mode dynamic is an invocation binding")), diagnostics.toString());
+        }
+    }
+
+    @Test
+    void validatesDynamicBindingContractsOnTheSelectedShape() throws IOException {
+        List<String> diagnostics = new ArrayList<>();
+        List<StepDefinition> steps = parse("""
+            version: 3
+            basePackage: com.example
+            types:
+              Value: { fields: [[id, string]] }
+            steps:
+              - name: Mapper
+                input: <tpf.llm.AgentCall>
+                output: <tpf.connector.OperationObservation>
+                java: { input: com.example.AgentCall, output: com.example.Observation }
+                inboundMapper: com.example.Mapper
+                operation: { mode: dynamic, from: Decide }
+              - name: Cardinality
+                input: <tpf.llm.AgentCall>
+                output: <tpf.connector.OperationObservation>
+                java: { input: com.example.AgentCall, output: com.example.Observation }
+                cardinality: ONE_TO_MANY
+                operation: { mode: dynamic, from: Decide }
+              - name: Protocol
+                input: Value
+                output: Value
+                java: { input: com.example.Input, output: com.example.Output }
+                operation: { mode: dynamic, from: Decide }
+            """, diagnostics);
+
+        assertTrue(steps.isEmpty(), diagnostics.toString());
+        assertTrue(diagnostics.stream().anyMatch(message -> message.contains("Mapper")
+            && message.contains("cannot declare mapper fields")), diagnostics.toString());
+        assertTrue(diagnostics.stream().anyMatch(message -> message.contains("Cardinality")
+            && message.contains("only ONE_TO_ONE cardinality")), diagnostics.toString());
+        assertTrue(diagnostics.stream().anyMatch(message -> message.contains("Protocol")
+            && message.contains("<tpf.llm.AgentCall>")), diagnostics.toString());
     }
 
     @Test
@@ -2142,6 +2257,43 @@ class StepDefinitionParserTest {
     }
 
     @Test
+    void rejectsAuthoredKindThatDisagreesWithExecutionForm() throws IOException {
+        List<String> diagnostics = new ArrayList<>();
+        List<StepDefinition> steps = parse("""
+            version: 2
+            appName: Test
+            basePackage: com.example
+            steps:
+              - name: Service marked delegated
+                kind: delegated
+                service: com.example.Service
+                input: com.example.Input
+                output: com.example.Output
+              - name: Operator marked internal
+                kind: internal
+                operator: com.example.Operator
+                input: com.example.Input
+                output: com.example.Output
+              - name: Inferred service marked remote
+                kind: remote
+                input: com.example.Input
+                output: com.example.Output
+              - name: Correct internal
+                kind: internal
+                service: com.example.Service
+                input: com.example.Input
+                output: com.example.Output
+            """, diagnostics);
+
+        assertEquals(List.of("Correct internal"), steps.stream().map(StepDefinition::name).toList());
+        for (String name : List.of("Service marked delegated", "Operator marked internal",
+            "Inferred service marked remote")) {
+            assertTrue(diagnostics.stream().anyMatch(message -> message.contains(name)
+                && message.contains("does not match the declared execution form")), diagnostics.toString());
+        }
+    }
+
+    @Test
     void acceptsAwaitStepWithMultipleIdempotencyKeyFields() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
@@ -2604,6 +2756,7 @@ class StepDefinitionParserTest {
         assertEquals(1, steps.size());
         StepDefinition step = steps.getFirst();
         assertEquals(StepKind.REMOTE, step.kind());
+        assertEquals(StepExecutionShape.REMOTE, step.executionShape());
         assertEquals(ClassName.get("com.example.domain", "ChargeRequest"), step.inputType());
         assertEquals(ClassName.get("com.example.domain", "ChargeResult"), step.outputType());
     }
@@ -2894,6 +3047,7 @@ class StepDefinitionParserTest {
         assertEquals(1, steps.size(), diagnostics.toString());
         StepDefinition step = steps.getFirst();
         assertEquals(StepKind.QUERY, step.kind());
+        assertEquals(StepExecutionShape.QUERY, step.executionShape());
         assertNull(step.executionClass());
         assertEquals("customer-risk-by-id", step.queryId());
         assertEquals(List.of("customerId"), step.queryKeyFields());
