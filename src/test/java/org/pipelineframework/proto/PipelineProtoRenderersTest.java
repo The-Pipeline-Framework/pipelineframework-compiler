@@ -86,11 +86,57 @@ class PipelineProtoRenderersTest {
         assertTrue(manifest.contains("\"operatorId\" : \"charge-card\""));
         assertTrue(Files.readString(tempDir.resolve("EXTERNAL-STEP-HOSTS.md"))
             .contains("| Charge Card | `charge-card` |"));
+        new ExternalStepHostContractRenderer().write(config.basePackage(), tempDir, List.of(), "pipeline-types.proto");
+        assertFalse(Files.exists(tempDir.resolve("external-step-hosts.json")));
+        assertFalse(Files.exists(tempDir.resolve("EXTERNAL-STEP-HOSTS.md")));
 
         PipelineIdlSnapshotWriter writer = new PipelineIdlSnapshotWriter();
         Path lockPath = writer.resolveIdlStatePath(configPath);
         writer.writeIdlSnapshot(tempDir, config, state, state, lockPath, true);
         assertArrayEquals(Files.readAllBytes(lockPath), Files.readAllBytes(
             tempDir.resolve("target/generated-resources/META-INF/pipeline/idl.json")));
+    }
+
+    @Test
+    void checksLockBaselineBeforeBootstrapReplacesIt() throws Exception {
+        Path baselineConfigPath = tempDir.resolve("baseline.yaml");
+        Files.writeString(baselineConfigPath, """
+            version: 3
+            appName: LockBaseline
+            basePackage: com.example.lock
+            types:
+              Request:
+                fields: [[id, uuid]]
+            steps: []
+            """);
+        PipelineTemplateConfig baselineConfig = new PipelineTemplateConfigLoader().load(baselineConfigPath);
+        PipelineIdlSnapshot baselineState = PipelineIdlSnapshot.from(baselineConfig);
+        PipelineIdlSnapshotWriter writer = new PipelineIdlSnapshotWriter();
+        Path lockPath = writer.resolveIdlStatePath(baselineConfigPath);
+        writer.writeIdlSnapshot(tempDir, baselineConfig, baselineState, baselineState, lockPath, true);
+        byte[] baselineBytes = Files.readAllBytes(lockPath);
+
+        Path changedConfigPath = tempDir.resolve("changed.yaml");
+        Files.writeString(changedConfigPath, """
+            version: 3
+            appName: LockBaseline
+            basePackage: com.example.lock
+            types:
+              Other:
+                fields: [[id, uuid]]
+            steps: []
+            """);
+        PipelineTemplateConfig changedConfig = new PipelineTemplateConfigLoader().load(changedConfigPath);
+        PipelineIdlSnapshot changedState = PipelineIdlSnapshot.from(changedConfig);
+
+        System.setProperty("tpf.idl.compat.baseline", lockPath.toString());
+        try {
+            IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> writer.writeIdlSnapshot(tempDir, changedConfig, changedState, baselineState, lockPath, true));
+            assertTrue(error.getMessage().contains("Missing type in current IDL: Request"));
+        } finally {
+            System.clearProperty("tpf.idl.compat.baseline");
+        }
+        assertArrayEquals(baselineBytes, Files.readAllBytes(lockPath));
     }
 }

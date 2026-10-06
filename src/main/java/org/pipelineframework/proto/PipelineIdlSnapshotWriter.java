@@ -51,9 +51,7 @@ final class PipelineIdlSnapshotWriter {
         try {
             Files.createDirectories(outputPath.getParent());
             IDL_MAPPER.writerWithDefaultPrettyPrinter().writeValue(outputPath.toFile(), snapshot);
-            if (bootstrap) {
-                writeIdlLock(statePath, snapshot);
-            } else if (committedState != null && !committedState.equals(snapshot)) {
+            if (!bootstrap && committedState != null && !committedState.equals(snapshot)) {
                 throw new IllegalStateException("IDL state changed; review target/generated-resources/META-INF/pipeline/idl.json and promote it to "
                     + statePath);
             }
@@ -64,6 +62,9 @@ final class PipelineIdlSnapshotWriter {
                 if (!errors.isEmpty()) {
                     throw new IllegalStateException("IDL compatibility check failed:\n - " + String.join("\n - ", errors));
                 }
+            }
+            if (bootstrap) {
+                writeIdlLock(statePath, snapshot);
             }
         } catch (IOException e) {
             throw new IllegalStateException("Failed to write IDL snapshot", e);

@@ -127,6 +127,7 @@ public class PipelineProtoGenerator {
         }
         List<PipelineTemplateStep> steps = config.steps();
         if (steps == null || steps.isEmpty()) {
+            externalRenderer.write(config.basePackage(), resolvedOutput, List.of(), resolvedTypesProtoName);
             if (config.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
                 writeProto(resolvedOutput.resolve(resolvedTypesProtoName),
                     typesRenderer.renderV3(config.basePackage(), config.typeModel(), idl.state()));

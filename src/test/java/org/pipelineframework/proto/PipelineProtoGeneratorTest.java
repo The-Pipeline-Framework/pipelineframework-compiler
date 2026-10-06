@@ -1805,6 +1805,9 @@ class PipelineProtoGeneratorTest {
         Path configPath = tempDir.resolve("empty-steps-config.yaml");
         Files.writeString(configPath, yaml);
         Path outputDir = tempDir.resolve("proto-empty-steps-out");
+        Files.createDirectories(outputDir);
+        Files.writeString(outputDir.resolve("external-step-hosts.json"), "stale manifest");
+        Files.writeString(outputDir.resolve("EXTERNAL-STEP-HOSTS.md"), "stale readme");
 
         PipelineProtoGenerator generator = new PipelineProtoGenerator();
         generator.generate(tempDir, configPath, outputDir);

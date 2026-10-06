@@ -22,6 +22,12 @@ final class ExternalStepHostContractRenderer {
     void write(String basePackage, Path outputDir, List<ResolvedStep> steps, String typesProtoName) {
         List<ExternalStepHostContract> contracts = externalStepHostContracts(basePackage, steps, typesProtoName);
         if (contracts.isEmpty()) {
+            try {
+                Files.deleteIfExists(outputDir.resolve(EXTERNAL_STEP_HOSTS_MANIFEST));
+                Files.deleteIfExists(outputDir.resolve(EXTERNAL_STEP_HOSTS_README));
+            } catch (IOException e) {
+                throw new IllegalStateException("Failed to remove external step host contract artifacts from " + outputDir, e);
+            }
             return;
         }
         ExternalStepHostManifest manifest = new ExternalStepHostManifest(
