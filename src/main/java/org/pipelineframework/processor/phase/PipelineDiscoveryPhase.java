@@ -28,6 +28,7 @@ import org.pipelineframework.processor.PipelineCompilationPhase;
 import org.pipelineframework.processor.PipelineCompilerDiagnostics;
 import org.pipelineframework.processor.config.PipelineStepConfigLoader;
 import org.pipelineframework.processor.ir.GenerationTarget;
+import org.pipelineframework.processor.ir.CoordinationHost;
 import org.pipelineframework.processor.ir.PipelineAspectModel;
 import org.pipelineframework.processor.ir.PipelineOrchestratorModel;
 import org.pipelineframework.processor.ir.StepDefinition;
@@ -153,6 +154,12 @@ public class PipelineDiscoveryPhase implements PipelineCompilationPhase {
         ctx.setPluginHost(isPluginHost);
         ctx.setFunctionHttpBridge(parseStrictBooleanOption(options, "pipeline.function.httpBridge", false));
         ctx.setRendererProfile(parseRendererProfile(options));
+        try {
+            ctx.setCoordinationHost(CoordinationHost.parse(options.get("pipeline.coordination.host")));
+        } catch (IllegalArgumentException invalid) {
+            diagnostics.error(invalid.getMessage());
+            ctx.setCoordinationHost(CoordinationHost.NATIVE);
+        }
 
         PipelineTemplateConfig templateConfig;
         PipelineStepConfigLoader.StepConfig stepConfig;

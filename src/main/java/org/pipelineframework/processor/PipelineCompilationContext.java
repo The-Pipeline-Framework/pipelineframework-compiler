@@ -13,6 +13,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.pipelineframework.config.PlatformMode;
 import org.pipelineframework.processor.ir.GenerationTarget;
+import org.pipelineframework.processor.ir.CoordinationHost;
 import com.squareup.javapoet.ClassName;
 import org.pipelineframework.processor.ir.PipelineAspectModel;
 import org.pipelineframework.processor.ir.PipelineOrchestratorModel;
@@ -114,6 +115,8 @@ public class PipelineCompilationContext {
     private boolean functionHttpBridge;
     private PipelineTransport transportMode;
     private PlatformMode platformMode;
+    @Setter
+    private CoordinationHost coordinationHost;
 
     private DescriptorProtos.FileDescriptorSet descriptorSet;
 
@@ -176,6 +179,7 @@ public class PipelineCompilationContext {
         this.rendererProfile = DEFAULT_RENDERER_PROFILE;
         this.transportMode = PipelineTransport.GRPC;
         this.platformMode = PlatformMode.COMPUTE;
+        this.coordinationHost = CoordinationHost.NATIVE;
     }
 
     // Getters for additional properties

@@ -107,6 +107,7 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
         OrchestratorRestResourceRenderer orchestratorRestRenderer = new OrchestratorRestResourceRenderer();
         AbstractOrchestratorFunctionHandlerRenderer orchestratorFunctionHandlerRenderer =
             FunctionHandlerRendererFactory.createOrchestratorRenderer(ctx.getRendererProfile());
+        AwsDurableInputDecoderRenderer awsDurableInputDecoderRenderer = new AwsDurableInputDecoderRenderer();
         OrchestratorCliRenderer orchestratorCliRenderer = new OrchestratorCliRenderer();
         OrchestratorIngestClientRenderer orchestratorIngestClientRenderer = new OrchestratorIngestClientRenderer();
         CheckpointPublicationDescriptorRenderer checkpointPublicationDescriptorRenderer =
@@ -290,6 +291,9 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
                     roleMetadataGenerator,
                     cacheKeyGenerator
                 );
+                generateAwsDurableInputDecoder(
+                    ctx, orchestratorBinding, awsDurableInputDecoderRenderer, roleMetadataGenerator,
+                    cacheKeyGenerator, descriptorSet);
             }
         }
 
@@ -355,6 +359,40 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
         } catch (IOException e) {
             ctx.getCompilerDiagnostics().warning(
                 "Failed to write step definitions: " + e.getMessage());
+        }
+    }
+
+    private void generateAwsDurableInputDecoder(
+        PipelineCompilationContext ctx,
+        OrchestratorBinding binding,
+        AwsDurableInputDecoderRenderer renderer,
+        RoleMetadataGenerator roleMetadataGenerator,
+        ClassName cacheKeyGenerator,
+        DescriptorProtos.FileDescriptorSet descriptorSet
+    ) {
+        if (ctx.getCoordinationHost() != CoordinationHost.AWS_DURABLE) {
+            return;
+        }
+        if (!ctx.isPlatformModeFunction()) {
+            throw new IllegalStateException(
+                "pipeline.coordination.host=AWS_DURABLE requires pipeline.platform=FUNCTION");
+        }
+        try {
+            DeploymentRole role = DeploymentRole.PIPELINE_SERVER;
+            org.pipelineframework.config.template.PipelineTemplateConfig templateConfig =
+                ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig config
+                    ? config
+                    : null;
+            boolean v3GeneratedDomainTypes = templateConfig != null
+                && templateConfig.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3;
+            renderer.render(binding, Jsr269GenerationContext.create(
+                ctx.getProcessingEnv(), resolveRoleOutputDir(ctx, role), role, Set.of(),
+                cacheKeyGenerator, descriptorSet, org.pipelineframework.processor.ir.PipelineTransport.REST,
+                binding.basePackage(), null, v3GeneratedDomainTypes,
+                v3GeneratedDomainTypes ? java.util.Optional.of(templateConfig.typeModel()) : java.util.Optional.empty()));
+            roleMetadataGenerator.recordClassWithRole(renderer.decoderFqcn(binding.basePackage()), role.name());
+        } catch (IOException failure) {
+            throw new IllegalStateException("Failed to generate AWS Durable input decoder", failure);
         }
     }
 
