@@ -42,8 +42,11 @@ import org.mockito.quality.Strictness;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Unit tests for PipelineGenerationPhase */
@@ -124,20 +127,65 @@ class PipelineGenerationPhaseTest {
     }
 
     @Test
-    void resolveClientRoleDefaultsToOrchestratorClientWhenNull() throws Exception {
-        PipelineGenerationPhase phase = new PipelineGenerationPhase();
-        java.lang.reflect.Method method = PipelineGenerationPhase.class.getDeclaredMethod(
-            "resolveClientRole",
-            org.pipelineframework.processor.ir.DeploymentRole.class);
-        method.setAccessible(true);
-
-        Object role = method.invoke(phase, new Object[]{null});
+    void resolveClientRoleDefaultsToOrchestratorClientWhenNull() {
+        ObjectIoGenerationService service = new ObjectIoGenerationService(
+            new GenerationPathResolver(), new GenerationPolicy());
+        org.pipelineframework.processor.ir.DeploymentRole role = service.resolveClientRole(null);
         assertEquals(org.pipelineframework.processor.ir.DeploymentRole.ORCHESTRATOR_CLIENT, role);
     }
 
     @Test
+    void reportsLegacyTemplateObjectBoundaries() {
+        org.pipelineframework.processor.PipelineCompilationContext context =
+            new org.pipelineframework.processor.PipelineCompilationContext(processingEnv,
+                org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        org.pipelineframework.config.template.PipelineTemplateConfig template =
+            mock(org.pipelineframework.config.template.PipelineTemplateConfig.class);
+        when(template.version()).thenReturn(2);
+        when(template.input()).thenReturn(new org.pipelineframework.config.boundary.PipelineInputBoundaryConfig(
+            null, new org.pipelineframework.config.boundary.PipelineObjectInputConfig(
+                "input-files", "com.example.Input", "Input", "com.example.InputMapper")));
+        when(template.output()).thenReturn(new org.pipelineframework.config.boundary.PipelineOutputBoundaryConfig(
+            null, new org.pipelineframework.config.boundary.PipelineObjectOutputConfig(
+                "output-files", "com.example.Output", "Output", "com.example.OutputMapper")));
+        context.setPipelineTemplateConfig(template);
+
+        ObjectIoGenerationConfigResolver resolver = new ObjectIoGenerationConfigResolver();
+        assertTrue(resolver.objectIngestGenerationConfig(context).isEmpty());
+        assertTrue(resolver.objectPublishGenerationConfig(context).isEmpty());
+        verify(messager).printMessage(javax.tools.Diagnostic.Kind.ERROR,
+            "Object Ingest requires a v3 pipeline template");
+        verify(messager).printMessage(javax.tools.Diagnostic.Kind.ERROR,
+            "Object Publish requires a v3 pipeline template");
+    }
+
+    @Test
+    void reportsEffectiveObjectBoundariesWithoutATemplate() {
+        org.pipelineframework.processor.PipelineCompilationContext context =
+            new org.pipelineframework.processor.PipelineCompilationContext(processingEnv,
+                org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        org.pipelineframework.config.pipeline.PipelineYamlConfig effective =
+            mock(org.pipelineframework.config.pipeline.PipelineYamlConfig.class);
+        when(effective.input()).thenReturn(new org.pipelineframework.config.boundary.PipelineInputBoundaryConfig(
+            null, new org.pipelineframework.config.boundary.PipelineObjectInputConfig(
+                "input-files", "com.example.Input", "Input", "com.example.InputMapper")));
+        when(effective.output()).thenReturn(new org.pipelineframework.config.boundary.PipelineOutputBoundaryConfig(
+            null, new org.pipelineframework.config.boundary.PipelineObjectOutputConfig(
+                "output-files", "com.example.Output", "Output", "com.example.OutputMapper")));
+        context.setEffectivePipelineConfig(effective);
+
+        ObjectIoGenerationConfigResolver resolver = new ObjectIoGenerationConfigResolver();
+        assertTrue(resolver.objectIngestGenerationConfig(context).isEmpty());
+        assertTrue(resolver.objectPublishGenerationConfig(context).isEmpty());
+        verify(messager).printMessage(javax.tools.Diagnostic.Kind.ERROR,
+            "Object Ingest requires a v3 pipeline template");
+        verify(messager).printMessage(javax.tools.Diagnostic.Kind.ERROR,
+            "Object Publish requires a v3 pipeline template");
+    }
+
+    @Test
     void selectsV3BoundaryRolesWithoutLegacyMapperMetadata() throws Exception {
-        PipelineGenerationPhase phase = new PipelineGenerationPhase();
+        ObjectIoStepResolver stepResolver = new ObjectIoStepResolver();
         org.pipelineframework.processor.PipelineCompilationContext context =
             new org.pipelineframework.processor.PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
         org.pipelineframework.processor.ir.PipelineStepModel first = model("First", org.pipelineframework.processor.ir.DeploymentRole.PIPELINE_SERVER, false);
@@ -147,21 +195,10 @@ class PipelineGenerationPhaseTest {
             first,
             terminal));
 
-        java.lang.reflect.Method firstBusinessStep = PipelineGenerationPhase.class.getDeclaredMethod(
-            "firstBusinessStepWithDeploymentRole",
-            org.pipelineframework.processor.PipelineCompilationContext.class);
-        java.lang.reflect.Method terminalBusinessStep = PipelineGenerationPhase.class.getDeclaredMethod(
-            "terminalBusinessStepWithDeploymentRole",
-            org.pipelineframework.processor.PipelineCompilationContext.class);
-        firstBusinessStep.setAccessible(true);
-        terminalBusinessStep.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
         java.util.Optional<org.pipelineframework.processor.ir.PipelineStepModel> selectedFirst =
-            (java.util.Optional<org.pipelineframework.processor.ir.PipelineStepModel>) firstBusinessStep.invoke(phase, context);
-        @SuppressWarnings("unchecked")
+            stepResolver.firstBusinessStepWithDeploymentRole(context);
         java.util.Optional<org.pipelineframework.processor.ir.PipelineStepModel> selectedTerminal =
-            (java.util.Optional<org.pipelineframework.processor.ir.PipelineStepModel>) terminalBusinessStep.invoke(phase, context);
+            stepResolver.terminalBusinessStepWithDeploymentRole(context);
 
         assertEquals(first, selectedFirst.orElseThrow());
         assertEquals(terminal, selectedTerminal.orElseThrow());
@@ -225,131 +262,92 @@ class PipelineGenerationPhaseTest {
     }
 
     @Test
-    void skipsObjectIoBoundaryAdaptersForPluginHostModules(@TempDir Path tempDir) throws Exception {
+    void skipsObjectIoBoundaryAdaptersForPluginHostModules() throws Exception {
         PipelineGenerationPhase phase = new PipelineGenerationPhase();
-        Path config = tempDir.resolve("pipeline-object-io.yaml");
-        Files.writeString(config, """
-            version: 2
-            basePackage: com.example
-            transport: GRPC
-            sources:
-              input-files:
-                kind: object
-                provider: filesystem
-                location:
-                  root: /tmp/input
-            input:
-              from: input-files
-              emits:
-                type: com.example.Input
-                typeName: Input
-                mapper: com.example.InputMapper
-            publish:
-              output-files:
-                kind: object
-                provider: filesystem
-                location:
-                  root: /tmp/output
-                naming:
-                  keyTemplate: "{groupKey}.out"
-            output:
-              to: output-files
-              consumes:
-                type: com.example.Output
-                typeName: Output
-                mapper: com.example.OutputMapper
-            steps: []
-            """);
-        when(processingEnv.getOptions()).thenReturn(java.util.Map.of("pipeline.config", config.toString()));
         org.pipelineframework.processor.PipelineCompilationContext context =
             new org.pipelineframework.processor.PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        org.pipelineframework.config.template.PipelineTemplateConfig template =
+            mock(org.pipelineframework.config.template.PipelineTemplateConfig.class);
+        when(template.version()).thenReturn(3);
+        when(template.basePackage()).thenReturn("com.example");
+        when(template.input()).thenReturn(new org.pipelineframework.config.boundary.PipelineInputBoundaryConfig(
+            null, new org.pipelineframework.config.boundary.PipelineObjectInputConfig(
+                "input-files", "com.example.Input", "Input", "com.example.InputMapper")));
+        when(template.output()).thenReturn(new org.pipelineframework.config.boundary.PipelineOutputBoundaryConfig(
+            null, new org.pipelineframework.config.boundary.PipelineObjectOutputConfig(
+                "output-files", "com.example.Output", "Output", "com.example.OutputMapper")));
+        context.setPipelineTemplateConfig(template);
         context.setPluginHost(true);
         context.setGeneratedSourcesRoot(Path.of("target/generated-sources-test"));
         context.setRendererBindings(java.util.Map.of());
         context.setStepModels(java.util.List.of());
 
         assertDoesNotThrow(() -> phase.execute(context));
+        javax.annotation.processing.Filer filer = processingEnv.getFiler();
+        verify(filer, never()).createSourceFile(eq("com.example.pipeline.ObjectIngestPipelineInputAdapter"),
+            any(javax.lang.model.element.Element[].class));
+        verify(filer, never()).createSourceFile(eq("com.example.pipeline.ObjectPublishTerminalOutputAdapter"),
+            any(javax.lang.model.element.Element[].class));
     }
 
     @Test
-    void legacyObjectPublishRejectsDistinctDeferredFinalOutput(@TempDir Path tempDir) throws Exception {
-        Path config = tempDir.resolve("pipeline-object-publish.yaml");
-        Files.writeString(config, """
-            version: 2
-            basePackage: com.example
-            transport: REST
-            publish:
-              output-files:
-                kind: object
-                provider: filesystem
-                location:
-                  root: /tmp/output
-            output:
-              to: output-files
-              consumes:
-                type: com.example.Decision
-                typeName: Decision
-                mapper: com.example.DecisionMapper
-            steps: []
-            """);
-        when(processingEnv.getOptions()).thenReturn(java.util.Map.of("pipeline.config", config.toString()));
+    void generatesV3ObjectAdaptersAndServiceDescriptors(@TempDir Path tempDir) throws Exception {
         org.pipelineframework.processor.PipelineCompilationContext context =
-            new org.pipelineframework.processor.PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+            new org.pipelineframework.processor.PipelineCompilationContext(processingEnv,
+                org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        org.pipelineframework.config.template.PipelineTemplateConfig template =
+            mock(org.pipelineframework.config.template.PipelineTemplateConfig.class);
+        when(template.version()).thenReturn(3);
+        when(template.basePackage()).thenReturn("com.example");
+        when(template.input()).thenReturn(new org.pipelineframework.config.boundary.PipelineInputBoundaryConfig(
+            null, new org.pipelineframework.config.boundary.PipelineObjectInputConfig(
+                "input-files", "com.example.Input", "Input", "com.example.InputMapper")));
+        when(template.output()).thenReturn(new org.pipelineframework.config.boundary.PipelineOutputBoundaryConfig(
+            null, new org.pipelineframework.config.boundary.PipelineObjectOutputConfig(
+                "output-files", "com.example.Output", "Output", "com.example.OutputMapper")));
+        context.setPipelineTemplateConfig(template);
         context.setTransportMode(org.pipelineframework.processor.ir.PipelineTransport.REST);
-        com.squareup.javapoet.ClassName pending = com.squareup.javapoet.ClassName.get("com.example", "PendingApproval");
-        org.pipelineframework.processor.ir.PipelineStepModel terminal =
-            new org.pipelineframework.processor.ir.PipelineStepModel.Builder()
-                .serviceName("CreateApprovalService")
-                .generatedName("CreateApprovalService")
-                .servicePackage("com.example")
-                .serviceClassName(com.squareup.javapoet.ClassName.get("com.example", "CreateApprovalService"))
-                .inputMapping(org.pipelineframework.processor.ir.TypeMapping.withoutMapper(
-                    com.squareup.javapoet.ClassName.get("com.example", "Request")))
-                .outputMapping(new org.pipelineframework.processor.ir.TypeMapping(
-                    pending,
-                    java.util.Optional.of(com.squareup.javapoet.ClassName.get("com.example", "PendingApprovalMapper")),
-                    true,
-                    pending))
-                .streamingShape(org.pipelineframework.processor.ir.StreamingShape.UNARY_UNARY)
-                .enabledTargets(Set.of())
-                .executionMode(org.pipelineframework.processor.ir.ExecutionMode.DEFAULT)
-                .deploymentRole(org.pipelineframework.processor.ir.DeploymentRole.ORCHESTRATOR_CLIENT)
-                .deferredCompletionSelection(new org.pipelineframework.processor.ir.DeferredCompletionSelection(
-                    com.squareup.javapoet.ClassName.get("com.example", "ApprovalDecision"),
-                    "ApprovalDecision",
-                    java.util.Optional.empty(),
-                    java.time.Duration.ofMinutes(5),
-                    List.of(),
-                    "interactionId",
-                    "interaction-api",
-                    java.util.Map.of(),
-                    java.util.Optional.empty(),
-                    java.util.Optional.empty()))
-                .build();
-        context.setStepModels(List.of(terminal));
+        context.setGeneratedSourcesRoot(tempDir.resolve("generated-sources"));
+        context.setStepModels(List.of(model("First", org.pipelineframework.processor.ir.DeploymentRole.REST_SERVER, false)));
+        org.pipelineframework.processor.util.RoleMetadataGenerator roles =
+            mock(org.pipelineframework.processor.util.RoleMetadataGenerator.class);
+        ObjectIoGenerationService service = new ObjectIoGenerationService(
+            new GenerationPathResolver(), new GenerationPolicy());
+        javax.annotation.processing.Filer filer = processingEnv.getFiler();
+        java.io.StringWriter ingestDescriptor = new java.io.StringWriter();
+        java.io.StringWriter publishDescriptor = new java.io.StringWriter();
+        FileObject ingestResource = mock(FileObject.class);
+        FileObject publishResource = mock(FileObject.class);
+        when(ingestResource.openWriter()).thenReturn(ingestDescriptor);
+        when(publishResource.openWriter()).thenReturn(publishDescriptor);
+        when(filer.createResource(StandardLocation.CLASS_OUTPUT, "",
+            "META-INF/services/org.pipelineframework.objectingest.ObjectIngestInputAdapter"))
+            .thenReturn(ingestResource);
+        when(filer.createResource(StandardLocation.CLASS_OUTPUT, "",
+            "META-INF/services/org.pipelineframework.objectpublish.TerminalOutputAdapter"))
+            .thenReturn(publishResource);
 
-        java.lang.reflect.Method method = PipelineGenerationPhase.class.getDeclaredMethod(
-            "generateObjectPublishTerminalAdapter",
-            org.pipelineframework.processor.PipelineCompilationContext.class,
-            org.pipelineframework.processor.renderer.TerminalOutputAdapterRenderer.class,
-            org.pipelineframework.processor.util.RoleMetadataGenerator.class,
-            com.squareup.javapoet.ClassName.class,
-            com.google.protobuf.DescriptorProtos.FileDescriptorSet.class);
-        method.setAccessible(true);
+        service.generateObjectIngestInputAdapter(context,
+            new org.pipelineframework.processor.renderer.ObjectIngestInputAdapterRenderer(), roles, null, null);
+        service.generateObjectPublishTerminalAdapter(context,
+            new org.pipelineframework.processor.renderer.TerminalOutputAdapterRenderer(), roles, null, null);
 
-        java.lang.reflect.InvocationTargetException failure = assertThrows(
-            java.lang.reflect.InvocationTargetException.class,
-            () -> method.invoke(
-                new PipelineGenerationPhase(),
-                context,
-                new org.pipelineframework.processor.renderer.TerminalOutputAdapterRenderer(),
-                new org.pipelineframework.processor.util.RoleMetadataGenerator(processingEnv),
-                null,
-                null));
-
-        assertEquals(
-            "Object Publish with deferred completion requires v3 canonical output types",
-            failure.getCause().getMessage());
+        verify(filer).createSourceFile(eq("com.example.pipeline.ObjectIngestPipelineInputAdapter"),
+            any(javax.lang.model.element.Element[].class));
+        verify(filer).createSourceFile(eq("com.example.pipeline.ObjectPublishTerminalOutputAdapter"),
+            any(javax.lang.model.element.Element[].class));
+        verify(filer).createResource(StandardLocation.CLASS_OUTPUT, "",
+            "META-INF/services/org.pipelineframework.objectingest.ObjectIngestInputAdapter");
+        verify(filer).createResource(StandardLocation.CLASS_OUTPUT, "",
+            "META-INF/services/org.pipelineframework.objectpublish.TerminalOutputAdapter");
+        verify(roles).recordClassWithRole("com.example.pipeline.ObjectIngestPipelineInputAdapter",
+            org.pipelineframework.processor.ir.DeploymentRole.ORCHESTRATOR_CLIENT.name());
+        verify(roles).recordClassWithRole("com.example.pipeline.ObjectPublishTerminalOutputAdapter",
+            org.pipelineframework.processor.ir.DeploymentRole.ORCHESTRATOR_CLIENT.name());
+        assertEquals("com.example.pipeline.ObjectIngestPipelineInputAdapter" + System.lineSeparator(),
+            ingestDescriptor.toString());
+        assertEquals("com.example.pipeline.ObjectPublishTerminalOutputAdapter" + System.lineSeparator(),
+            publishDescriptor.toString());
     }
 
     @Test
