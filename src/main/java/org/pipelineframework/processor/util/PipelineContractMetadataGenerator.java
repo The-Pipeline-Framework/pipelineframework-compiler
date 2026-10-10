@@ -15,6 +15,7 @@ import com.google.gson.GsonBuilder;
 import com.squareup.javapoet.TypeName;
 import org.pipelineframework.config.pipeline.*;
 import org.pipelineframework.config.template.PipelineTemplateConfig;
+import org.pipelineframework.config.boundary.PipelineHttpPayloadBoundaryConfig;
 import org.pipelineframework.config.template.PipelineTemplateTypeDefinition;
 import org.pipelineframework.config.template.PipelineTemplateTypeModel;
 import org.pipelineframework.config.template.PipelineTemplateTypeReference;
@@ -78,8 +79,9 @@ public class PipelineContractMetadataGenerator {
         boolean hasContributedTypes = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
             && !config.typeModel().contributedTypeIdentities().isEmpty();
         List<Map<String, Object>> importedDefinitions = importedDefinitions(ctx);
+        List<Map<String, Object>> httpPayloadBoundaries = httpPayloadBoundaries(ctx);
         int schemaVersion = composition.present() || hasContributedTypes || !importedDefinitions.isEmpty()
-            || !capabilityImports.isEmpty()
+            || !capabilityImports.isEmpty() || !httpPayloadBoundaries.isEmpty()
             ? 3 : canonicalTypes.isEmpty() ? 1 : 2;
         String canonicalCatalogFingerprint = sha256(CANONICAL_GSON.toJson(canonicalTypes));
         contractWithoutHash.put("schemaVersion", schemaVersion);
@@ -98,6 +100,9 @@ public class PipelineContractMetadataGenerator {
         if (schemaVersion == 3) {
             contractWithoutHash.put("importedDefinitions", importedDefinitions);
             contractWithoutHash.put("capabilityImports", capabilityImports);
+            if (!httpPayloadBoundaries.isEmpty()) {
+                contractWithoutHash.put("httpPayloadBoundaries", httpPayloadBoundaries);
+            }
         }
         contractWithoutHash.put("capabilities", capabilities());
 
@@ -121,6 +126,9 @@ public class PipelineContractMetadataGenerator {
         if (schemaVersion == 3) {
             finalContract.put("importedDefinitions", importedDefinitions);
             finalContract.put("capabilityImports", capabilityImports);
+            if (!httpPayloadBoundaries.isEmpty()) {
+                finalContract.put("httpPayloadBoundaries", httpPayloadBoundaries);
+            }
         }
         finalContract.put("capabilities", contractWithoutHash.get("capabilities"));
 
@@ -131,6 +139,29 @@ public class PipelineContractMetadataGenerator {
                 writer.write(PRETTY_GSON.toJson(finalContract));
             }
         }
+    }
+
+    private List<Map<String, Object>> httpPayloadBoundaries(PipelineCompilationContext ctx) {
+        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)) {
+            return List.of();
+        }
+        return config.httpPayloads().values().stream()
+            .sorted(Comparator.comparing(PipelineHttpPayloadBoundaryConfig::name))
+            .map(boundary -> {
+                Map<String, Object> value = new LinkedHashMap<>();
+                value.put("name", boundary.name());
+                value.put("direction", boundary.direction().name());
+                value.put("route", "/tpf/payloads/" + boundary.name() + "/"
+                    + boundary.direction().name().toLowerCase(Locale.ROOT));
+                value.put("object", boundary.objectName());
+                value.put("canonicalType", boundary.canonicalType());
+                value.put("referenceField", boundary.referenceField());
+                value.put("contentTypes", boundary.contentTypes());
+                value.put("maxBytes", boundary.maxBytes());
+                value.put("authorizationScope", boundary.authorizationScope());
+                return immutableSortedMap(value);
+            })
+            .toList();
     }
 
     private List<Map<String, Object>> importedDefinitions(PipelineCompilationContext ctx) {

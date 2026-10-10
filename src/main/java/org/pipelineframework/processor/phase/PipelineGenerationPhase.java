@@ -147,6 +147,18 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
             roleMetadataGenerator,
             cacheKeyGenerator,
             descriptorSet);
+        if (ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig template
+            && !template.httpPayloads().isEmpty()) {
+            try {
+                new HttpPayloadBoundaryRenderer().render(template,
+                    generationPathResolver.resolveRoleOutputDir(ctx, DeploymentRole.PIPELINE_SERVER))
+                    .forEach(className -> roleMetadataGenerator.recordClassWithRole(
+                        className, DeploymentRole.PIPELINE_SERVER.name()));
+            } catch (IOException failure) {
+                ctx.getCompilerDiagnostics().error("Failed to generate HTTP payload boundary: " + failure.getMessage());
+                throw failure;
+            }
+        }
 
         if (ctx.getStepModels().isEmpty() && !ctx.isOrchestratorGenerated()) {
             try {
@@ -160,6 +172,10 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
             } catch (IOException e) {
                 ctx.getCompilerDiagnostics().warning(
                     "Failed to write platform metadata: " + e.getMessage());
+            }
+            if (ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig template
+                && !template.httpPayloads().isEmpty()) {
+                new PipelineContractMetadataGenerator(ctx.getProcessingEnv()).writePipelineContract(ctx);
             }
             return;
         }
