@@ -1,5 +1,6 @@
 package org.pipelineframework.processor.renderer;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -67,5 +68,15 @@ class HttpPayloadBoundaryRendererTest {
         assertTrue(downloadSource.contains("/tpf/payloads/receipt/download"));
         assertTrue(downloadSource.contains("engine.openDownload"));
         assertTrue(downloadSource.contains("try (lease)"));
+
+        // A route-name assertion alone does not prove repeatable generated artifacts.
+        Path repeated = output.resolve("repeated");
+        var repeatedClasses = new HttpPayloadBoundaryRenderer().render(
+            new PipelineTemplateConfigLoader().load(template), repeated);
+        assertEquals(classes, repeatedClasses);
+        assertEquals(uploadSource,
+            Files.readString(repeated.resolve("org/example/pipeline/GeneratedPayloadBoundary0.java")));
+        assertEquals(downloadSource,
+            Files.readString(repeated.resolve("org/example/pipeline/GeneratedPayloadBoundary1.java")));
     }
 }
