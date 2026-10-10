@@ -57,11 +57,12 @@ public class PipelineContractMetadataGenerator {
      * @throws IOException when writing fails
      */
     public void writePipelineContract(PipelineCompilationContext ctx) throws IOException {
-        if (ctx == null || ctx.getStepModels() == null || ctx.getStepModels().isEmpty()) {
+        if (ctx == null || (ctx.getStepModels() == null || ctx.getStepModels().isEmpty())
+            && !hasHttpPayloadBoundaries(ctx)) {
             return;
         }
-        List<Map<String, Object>> steps = stepDescriptors(ctx);
-        if (steps.isEmpty()) {
+        List<Map<String, Object>> steps = ctx.getStepModels() == null ? List.of() : stepDescriptors(ctx);
+        if (steps.isEmpty() && !hasHttpPayloadBoundaries(ctx)) {
             return;
         }
 
@@ -162,6 +163,11 @@ public class PipelineContractMetadataGenerator {
                 return immutableSortedMap(value);
             })
             .toList();
+    }
+
+    private boolean hasHttpPayloadBoundaries(PipelineCompilationContext ctx) {
+        return ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
+            && !config.httpPayloads().isEmpty();
     }
 
     private List<Map<String, Object>> importedDefinitions(PipelineCompilationContext ctx) {

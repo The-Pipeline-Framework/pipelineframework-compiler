@@ -143,6 +143,19 @@ class PipelineContractMetadataGeneratorTest {
     }
 
     @Test
+    void writesContractForBoundaryOnlyPipeline() throws IOException {
+        PipelineHttpPayloadBoundaryConfig upload = new PipelineHttpPayloadBoundaryConfig(
+            "invoice-upload", PipelineHttpPayloadBoundaryConfig.Direction.UPLOAD, "uploads",
+            "Alpha", "payload", List.of("application/pdf"), 1024, "invoice");
+        Path output = tempDir.resolve("boundary-only");
+        writeV3Metadata(writePipelineYaml(), output, v3TypeModel(false), Map.of(upload.name(), upload), false);
+        JsonObject contract = readContract(output);
+        assertEquals(0, contract.getAsJsonArray("steps").size());
+        assertEquals("invoice-upload", contract.getAsJsonArray("httpPayloadBoundaries")
+            .get(0).getAsJsonObject().get("name").getAsString());
+    }
+
+    @Test
     void writesPagingAsReleasePinnedStepControlMetadata() throws IOException {
         Path yaml = tempDir.resolve("paged-pipeline.yaml");
         Files.writeString(yaml, """
@@ -657,6 +670,12 @@ class PipelineContractMetadataGeneratorTest {
 
     private void writeV3Metadata(Path pipelineYaml, Path outputDir, PipelineTemplateTypeModel typeModel,
                                  Map<String, PipelineHttpPayloadBoundaryConfig> httpPayloads) throws IOException {
+        writeV3Metadata(pipelineYaml, outputDir, typeModel, httpPayloads, true);
+    }
+
+    private void writeV3Metadata(Path pipelineYaml, Path outputDir, PipelineTemplateTypeModel typeModel,
+                                 Map<String, PipelineHttpPayloadBoundaryConfig> httpPayloads,
+                                 boolean includeStep) throws IOException {
         ProcessingEnvironment processingEnv = processingEnv(outputDir, Map.of("pipeline.config", pipelineYaml.toString()));
         RoundEnvironment roundEnv = mock(RoundEnvironment.class);
         PipelineCompilationContext ctx = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
@@ -667,8 +686,10 @@ class PipelineContractMetadataGeneratorTest {
             3, "v3-contract", "org.example.v3", "REST", PipelinePlatform.COMPUTE,
             Map.of(), Map.of(), Map.of(), Map.of(), List.of(), Map.of(), null, null,
             new PipelineTemplateMaterialization(List.of()), null, null, typeModel, Map.of(), httpPayloads));
-        ctx.setStepModels(List.of(step("ProcessV3Service", "Alpha", "Zeta",
-            StreamingShape.UNARY_UNARY, Set.of(GenerationTarget.REST_CLIENT_STEP))));
+        ctx.setStepModels(includeStep
+            ? List.of(step("ProcessV3Service", "Alpha", "Zeta",
+                StreamingShape.UNARY_UNARY, Set.of(GenerationTarget.REST_CLIENT_STEP)))
+            : List.of());
         new PipelineContractMetadataGenerator(processingEnv).writePipelineContract(ctx);
     }
 
