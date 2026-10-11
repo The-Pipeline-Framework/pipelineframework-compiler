@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.pipelineframework.config.template.PipelineTemplateConfigLoader;
@@ -59,9 +60,14 @@ class HttpPayloadBoundaryRendererTest {
             """);
         var config = new PipelineTemplateConfigLoader().load(template);
         var classes = new HttpPayloadBoundaryRenderer().render(config, output);
-        assertTrue(classes.get(0).endsWith("GeneratedPayloadBoundary0"));
+        assertEquals(List.of("org.example.pipeline.GeneratedPayloadBoundary0",
+            "org.example.pipeline.GeneratedPayloadBoundary1"), classes);
+        try (var sources = Files.walk(output)) {
+            assertEquals(2, sources.filter(path -> path.toString().endsWith(".java")).count());
+        }
         String uploadSource = Files.readString(output.resolve("org/example/pipeline/GeneratedPayloadBoundary0.java"));
         String downloadSource = Files.readString(output.resolve("org/example/pipeline/GeneratedPayloadBoundary1.java"));
+        assertTrue(uploadSource.contains("@Authenticated"));
         assertTrue(uploadSource.contains("/tpf/payloads/invoice/upload"));
         assertTrue(uploadSource.contains("transfer().upload"));
         assertTrue(uploadSource.contains("application/pdf"));
