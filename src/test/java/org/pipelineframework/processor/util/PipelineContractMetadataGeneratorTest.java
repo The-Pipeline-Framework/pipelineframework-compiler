@@ -29,6 +29,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.pipelineframework.config.PlatformMode;
 import org.pipelineframework.config.CardinalitySemantics;
 import org.pipelineframework.config.template.PipelinePlatform;
+import org.pipelineframework.config.boundary.PipelineHttpPayloadBoundaryConfig;
 import org.pipelineframework.config.template.PipelineFieldNullability;
 import org.pipelineframework.config.template.PipelineFieldPresence;
 import org.pipelineframework.config.template.PipelineTemplateConfig;
@@ -107,6 +108,51 @@ class PipelineContractMetadataGeneratorTest {
         JsonObject capabilities = first.getAsJsonObject("capabilities");
         assertTrue(capabilities.get("localTransitionExecution").getAsBoolean());
         assertEquals(4, capabilities.getAsJsonArray("transitionWorkerProtocols").size());
+    }
+
+    @Test
+    void pinsHttpPayloadRoutesInDeterministicContractOrder() throws IOException {
+        Path yaml = writePipelineYaml();
+        PipelineTemplateTypeModel typeModel = v3TypeModel(false);
+        PipelineHttpPayloadBoundaryConfig upload = new PipelineHttpPayloadBoundaryConfig(
+            "invoice-upload", PipelineHttpPayloadBoundaryConfig.Direction.UPLOAD, "uploads",
+            "Alpha", "payload", List.of("application/pdf"), 1024, "invoice");
+        PipelineHttpPayloadBoundaryConfig download = new PipelineHttpPayloadBoundaryConfig(
+            "artifact-download", PipelineHttpPayloadBoundaryConfig.Direction.DOWNLOAD, "artifacts",
+            "Zeta", "payload", List.of("application/pdf"), 0, "invoice");
+        Map<String, PipelineHttpPayloadBoundaryConfig> first = new LinkedHashMap<>();
+        first.put(upload.name(), upload);
+        first.put(download.name(), download);
+        Map<String, PipelineHttpPayloadBoundaryConfig> reversed = new LinkedHashMap<>();
+        reversed.put(download.name(), download);
+        reversed.put(upload.name(), upload);
+        Path firstOutput = tempDir.resolve("payload-contract-first");
+        Path secondOutput = tempDir.resolve("payload-contract-second");
+
+        writeV3Metadata(yaml, firstOutput, typeModel, first);
+        writeV3Metadata(yaml, secondOutput, typeModel, reversed);
+
+        JsonObject a = readContract(firstOutput);
+        JsonObject b = readContract(secondOutput);
+        assertEquals(a.get("contractHash"), b.get("contractHash"));
+        assertEquals(3, a.get("schemaVersion").getAsInt());
+        JsonArray routes = a.getAsJsonArray("httpPayloadBoundaries");
+        assertEquals("artifact-download", routes.get(0).getAsJsonObject().get("name").getAsString());
+        assertEquals("/tpf/payloads/invoice-upload/upload",
+            routes.get(1).getAsJsonObject().get("route").getAsString());
+    }
+
+    @Test
+    void writesContractForBoundaryOnlyPipeline() throws IOException {
+        PipelineHttpPayloadBoundaryConfig upload = new PipelineHttpPayloadBoundaryConfig(
+            "invoice-upload", PipelineHttpPayloadBoundaryConfig.Direction.UPLOAD, "uploads",
+            "Alpha", "payload", List.of("application/pdf"), 1024, "invoice");
+        Path output = tempDir.resolve("boundary-only");
+        writeV3Metadata(writePipelineYaml(), output, v3TypeModel(false), Map.of(upload.name(), upload), false);
+        JsonObject contract = readContract(output);
+        assertEquals(0, contract.getAsJsonArray("steps").size());
+        assertEquals("invoice-upload", contract.getAsJsonArray("httpPayloadBoundaries")
+            .get(0).getAsJsonObject().get("name").getAsString());
     }
 
     @Test
@@ -619,6 +665,17 @@ class PipelineContractMetadataGeneratorTest {
     }
 
     private void writeV3Metadata(Path pipelineYaml, Path outputDir, PipelineTemplateTypeModel typeModel) throws IOException {
+        writeV3Metadata(pipelineYaml, outputDir, typeModel, Map.of());
+    }
+
+    private void writeV3Metadata(Path pipelineYaml, Path outputDir, PipelineTemplateTypeModel typeModel,
+                                 Map<String, PipelineHttpPayloadBoundaryConfig> httpPayloads) throws IOException {
+        writeV3Metadata(pipelineYaml, outputDir, typeModel, httpPayloads, true);
+    }
+
+    private void writeV3Metadata(Path pipelineYaml, Path outputDir, PipelineTemplateTypeModel typeModel,
+                                 Map<String, PipelineHttpPayloadBoundaryConfig> httpPayloads,
+                                 boolean includeStep) throws IOException {
         ProcessingEnvironment processingEnv = processingEnv(outputDir, Map.of("pipeline.config", pipelineYaml.toString()));
         RoundEnvironment roundEnv = mock(RoundEnvironment.class);
         PipelineCompilationContext ctx = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
@@ -628,9 +685,11 @@ class PipelineContractMetadataGeneratorTest {
         ctx.setPipelineTemplateConfig(new PipelineTemplateConfig(
             3, "v3-contract", "org.example.v3", "REST", PipelinePlatform.COMPUTE,
             Map.of(), Map.of(), Map.of(), Map.of(), List.of(), Map.of(), null, null,
-            new PipelineTemplateMaterialization(List.of()), null, null, typeModel));
-        ctx.setStepModels(List.of(step("ProcessV3Service", "Alpha", "Zeta",
-            StreamingShape.UNARY_UNARY, Set.of(GenerationTarget.REST_CLIENT_STEP))));
+            new PipelineTemplateMaterialization(List.of()), null, null, typeModel, Map.of(), httpPayloads));
+        ctx.setStepModels(includeStep
+            ? List.of(step("ProcessV3Service", "Alpha", "Zeta",
+                StreamingShape.UNARY_UNARY, Set.of(GenerationTarget.REST_CLIENT_STEP)))
+            : List.of());
         new PipelineContractMetadataGenerator(processingEnv).writePipelineContract(ctx);
     }
 
