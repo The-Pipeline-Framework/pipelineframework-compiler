@@ -209,6 +209,10 @@ public final class HttpPayloadBoundaryRenderer {
             .addStatement("throw new $T(415)", ClassName.get("jakarta.ws.rs", "WebApplicationException"))
             .nextControlFlow("catch ($T denied)", SecurityException.class)
             .addStatement("throw new $T()", ClassName.get("jakarta.ws.rs", "ForbiddenException"))
+            .nextControlFlow("catch ($T oversized)",
+                ClassName.get("org.pipelineframework.connector", "PayloadTooLargeException"))
+            .addStatement("throw new $T(oversized, 413)",
+                ClassName.get("jakarta.ws.rs", "WebApplicationException"))
             .nextControlFlow("catch ($T invalid)", IllegalArgumentException.class)
             .addStatement("throw new $T()", ClassName.get("jakarta.ws.rs", "BadRequestException"))
             .endControlFlow().build();

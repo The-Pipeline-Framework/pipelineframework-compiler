@@ -103,6 +103,8 @@ class HttpPayloadBoundaryRendererTest {
         String functionDownload = Files.readString(functionOutput.resolve(
             "org/example/pipeline/GeneratedPayloadBoundary1.java"));
         assertTrue(functionUpload.contains("initiateDelegatedUpload"));
+        assertTrue(functionUpload.contains("catch (PayloadTooLargeException oversized)"));
+        assertTrue(functionUpload.contains("new WebApplicationException(oversized, 413)"));
         assertTrue(functionUpload.contains("delegatedUploadPart"));
         assertTrue(functionUpload.contains("completeDelegatedUpload"));
         assertTrue(functionUpload.contains("abortDelegatedUpload"));
