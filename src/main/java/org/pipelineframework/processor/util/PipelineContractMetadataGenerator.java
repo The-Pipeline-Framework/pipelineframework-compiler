@@ -160,6 +160,13 @@ public class PipelineContractMetadataGenerator {
                 value.put("contentTypes", boundary.contentTypes());
                 value.put("maxBytes", boundary.maxBytes());
                 value.put("authorizationScope", boundary.authorizationScope());
+                value.put("transfer", config.platform() == org.pipelineframework.config.template.PipelinePlatform.FUNCTION
+                    ? "DELEGATED_S3" : "DIRECT_STREAM");
+                if (config.platform() == org.pipelineframework.config.template.PipelinePlatform.FUNCTION) {
+                    value.put("operations", boundary.direction() == PipelineHttpPayloadBoundaryConfig.Direction.UPLOAD
+                        ? List.of("initiate", "part", "complete", "abort")
+                        : List.of("download-capability"));
+                }
                 return immutableSortedMap(value);
             })
             .toList();

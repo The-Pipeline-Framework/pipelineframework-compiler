@@ -140,6 +140,7 @@ class PipelineContractMetadataGeneratorTest {
         assertEquals("artifact-download", routes.get(0).getAsJsonObject().get("name").getAsString());
         assertEquals("/tpf/payloads/invoice-upload/upload",
             routes.get(1).getAsJsonObject().get("route").getAsString());
+        assertEquals("DIRECT_STREAM", routes.get(1).getAsJsonObject().get("transfer").getAsString());
     }
 
     @Test
