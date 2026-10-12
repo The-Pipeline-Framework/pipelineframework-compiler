@@ -108,6 +108,8 @@ public final class HttpPayloadBoundaryRenderer {
             .addParameter(com.squareup.javapoet.ParameterSpec.builder(java.io.InputStream.class, "body")
                 .addAnnotation(AnnotationSpec.builder(ClassName.get(
                     "org.eclipse.microprofile.openapi.annotations.parameters", "RequestBody"))
+                    .addMember("description", "$S",
+                        "Multipart body with exactly one file part named file; send the raw multipart request body")
                     .addMember("content", "@$T(mediaType = $S)", ClassName.get(
                         "org.eclipse.microprofile.openapi.annotations.media", "Content"),
                         "multipart/form-data").build()).build())
@@ -129,9 +131,9 @@ public final class HttpPayloadBoundaryRenderer {
             .addStatement("var reference = transfer().upload(BOUNDARY, target, principal(security), tenant, scope, input.mediaType(), input, cancelled::get)")
             .addStatement("return $T.of(BOUNDARY.referenceField(), reference)", java.util.Map.class)
             .nextControlFlow("catch ($T oversized)", ClassName.get("org.pipelineframework.connector", "PayloadTooLargeException"))
-            .addStatement("throw new $T(413)", ClassName.get("jakarta.ws.rs", "WebApplicationException"))
+            .addStatement("throw new $T(oversized, 413)", ClassName.get("jakarta.ws.rs", "WebApplicationException"))
             .nextControlFlow("catch ($T media)", ClassName.get("org.pipelineframework.connector", "PayloadMediaTypeException"))
-            .addStatement("throw new $T(415)", ClassName.get("jakarta.ws.rs", "WebApplicationException"))
+            .addStatement("throw new $T(media, 415)", ClassName.get("jakarta.ws.rs", "WebApplicationException"))
             .nextControlFlow("catch ($T denied)", SecurityException.class)
             .addStatement("throw new $T()", ClassName.get("jakarta.ws.rs", "ForbiddenException"))
             .nextControlFlow("catch ($T invalid)", IllegalArgumentException.class)

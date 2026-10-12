@@ -73,7 +73,7 @@ class HttpPayloadBoundaryRendererTest {
         assertTrue(uploadSource.contains("/tpf/payloads/invoice/upload"));
         assertTrue(uploadSource.contains("transfer().upload"));
         assertTrue(uploadSource.contains("OwnedPayloadMultipart(body, contentType)"));
-        assertTrue(uploadSource.contains("@RequestBody(content = @Content(mediaType = \"multipart/form-data\"))"));
+        assertTrue(uploadSource.contains("Multipart body with exactly one file part named file"));
         assertFalse(uploadSource.contains("FileUpload"));
         assertFalse(uploadSource.contains("uploadedFile()"));
         assertTrue(uploadSource.contains("application/pdf"));
@@ -106,8 +106,16 @@ class HttpPayloadBoundaryRendererTest {
         assertTrue(functionUpload.contains("delegatedUploadPart"));
         assertTrue(functionUpload.contains("completeDelegatedUpload"));
         assertTrue(functionUpload.contains("abortDelegatedUpload"));
+        for (String operation : List.of("initiate", "part", "complete", "abort")) {
+            assertTrue(functionUpload.contains("@Path(\"" + operation + "\")"));
+            assertTrue(functionUpload.contains("operationId = \"" + operation + "Payloadinvoice\""));
+        }
         assertFalse(functionUpload.contains("OwnedPayloadMultipart"));
+        assertFalse(functionUpload.contains("FileUpload"));
         assertTrue(functionDownload.contains("delegatedDownload"));
+        assertTrue(functionDownload.contains("operationId = \"downloadPayloadCapabilityreceipt\""));
+        assertFalse(functionDownload.contains("OwnedPayloadMultipart"));
+        assertFalse(functionDownload.contains("FileUpload"));
 
         Files.writeString(functionTemplate, Files.readString(functionTemplate)
             .replaceFirst("provider: s3", "provider: filesystem"));
