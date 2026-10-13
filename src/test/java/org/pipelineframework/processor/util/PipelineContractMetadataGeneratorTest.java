@@ -224,13 +224,15 @@ class PipelineContractMetadataGeneratorTest {
                 org.pipelineframework.connector.CommandPolicy.none()));
         var hashes = new java.util.HashSet<String>();
         var releaseHashes = new java.util.HashSet<String>();
-        record Variant(String name, String immediate, String result, String payload, String authenticator) { }
+        record Variant(String name, String immediate, String result, String payload, String authenticator,
+            boolean acknowledgementAware) { }
         var variants = List.of(
-            new Variant("baseline", "JobAccepted", "JobResult", "JobCallback", "SignatureV1"),
-            new Variant("authenticator", "JobAccepted", "JobResult", "JobCallback", "SignatureV2"),
-            new Variant("immediate", "DifferentAccepted", "JobResult", "JobCallback", "SignatureV1"),
-            new Variant("result", "JobAccepted", "DifferentResult", "JobCallback", "SignatureV1"),
-            new Variant("payload", "JobAccepted", "JobResult", "DifferentCallback", "SignatureV1"));
+            new Variant("baseline", "JobAccepted", "JobResult", "JobCallback", "SignatureV1", false),
+            new Variant("authenticator", "JobAccepted", "JobResult", "JobCallback", "SignatureV2", false),
+            new Variant("immediate", "DifferentAccepted", "JobResult", "JobCallback", "SignatureV1", false),
+            new Variant("result", "JobAccepted", "DifferentResult", "JobCallback", "SignatureV1", false),
+            new Variant("payload", "JobAccepted", "JobResult", "DifferentCallback", "SignatureV1", false),
+            new Variant("acknowledgement", "JobAccepted", "JobResult", "JobCallback", "SignatureV1", true));
         for (var variant : variants) {
             Path output = tempDir.resolve(variant.name());
             var processing = processingEnv(output, Map.of());
@@ -242,7 +244,7 @@ class PipelineContractMetadataGeneratorTest {
             var completion = new DeferredCompletionSelection(ClassName.get("org.example", variant.result()), variant.result(),
                 Optional.of(variant.payload()), java.time.Duration.ofMinutes(1), List.of(), "signedResumeToken", "", Map.of(),
                 Optional.of(ClassName.get("org.example", variant.payload())), Optional.of(ClassName.get("org.example", "Projector")),
-                Optional.of(callback));
+                Optional.of(callback), variant.acknowledgementAware());
             context.setStepModels(List.of(step("StartJob", "StartJobRequest", variant.immediate(), StreamingShape.UNARY_UNARY,
                 Set.of(GenerationTarget.COMMAND_CLIENT_STEP)).toBuilder().connectorOperationSelection(operation)
                 .deferredCompletionSelection(completion).build()));
@@ -254,6 +256,13 @@ class PipelineContractMetadataGeneratorTest {
             assertEquals("org.example." + variant.result(), node.get("finalOutputTypeId").getAsString());
             assertEquals("org.example." + variant.payload(), node.get("completionPayloadTypeId").getAsString());
             assertEquals("jobs", node.getAsJsonObject("callback").get("binding").getAsString());
+            if (variant.acknowledgementAware()) {
+                assertEquals("ACKNOWLEDGEMENT_REQUIRED", node.get("commandCompletionMode").getAsString());
+                assertEquals("org.example.restaurant.domain.JobAccepted",
+                    node.get("commandAcknowledgementTypeId").getAsString());
+            } else {
+                assertFalse(node.has("commandCompletionMode"));
+            }
             hashes.add(node.get("fingerprint").getAsString());
             releaseHashes.add(contract.get("contractHash").getAsString());
         }

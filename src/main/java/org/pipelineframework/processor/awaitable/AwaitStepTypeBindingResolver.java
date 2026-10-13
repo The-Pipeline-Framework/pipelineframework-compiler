@@ -33,6 +33,7 @@ import org.pipelineframework.processor.util.ImplementedGenericInterfaceResolver;
 /** Resolves and validates the Java contracts of deferred completion independently of operation kind. */
 public final class AwaitStepTypeBindingResolver {
     private static final String PROJECTOR = "org.pipelineframework.awaitable.AwaitCompletionProjector";
+    private static final String COMMAND_PROJECTOR = "org.pipelineframework.awaitable.CommandCompletionProjector";
 
     private final ImplementedGenericInterfaceResolver genericInterfaces =
         new ImplementedGenericInterfaceResolver();
@@ -128,7 +129,7 @@ public final class AwaitStepTypeBindingResolver {
         }
         if (completion.completion().isPresent()
             && !validateProjector(ctx, step.name(), completion.completion().orElseThrow(),
-                projectorContext.orElseThrow(),
+                projectorContext.orElseThrow(), operationOutput.orElseThrow(), completion.callback().isPresent(),
                 payloadType.orElseThrow(), finalOutput.orElseThrow())) {
             return Optional.empty();
         }
@@ -138,7 +139,11 @@ public final class AwaitStepTypeBindingResolver {
                 .filter(candidate -> candidate != null && step.name().equals(candidate.name()))
                 .findFirst().orElseThrow().outputTypeName(),
             completion.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::type),
-            payloadType));
+            payloadType,
+            completion.callback().isPresent() && completion.completion().isPresent()
+                && genericInterfaces.resolve(ctx.getProcessingEnv().getElementUtils().getTypeElement(
+                    completion.completion().orElseThrow().projector().canonicalName()), COMMAND_PROJECTOR,
+                    ctx.getProcessingEnv()).isPresent()));
     }
 
     private Optional<AwaitStepTypeBinding> explicitBinding(
@@ -158,6 +163,8 @@ public final class AwaitStepTypeBindingResolver {
         String stepName,
         DeferredCompletionDefinition.CompletionProjectionDefinition completion,
         ClassName expectedOperationOutput,
+        ClassName expectedAcknowledgement,
+        boolean callback,
         TypeName expectedCompletion,
         ClassName expectedFinalOutput
     ) {
@@ -172,7 +179,25 @@ public final class AwaitStepTypeBindingResolver {
         if (!validProjectorClass(ctx, stepName, projector)) {
             return false;
         }
+        Optional<DeclaredType> commandInterface = callback
+            ? genericInterfaces.resolve(projector, COMMAND_PROJECTOR, processingEnv) : Optional.empty();
         Optional<DeclaredType> projectorInterface = genericInterfaces.resolve(projector, PROJECTOR, processingEnv);
+        if (commandInterface.isPresent() && projectorInterface.isPresent()) {
+            error(ctx, "Step '" + stepName + "' completion projector must implement exactly one completion projector interface.");
+            return false;
+        }
+        if (commandInterface.isPresent()) {
+            List<? extends TypeMirror> commandArguments = commandInterface.orElseThrow().getTypeArguments();
+            if (commandArguments.size() != 4 || commandArguments.stream().anyMatch(argument ->
+                !(argument instanceof DeclaredType declared) || !declared.getTypeArguments().isEmpty())) {
+                error(ctx, "Step '" + stepName + "' Command completion projector must declare concrete I, A, C and O types.");
+                return false;
+            }
+            return requireSame(ctx, stepName, "I", commandArguments.get(0), expectedOperationOutput)
+                && requireSame(ctx, stepName, "A", commandArguments.get(1), expectedAcknowledgement)
+                && requireSame(ctx, stepName, "C", commandArguments.get(2), expectedCompletion)
+                && requireAssignable(ctx, stepName, "O", commandArguments.get(3), expectedFinalOutput);
+        }
         if (projectorInterface.isEmpty()) {
             error(ctx, "Step '" + stepName + "' completion projector '"
                 + completion.projector().canonicalName()

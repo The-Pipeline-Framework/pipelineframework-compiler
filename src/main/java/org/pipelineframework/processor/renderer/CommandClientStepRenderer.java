@@ -240,7 +240,20 @@ public class CommandClientStepRenderer {
             ClassName.get("org.pipelineframework.connector", "ConnectorOperationCallbackDescriptor"), callback.descriptor().id(),
             ClassName.get("org.pipelineframework.connector", "ConnectorOperationTypeContract"), callback.descriptor().typeContract().inputType(),
             Optional.class, callback.descriptor().required(), callback.endpointResolver().canonicalName(), callback.authenticator().canonicalName());
-        CodeBlock descriptor = CodeBlock.of(
+        CodeBlock descriptor = completion.acknowledgementAwareCompletion() ? CodeBlock.of(
+            "new $T($S, $S, $S, $S, $T.parse($S), $S, $S, $T.of(), $T.of(), $S, $S, "
+                + "$T.identity(), $T.identity(), $S, null, true, $T.of($L), $S, "
+                + "($T<Object, Object, Object, Object>) ($T<?, ?, ?, ?>) new $T())",
+            descriptorType, model.serviceName(), model.inboundDomainType().toString(), completion.finalOutputType().toString(),
+            "ONE_TO_ONE", java.time.Duration.class, completion.timeout().toString(), completion.correlationStrategy(), "",
+            java.util.Map.class, java.util.List.class, model.inboundDomainType().toString(),
+            completion.completionPayloadType().orElseThrow().toString(),
+            java.util.function.Function.class, java.util.function.Function.class,
+            completion.completionProjector().orElseThrow().canonicalName(), Optional.class, callbackSelection,
+            model.outboundDomainType().toString(),
+            ClassName.get("org.pipelineframework.awaitable", "CommandCompletionProjector"),
+            ClassName.get("org.pipelineframework.awaitable", "CommandCompletionProjector"),
+            completion.completionProjector().orElseThrow()) : CodeBlock.of(
             "new $T($S, $S, $S, $S, $T.parse($S), $S, $S, $T.of(), $T.of(), $S, $S, "
                 + "$T.identity(), $T.identity(), $S, ($T<Object, Object, Object>) ($T<?, ?, ?>) new $T(), true, $T.of($L))",
             descriptorType, model.serviceName(), model.inboundDomainType().toString(), completion.finalOutputType().toString(),

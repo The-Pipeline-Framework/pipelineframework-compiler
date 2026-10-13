@@ -350,7 +350,8 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                         .requireOperation(operation.operation().providerId(), operation.providerMajorVersion(),
                             operation.operation().operationId(), operation.operation().kind(), operation.operation().majorVersion())
                         .callbacks().stream().filter(candidate -> candidate.id().equals(callback.name())).findFirst().orElseThrow(),
-                    operation, callback.endpointResolverClass(), callback.authenticatorClass()))));
+                    operation, callback.endpointResolverClass(), callback.authenticatorClass())),
+                resolved.acknowledgementAwareCompletion()));
         }
 
         String serviceName = operationServiceName(ctx, definition, stepDef.name());

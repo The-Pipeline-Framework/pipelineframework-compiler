@@ -37,8 +37,18 @@ public record DeferredCompletionSelection(
     Map<String, Object> transportConfig,
     Optional<TypeName> completionPayloadType,
     Optional<ClassName> completionProjector,
-    Optional<ResolvedConnectorCallback> callback
+    Optional<ResolvedConnectorCallback> callback,
+    boolean acknowledgementAwareCompletion
 ) {
+    public DeferredCompletionSelection(TypeName finalOutputType, String finalOutputCanonicalType,
+        Optional<String> completionPayloadCanonicalType, Duration timeout, List<String> idempotencyKeyFields,
+        String correlationStrategy, String transportType, Map<String, Object> transportConfig,
+        Optional<TypeName> completionPayloadType, Optional<ClassName> completionProjector,
+        Optional<ResolvedConnectorCallback> callback) {
+        this(finalOutputType, finalOutputCanonicalType, completionPayloadCanonicalType, timeout,
+            idempotencyKeyFields, correlationStrategy, transportType, transportConfig,
+            completionPayloadType, completionProjector, callback, false);
+    }
     public enum DeferredCompletionMode { POST_OPERATION, CONNECTOR_CALLBACK }
 
     public record ResolvedConnectorCallback(
@@ -60,7 +70,7 @@ public record DeferredCompletionSelection(
         String correlationStrategy, String transportType, Map<String, Object> transportConfig,
         Optional<TypeName> completionPayloadType, Optional<ClassName> completionProjector) {
         this(finalOutputType, finalOutputCanonicalType, completionPayloadCanonicalType, timeout, idempotencyKeyFields,
-            correlationStrategy, transportType, transportConfig, completionPayloadType, completionProjector, Optional.empty());
+            correlationStrategy, transportType, transportConfig, completionPayloadType, completionProjector, Optional.empty(), false);
     }
 
     public DeferredCompletionMode mode() {
@@ -85,6 +95,9 @@ public record DeferredCompletionSelection(
         completionProjector = completionProjector == null ? Optional.empty() : completionProjector;
         if (completionPayloadType.isPresent() != completionProjector.isPresent()) {
             throw new IllegalArgumentException("completion payload type and projector must be declared together");
+        }
+        if (acknowledgementAwareCompletion && (callback.isEmpty() || completionProjector.isEmpty())) {
+            throw new IllegalArgumentException("acknowledgement-aware completion requires a callback projector");
         }
     }
 
