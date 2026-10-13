@@ -111,7 +111,8 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
                 .build());
 
         MethodSpec processMethod = switch (model.streamingShape()) {
-            case UNARY_STREAMING -> buildUnaryStreamingMethod(inputDto, outputDto, operationPath);
+            case UNARY_STREAMING -> buildUnaryStreamingMethod(inputDto, outputDto, operationPath,
+                ctx.platformMode() == org.pipelineframework.config.PlatformMode.FUNCTION);
             case STREAMING_UNARY -> buildStreamingUnaryMethod(inputDto, outputDto, operationPath);
             case STREAMING_STREAMING -> buildStreamingStreamingMethod(inputDto, outputDto, operationPath);
             default -> buildUnaryUnaryMethod(inputDto, outputDto, operationPath);
@@ -272,10 +273,12 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
                     .addStatement("String replayMode = context != null ? context.replayMode() : null")
                     .addStatement("String cachePolicy = $L", resolveOutboundCachePolicyExpression(cachePluginSideEffect))
                     .addStatement(
-                        "return this.invocationRuntime.invokeTransportMulti(this, () -> $T.instrumentClient($S, $S, this.restClient.process(versionTag, replayMode, cachePolicy, input)))",
+                        "return this.invocationRuntime.invokeTransportMulti(this, () -> $T.instrumentClient($S, $S, this.restClient.process(versionTag, replayMode, cachePolicy, input)$L))",
                         ClassName.get("org.pipelineframework.telemetry", "HttpMetrics"),
                         model.serviceName(),
-                        "process")
+                        "process",
+                        ctx.platformMode() == org.pipelineframework.config.PlatformMode.FUNCTION
+                            ? ".onItem().transformToMulti(items -> io.smallrye.mutiny.Multi.createFrom().iterable(items))" : "")
                     .build();
                 clientStepBuilder.addMethod(applyOneToManyMethod);
             }
@@ -429,21 +432,30 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
      * @param inputDto the input DTO to process
      * @return a Multi that emits output DTOs produced by processing the input DTO
      */
-    private MethodSpec buildUnaryStreamingMethod(TypeName inputDto, TypeName outputDto, String operationPath) {
+    private MethodSpec buildUnaryStreamingMethod(TypeName inputDto, TypeName outputDto, String operationPath,
+                                                boolean bufferedFunctionResponse) {
         MethodSpec.Builder methodBuilder = MethodSpec.methodBuilder("process")
             .addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "POST")).build())
             .addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Path"))
                 .addMember("value", "$S", operationPath)
                 .build())
-            .addAnnotation(AnnotationSpec.builder(ClassName.get("org.jboss.resteasy.reactive", "RestStreamElementType"))
-                .addMember("value", "$S", "application/json")
-                .build())
             .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
-            .returns(ParameterizedTypeName.get(RuntimeSymbols.MULTI, outputDto))
+            .returns(bufferedFunctionResponse
+                ? ParameterizedTypeName.get(RuntimeSymbols.UNI, ParameterizedTypeName.get(ClassName.get(java.util.List.class), outputDto))
+                : ParameterizedTypeName.get(RuntimeSymbols.MULTI, outputDto))
             .addParameter(headerParam("versionTag"))
             .addParameter(headerParam("replayMode"))
             .addParameter(headerParam("cachePolicy"))
             .addParameter(inputDto, "inputDto");
+        if (bufferedFunctionResponse) {
+            methodBuilder.addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Produces"))
+                .addMember("value", "$S", "application/json").build());
+            methodBuilder.addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Consumes"))
+                .addMember("value", "$S", "application/json").build());
+        } else {
+            methodBuilder.addAnnotation(AnnotationSpec.builder(ClassName.get("org.jboss.resteasy.reactive", "RestStreamElementType"))
+                .addMember("value", "$S", "application/json").build());
+        }
         return methodBuilder.build();
     }
 

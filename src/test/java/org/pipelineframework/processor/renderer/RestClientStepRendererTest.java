@@ -23,6 +23,35 @@ class RestClientStepRendererTest {
     Path tempDir;
 
     @Test
+    void functionListResponseRestoresEveryItemToTheExistingCardinality() throws IOException {
+        var model = new PipelineStepModel.Builder().serviceName("ExpandService")
+            .servicePackage("example.service").serviceClassName(ClassName.get("example.service", "ExpandService"))
+            .streamingShape(StreamingShape.UNARY_STREAMING).executionMode(ExecutionMode.DEFAULT)
+            .inputMapping(new TypeMapping(ClassName.get("example.common.domain", "Input"), ClassName.get("example", "InputMapper"), true))
+            .outputMapping(new TypeMapping(ClassName.get("example.common.domain", "Output"), ClassName.get("example", "OutputMapper"), true))
+            .enabledTargets(java.util.Set.of(GenerationTarget.REST_CLIENT_STEP)).build();
+        for (var platform : org.pipelineframework.config.PlatformMode.values()) {
+            var context = Jsr269GenerationContext.create(mock(ProcessingEnvironment.class), tempDir,
+                DeploymentRole.ORCHESTRATOR_CLIENT, java.util.Set.of(), null, null).withPlatformMode(platform);
+            new RestClientStepRenderer().render(new RestBinding(model, "/expand"), context);
+            var client = Files.readString(tempDir.resolve("example/service/pipeline/ExpandRestClient.java"));
+            var step = Files.readString(tempDir.resolve("example/service/pipeline/ExpandRestClientStep.java"));
+            assertTrue(step.contains("StepOneToMany<InputDto, OutputDto>"));
+            assertTrue(step.contains("invokeTransportMulti"));
+            if (platform == org.pipelineframework.config.PlatformMode.FUNCTION) {
+                assertTrue(client.contains("Uni<List<OutputDto>> process("));
+                assertTrue(client.contains("@Produces(\"application/json\")"));
+                assertFalse(client.contains("@RestStreamElementType"));
+                assertTrue(step.contains("transformToMulti(items -> io.smallrye.mutiny.Multi.createFrom().iterable(items))"));
+            } else {
+                assertTrue(client.contains("Multi<OutputDto> process("));
+                assertTrue(client.contains("@RestStreamElementType(\"application/json\")"));
+                assertFalse(step.contains("transformToMulti"));
+            }
+        }
+    }
+
+    @Test
     void pagedSourceGetsSeparateRestPageEndpointAndOperation() throws IOException {
         PipelineStepModel model = new PipelineStepModel.Builder()
             .serviceName("ReadPaymentsService")

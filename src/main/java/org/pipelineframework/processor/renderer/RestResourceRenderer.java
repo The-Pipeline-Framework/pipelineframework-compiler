@@ -181,7 +181,8 @@ public class RestResourceRenderer implements PipelineRenderer<RestBinding> {
         MethodSpec processMethod = switch (model.streamingShape()) {
             case UNARY_STREAMING -> createReactiveStreamingServiceProcessMethod(
                     inputDtoClassName, outputDtoClassName, model, inboundMapperFieldName, outboundMapperFieldName,
-                    cachePluginSideEffect, operationPath);
+                    cachePluginSideEffect, operationPath,
+                    ctx.platformMode() == org.pipelineframework.config.PlatformMode.FUNCTION);
             case STREAMING_UNARY -> createReactiveStreamingClientServiceProcessMethod(
                     inputDtoClassName, outputDtoClassName, model, inboundMapperFieldName, outboundMapperFieldName,
                     cachePluginSideEffect, operationPath);
@@ -332,7 +333,8 @@ public class RestResourceRenderer implements PipelineRenderer<RestBinding> {
             String inboundMapperFieldName,
             String outboundMapperFieldName,
             boolean skipValidation,
-            String operationPath) {
+            String operationPath,
+            boolean bufferedFunctionResponse) {
         if (!skipValidation) {
             validateRestMappings(model);
         }
@@ -345,20 +347,30 @@ public class RestResourceRenderer implements PipelineRenderer<RestBinding> {
             .addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Path"))
                 .addMember("value", "$S", operationPath)
                 .build())
-            .addAnnotation(AnnotationSpec.builder(ClassName.get("org.jboss.resteasy.reactive", "RestStreamElementType"))
-                .addMember("value", "$S", "application/json")
-                .build())
             .addModifiers(Modifier.PUBLIC)
-            .returns(multiOutputDto)
+            .returns(bufferedFunctionResponse
+                ? ParameterizedTypeName.get(RuntimeSymbols.UNI,
+                    ParameterizedTypeName.get(ClassName.get(java.util.List.class), outputDtoClassName))
+                : multiOutputDto)
             .addParameter(inputDtoClassName, "inputDto");
+
+        if (bufferedFunctionResponse) {
+            methodBuilder.addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Produces"))
+                .addMember("value", "$S", "application/json").build());
+            methodBuilder.addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Consumes"))
+                .addMember("value", "$S", "application/json").build());
+        } else {
+            methodBuilder.addAnnotation(AnnotationSpec.builder(ClassName.get("org.jboss.resteasy.reactive", "RestStreamElementType"))
+                .addMember("value", "$S", "application/json").build());
+        }
 
         TypeName domainInputType = model.inboundDomainType() != null
             ? model.inboundDomainType()
             : ClassName.OBJECT;
         methodBuilder.addStatement("$T inputDomain = $L.fromExternal(inputDto)",
             domainInputType, inboundMapperFieldName);
-        methodBuilder.addStatement("return domainService.process(inputDomain).map(output -> $L.toExternal(output))",
-            outboundMapperFieldName);
+        methodBuilder.addStatement("return domainService.process(inputDomain).map(output -> $L.toExternal(output))$L",
+            outboundMapperFieldName, bufferedFunctionResponse ? ".collect().asList()" : "");
 
         // Add @RunOnVirtualThread annotation if the property is enabled
         if (model.executionMode() == org.pipelineframework.processor.ir.ExecutionMode.VIRTUAL_THREADS) {

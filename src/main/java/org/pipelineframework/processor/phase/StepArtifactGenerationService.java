@@ -345,7 +345,7 @@ class StepArtifactGenerationService {
                         restRole,
                         enabledAspects,
                         cacheKeyGenerator,
-                        descriptorSet));
+                        descriptorSet).withPlatformMode(ctx.getPlatformMode()));
                     roleMetadataGenerator.recordClassWithRole(restClassName, restRole.name());
 
                     if (ctx.isPlatformModeFunction() && !ctx.isFunctionHttpBridgeEnabled()) {
@@ -380,7 +380,7 @@ class StepArtifactGenerationService {
                         restClientRole,
                         enabledAspects,
                         cacheKeyGenerator,
-                        descriptorSet));
+                        descriptorSet).withPlatformMode(ctx.getPlatformMode()));
                     roleMetadataGenerator.recordClassWithRole(restClientClassName, restClientRole.name());
                 }
                 case BLOCKING_REACTIVE_BRIDGE -> {

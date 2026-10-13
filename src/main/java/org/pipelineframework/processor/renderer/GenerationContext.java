@@ -11,6 +11,7 @@ import org.pipelineframework.processor.PipelineCompilerOptions;
 import org.pipelineframework.processor.ir.DeploymentRole;
 import org.pipelineframework.processor.ir.PipelineTransport;
 import org.pipelineframework.config.template.PipelineTemplateTypeModel;
+import org.pipelineframework.config.PlatformMode;
 
 /**
  * Context for code generation operations, containing host capabilities and output directory information.
@@ -28,6 +29,7 @@ import org.pipelineframework.config.template.PipelineTemplateTypeModel;
  * @param stepOrder Gets the zero-based resolved step order when rendering an ordered pipeline step.
  * @param v3GeneratedDomainTypes Whether the current pipeline has generated v3 Java domain types available.
  * @param canonicalTypeModel Gets the normalized v3 type model when the compilation phase already carries it.
+ * @param platformMode Gets the platform resolved by the compiler, including YAML-owned platform selection.
  */
 public record GenerationContext(Jsr269CompilerServices compilerServices,
                                 PipelineCompilerOptions compilerOptions,
@@ -39,7 +41,8 @@ public record GenerationContext(Jsr269CompilerServices compilerServices,
                                 String pipelineBasePackage,
                                 Integer stepOrder,
                                 boolean v3GeneratedDomainTypes,
-                                Optional<PipelineTemplateTypeModel> canonicalTypeModel) {
+                                Optional<PipelineTemplateTypeModel> canonicalTypeModel,
+                                PlatformMode platformMode) {
     /**
      * Creates a new GenerationContext instance.
      */
@@ -49,6 +52,25 @@ public record GenerationContext(Jsr269CompilerServices compilerServices,
         compilerDiagnostics = compilerDiagnostics == null ? (severity, message) -> { } : compilerDiagnostics;
         enabledAspects = enabledAspects == null ? Set.of() : Set.copyOf(enabledAspects);
         canonicalTypeModel = canonicalTypeModel == null ? Optional.empty() : canonicalTypeModel;
+        java.util.Objects.requireNonNull(platformMode, "resolved platformMode is required");
+    }
+
+    /** Carries the canonical platform resolved from YAML and compiler overrides into rendering. */
+    public GenerationContext withPlatformMode(PlatformMode resolvedPlatform) {
+        return new GenerationContext(compilerServices, compilerOptions, compilerDiagnostics, outputDir, role,
+            enabledAspects, cacheKeyGenerator, descriptorSet, transportMode, pipelineBasePackage, stepOrder,
+            v3GeneratedDomainTypes, canonicalTypeModel, resolvedPlatform);
+    }
+
+    public GenerationContext(Jsr269CompilerServices compilerServices, PipelineCompilerOptions compilerOptions,
+                             PipelineCompilerDiagnostics compilerDiagnostics, Path outputDir, DeploymentRole role,
+                             Set<String> enabledAspects, ClassName cacheKeyGenerator,
+                             DescriptorProtos.FileDescriptorSet descriptorSet, PipelineTransport transportMode,
+                             String pipelineBasePackage, Integer stepOrder, boolean v3GeneratedDomainTypes,
+                             Optional<PipelineTemplateTypeModel> canonicalTypeModel) {
+        this(compilerServices, compilerOptions, compilerDiagnostics, outputDir, role, enabledAspects,
+            cacheKeyGenerator, descriptorSet, transportMode, pipelineBasePackage, stepOrder,
+            v3GeneratedDomainTypes, canonicalTypeModel, PlatformMode.COMPUTE);
     }
 
     public void warning(String message) {
