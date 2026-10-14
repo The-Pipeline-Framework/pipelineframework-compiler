@@ -46,6 +46,8 @@ class CanonicalUnionRestIntegrationTest {
         Path classes = directory.resolve("classes");
         Files.createDirectories(generated);
         Files.createDirectories(classes);
+        Path runtimeApi = directory.resolve("runtime-api");
+        var runtimeApiSources = runtimeApiSources(runtimeApi);
         source(sources, "example/domain/Item.java", "package example.domain; public record Item(String id) { }\n");
         source(sources, "example/domain/Input.java", "package example.domain; public record Input(String id) { }\n");
         source(sources, "example/domain/Receipt.java", "package example.domain; public record Receipt(String id) { }\n");
@@ -130,13 +132,15 @@ class CanonicalUnionRestIntegrationTest {
              var emitted = Files.walk(generated)) {
             var all = new java.util.ArrayList<Path>();
             all.addAll(authored.filter(path -> path.toString().endsWith(".java")).toList());
-            // Deferred completion sources require runtime APIs; the application reactor compiles that full boundary.
-            all.addAll(emitted.filter(path -> path.toString().endsWith(".java")
-                && !path.getFileName().toString().endsWith("DeferredCompletionStep.java")).toList());
+            all.addAll(emitted.filter(path -> path.toString().endsWith(".java")).toList());
+            all.addAll(runtimeApiSources);
+            String classpath = System.getProperty("java.class.path");
             assertTrue(Boolean.TRUE.equals(compiler.getTask(null, files, diagnostics,
-                List.of("-proc:none", "-d", classes.toString(), "-classpath", System.getProperty("java.class.path")),
+                List.of("-proc:none", "-d", classes.toString(), "-classpath", classpath),
                 null, files.getJavaFileObjectsFromPaths(all)).call()), diagnostics.getDiagnostics().toString());
         }
+        assertTrue(Files.exists(classes.resolve("example/service/pipeline/ExpandDeferredCompletionStep.class")),
+            "deferred completion output should be type-checked with the emitted OutcomeDto");
     }
 
     private PipelineStepModel step(String name, StreamingShape shape, String input, String output) {
@@ -160,9 +164,83 @@ class CanonicalUnionRestIntegrationTest {
     private PipelineTemplateTypeReference scalar(String name) { return new PipelineTemplateTypeReference.Scalar(name); }
     private PipelineTemplateTypeReference named(String name) { return new PipelineTemplateTypeReference.Named(name); }
 
-    private void source(Path root, String relative, String content) throws Exception {
+    private Path source(Path root, String relative, String content) throws Exception {
         Path file = root.resolve(relative);
         Files.createDirectories(file.getParent());
         Files.writeString(file, content);
+        return file;
+    }
+
+    private List<Path> runtimeApiSources(Path root) throws Exception {
+        // Signature-only fixtures keep compilation of deferred generated output independent of the runtime module.
+        var sources = new java.util.ArrayList<Path>();
+        sources.add(runtimeApiSource(root, "io/quarkus/arc/Unremovable.java",
+            "package io.quarkus.arc; public @interface Unremovable { }\n"));
+        sources.add(runtimeApiSource(root, "io/quarkus/runtime/Startup.java",
+            "package io.quarkus.runtime; public @interface Startup { }\n"));
+        sources.add(runtimeApiSource(root, "jakarta/annotation/PostConstruct.java",
+            "package jakarta.annotation; public @interface PostConstruct { }\n"));
+        sources.add(runtimeApiSource(root, "jakarta/enterprise/context/Dependent.java",
+            "package jakarta.enterprise.context; public @interface Dependent { }\n"));
+        sources.add(runtimeApiSource(root, "jakarta/inject/Inject.java",
+            "package jakarta.inject; public @interface Inject { }\n"));
+        sources.add(runtimeApiSource(root, "org/pipelineframework/awaitable/AwaitCompletionDescriptor.java", """
+            package org.pipelineframework.awaitable;
+            import java.time.Duration;
+            import java.util.List;
+            import java.util.Map;
+            import java.util.function.Function;
+            public class AwaitCompletionDescriptor {
+                public AwaitCompletionDescriptor(String stepId, String inputType, String outputType,
+                    String cardinality, Duration timeout, String correlationStrategy, String transportType,
+                    Map<String, Object> transportConfig, List<String> idempotencyKeyFields,
+                    String transportInputType, String transportOutputType,
+                    Function<Object, Object> inputToTransport, Function<Object, Object> outputFromTransport) { }
+            }
+            """));
+        sources.add(runtimeApiSource(root, "org/pipelineframework/awaitable/AwaitCompletionDescriptorRegistry.java", """
+            package org.pipelineframework.awaitable;
+            public class AwaitCompletionDescriptorRegistry {
+                public AwaitCompletionDescriptor register(AwaitCompletionDescriptor descriptor) { return descriptor; }
+            }
+            """));
+        sources.add(runtimeApiSource(root, "org/pipelineframework/awaitable/AwaitCompletionSupport.java", """
+            package org.pipelineframework.awaitable;
+            import io.smallrye.mutiny.Multi;
+            import io.smallrye.mutiny.Uni;
+            public class AwaitCompletionSupport {
+                public <I, O> Uni<O> awaitOneToOne(AwaitCompletionDescriptor descriptor, I input) { return null; }
+                public <I, O> Multi<O> awaitOneToOneStream(AwaitCompletionDescriptor descriptor, Multi<I> input) {
+                    return null;
+                }
+            }
+            """));
+        sources.add(runtimeApiSource(root, "org/pipelineframework/awaitable/AwaitStreamOneToOneStep.java", """
+            package org.pipelineframework.awaitable;
+            import io.smallrye.mutiny.Multi;
+            public interface AwaitStreamOneToOneStep<I, O> { Multi<O> applyAwaitPerItem(Multi<I> input); }
+            """));
+        sources.add(runtimeApiSource(root, "org/pipelineframework/cache/CacheKeyTarget.java", """
+            package org.pipelineframework.cache;
+            public interface CacheKeyTarget { Class<?> cacheKeyTargetType(); }
+            """));
+        sources.add(runtimeApiSource(root, "org/pipelineframework/cache/CacheReadBypass.java", """
+            package org.pipelineframework.cache;
+            public interface CacheReadBypass { }
+            """));
+        sources.add(runtimeApiSource(root, "org/pipelineframework/step/ConfigurableStep.java", """
+            package org.pipelineframework.step;
+            public abstract class ConfigurableStep { }
+            """));
+        sources.add(runtimeApiSource(root, "org/pipelineframework/step/StepOneToOne.java", """
+            package org.pipelineframework.step;
+            import io.smallrye.mutiny.Uni;
+            public interface StepOneToOne<I, O> { Uni<O> applyOneToOne(I input); }
+            """));
+        return sources;
+    }
+
+    private Path runtimeApiSource(Path root, String relative, String content) throws Exception {
+        return source(root, relative, content);
     }
 }
