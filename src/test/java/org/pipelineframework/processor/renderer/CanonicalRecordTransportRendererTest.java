@@ -1,12 +1,15 @@
 package org.pipelineframework.processor.renderer;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.squareup.javapoet.ClassName;
 import java.io.StringWriter;
 import java.net.URI;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -37,16 +40,19 @@ class CanonicalRecordTransportRendererTest {
     @TempDir Path output;
 
     @Test
-    void optionalNestedRecordUsesItsMapperInBothRestDirections() throws Exception {
+    void restMapperHandlesOptionalNestedRecordAndMissingRepeatedField() throws Exception {
         var model = new PipelineTemplateTypeModel(Map.of(
             "Child", new PipelineTemplateTypeDefinition.RecordType("Child", List.of(
                 new PipelineTemplateTypeDefinition.Field("name", new PipelineTemplateTypeReference.Scalar("string")))),
             "Parent", new PipelineTemplateTypeDefinition.RecordType("Parent", List.of(
                 new PipelineTemplateTypeDefinition.Field("child", new PipelineTemplateTypeReference.Named("Child"),
-                    false, PipelineFieldPresence.OPTIONAL, PipelineFieldNullability.NON_NULL)))));
+                    false, PipelineFieldPresence.OPTIONAL, PipelineFieldNullability.NON_NULL),
+                new PipelineTemplateTypeDefinition.Field("labels", new PipelineTemplateTypeReference.Scalar("string"),
+                    true)))));
         List<JavaFileObject> domainSources = List.of(
             source("Child", "public record Child(String name) {}"),
-            source("Parent", "public record Parent(org.pipelineframework.type.CanonicalFieldValue<Child> child) {}"));
+            source("Parent", "public record Parent(org.pipelineframework.type.CanonicalFieldValue<Child> child, "
+                + "java.util.List<String> labels) {}"));
         var generated = new AtomicBoolean();
         var processor = new AbstractProcessor() {
             @Override public Set<String> getSupportedAnnotationTypes() { return Set.of("*"); }
@@ -105,6 +111,13 @@ class CanonicalRecordTransportRendererTest {
                 List.of("-proc:none", "-classpath", System.getProperty("java.class.path"),
                     "-d", classes.toString()), List.of(), sources);
             assertTrue(task.call(), diagnostics.getDiagnostics().toString());
+        }
+        try (var loader = new URLClassLoader(new java.net.URL[]{classes.toUri().toURL()}, getClass().getClassLoader())) {
+            Class<?> dto = loader.loadClass("com.example.dto.ParentDto");
+            Object missing = new ObjectMapper().readValue("{}", dto);
+            assertEquals(List.of(), dto.getMethod("labels").invoke(missing));
+            Object populated = new ObjectMapper().readValue("{\"labels\":[\"one\",\"two\"]}", dto);
+            assertEquals(List.of("one", "two"), dto.getMethod("labels").invoke(populated));
         }
     }
 

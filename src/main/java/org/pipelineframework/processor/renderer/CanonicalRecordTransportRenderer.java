@@ -65,8 +65,9 @@ final class CanonicalRecordTransportRenderer {
             .append("public record ").append(dtoType.simpleName()).append('(').append(components).append(") {\n")
             .append("    public ").append(dtoType.simpleName()).append(" {\n");
         record.fields().stream().filter(PipelineTemplateTypeDefinition.Field::repeated).forEach(field -> source
-            .append("        ").append(field.name()).append(" = java.util.List.copyOf(java.util.Objects.requireNonNull(")
-            .append(field.name()).append(", \"").append(field.name()).append(" must not be null\"));\n"));
+            .append("        ").append(field.name()).append(" = java.util.List.copyOf(")
+            .append(field.name()).append(" == null ? java.util.List.of() : ")
+            .append(field.name()).append(");\n"));
         record.fields().stream().filter(this::optionalNonNull).forEach(field -> source
             .append("        ").append(field.name()).append(" = ").append(field.name())
             .append(" == null ? java.util.Optional.empty() : ").append(field.name()).append(";\n"));
