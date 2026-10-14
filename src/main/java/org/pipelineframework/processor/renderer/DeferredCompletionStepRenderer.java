@@ -52,6 +52,7 @@ public class DeferredCompletionStepRenderer {
         TypeName finalOutputType = operationBoundary.outputConvertsAtBoundary()
             ? completion.finalOutputType()
             : finalTransportType;
+        ensureRestUnionCompletion(completion, ctx);
         CompletionBoundary completionBoundary = completionBoundary(completion, ctx, finalOutputType);
 
         FieldSpec support = FieldSpec.builder(
@@ -253,6 +254,21 @@ public class DeferredCompletionStepRenderer {
         }
 
         return new CompletionBoundary(domainType, Optional.empty());
+    }
+
+    private void ensureRestUnionCompletion(DeferredCompletionSelection completion, GenerationContext context)
+        throws IOException {
+        if (context.transportMode() != PipelineTransport.REST) {
+            return;
+        }
+        TypeName domainType = completion.finalOutputType();
+        CanonicalTransportBindingResolver resolver = new CanonicalTransportBindingResolver(context);
+        var binding = resolver.resolve(
+            TypeMapping.canonical(domainType, completion.finalOutputCanonicalType()), PipelineTransport.REST);
+        if (binding.isPresent() && binding.orElseThrow().definition()
+            instanceof org.pipelineframework.config.template.PipelineTemplateTypeDefinition.UnionType union) {
+            new CanonicalUnionRestRenderer(context, resolver).ensureRest(binding.orElseThrow(), union);
+        }
     }
 
     private boolean generatedV3DomainType(TypeName type, GenerationContext context) {

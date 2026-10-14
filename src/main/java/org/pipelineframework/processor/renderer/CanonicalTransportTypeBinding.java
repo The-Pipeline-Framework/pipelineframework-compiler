@@ -7,10 +7,10 @@ import org.pipelineframework.config.template.PipelineTemplateTypeDefinition;
 import org.pipelineframework.protocol.ProtocolTypeIdentity;
 import org.pipelineframework.processor.ir.PipelineTransport;
 
-/** Compiler-owned binding from one normalized v3 record to its Java and transport representations. */
+/** Compiler-owned binding from one normalized v3 type to its Java and transport representations. */
 record CanonicalTransportTypeBinding(
     String canonicalName,
-    PipelineTemplateTypeDefinition.RecordType definition,
+    PipelineTemplateTypeDefinition definition,
     ClassName javaType,
     ClassName restDtoType,
     ClassName restMapperType,

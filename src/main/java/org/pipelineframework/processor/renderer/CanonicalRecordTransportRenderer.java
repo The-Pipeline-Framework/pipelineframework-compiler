@@ -37,7 +37,7 @@ final class CanonicalRecordTransportRenderer {
     }
 
     void ensureRest(CanonicalTransportTypeBinding binding) throws IOException {
-        ensureDto(binding.definition());
+        ensureDto(recordDefinition(binding));
         ensureRestMapper(binding);
     }
 
@@ -129,7 +129,7 @@ final class CanonicalRecordTransportRenderer {
             .append("    public ").append(binding.grpcType().canonicalName()).append(" toGrpc(")
             .append(binding.javaType().canonicalName()).append(" domain) {\n")
             .append("        return toProto(domain);\n    }\n");
-        if (usesPayloadReference(binding.definition())) {
+        if (usesPayloadReference(recordDefinition(binding))) {
             source.append("\n    private static ").append(basePackage).append(".grpc.PipelineTypes.PayloadReference ")
                 .append("toProtoPayloadReference(org.pipelineframework.repository.PayloadReference value) {\n")
                 .append("        try {\n")
@@ -155,7 +155,7 @@ final class CanonicalRecordTransportRenderer {
         Map<String, RecordComponentElement> components = new LinkedHashMap<>();
         element.getRecordComponents().forEach(component -> components.put(component.getSimpleName().toString(), component));
         List<BoundField> fields = new ArrayList<>();
-        for (PipelineTemplateTypeDefinition.Field field : binding.definition().fields()) {
+        for (PipelineTemplateTypeDefinition.Field field : recordDefinition(binding).fields()) {
             RecordComponentElement component = components.get(field.name());
             if (component == null) {
                 throw new IllegalStateException("Java record " + binding.javaType() + " is missing canonical field '"
@@ -164,6 +164,13 @@ final class CanonicalRecordTransportRenderer {
             fields.add(new BoundField(field, component.asType()));
         }
         return new BoundRecord(binding, List.copyOf(fields));
+    }
+
+    private PipelineTemplateTypeDefinition.RecordType recordDefinition(CanonicalTransportTypeBinding binding) {
+        if (binding.definition() instanceof PipelineTemplateTypeDefinition.RecordType record) {
+            return record;
+        }
+        throw new IllegalArgumentException("Expected canonical record binding: " + binding.canonicalName());
     }
 
     private Map<String, CanonicalTransportTypeBinding> nestedBindings(BoundRecord record) {
