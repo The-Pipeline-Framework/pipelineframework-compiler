@@ -22,6 +22,30 @@ class RestResourceRendererTest {
     Path tempDir;
 
     @Test
+    void functionBuffersFiniteTypedResultsWhileComputeRetainsSse() throws IOException {
+        var model = baseModelBuilder("ExpandService", StreamingShape.UNARY_STREAMING)
+            .inputMapping(new TypeMapping(ClassName.get("example.common.domain", "Input"),
+                ClassName.get("example", "InputMapper"), true))
+            .outputMapping(new TypeMapping(ClassName.get("example.common.domain", "Output"),
+                ClassName.get("example", "OutputMapper"), true)).build();
+        for (var platform : org.pipelineframework.config.PlatformMode.values()) {
+            var context = createContext().withPlatformMode(platform);
+            new RestResourceRenderer().render(new RestBinding(model, "/expand"), context);
+            var source = Files.readString(tempDir.resolve("org/pipelineframework/csv/service/pipeline/ExpandResource.java"));
+            if (platform == org.pipelineframework.config.PlatformMode.FUNCTION) {
+                assertTrue(source.contains("Uni<List<OutputDto>> process(InputDto inputDto)"));
+                assertTrue(source.contains(".collect().asList()"));
+                assertTrue(source.contains("@Produces(\"application/json\")"));
+                org.junit.jupiter.api.Assertions.assertFalse(source.contains("@RestStreamElementType"));
+            } else {
+                assertTrue(source.contains("Multi<OutputDto> process(InputDto inputDto)"));
+                assertTrue(source.contains("@RestStreamElementType(\"application/json\")"));
+                org.junit.jupiter.api.Assertions.assertFalse(source.contains(".collect().asList()"));
+            }
+        }
+    }
+
+    @Test
     void pagedSourceResourceDelegatesToProviderAndEmitsPageFrames() throws IOException {
         PipelineStepModel model = new PipelineStepModel.Builder()
             .serviceName("ReadPaymentsService")

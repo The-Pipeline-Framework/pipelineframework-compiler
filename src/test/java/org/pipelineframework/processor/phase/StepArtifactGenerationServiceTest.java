@@ -85,6 +85,33 @@ class StepArtifactGenerationServiceTest {
     }
 
     @Test
+    void resolvedFunctionPlatformReachesBothRenderersWithoutProcessorOption() throws Exception {
+        var ctx = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        ctx.setGeneratedSourcesRoot(tempDir);
+        ctx.setPlatformMode(org.pipelineframework.config.PlatformMode.FUNCTION);
+        var model = new PipelineStepModel.Builder().serviceName("ExpandService")
+            .servicePackage("example.service").serviceClassName(ClassName.get("example.service", "ExpandService"))
+            .inputMapping(new TypeMapping(ClassName.get("example.common.domain", "Input"), ClassName.get("example", "InputMapper"), true))
+            .outputMapping(new TypeMapping(ClassName.get("example.common.domain", "Output"), ClassName.get("example", "OutputMapper"), true))
+            .streamingShape(StreamingShape.UNARY_STREAMING).executionMode(ExecutionMode.DEFAULT)
+            .enabledTargets(Set.of(GenerationTarget.REST_RESOURCE, GenerationTarget.REST_CLIENT_STEP)).build();
+        service.generateArtifactsForModel(ctx, model, null,
+            new org.pipelineframework.processor.ir.RestBinding(model, "/expand"), null,
+            new java.util.HashSet<>(), Set.of(), null, null, new RoleMetadataGenerator(processingEnv),
+            mock(GrpcServiceAdapterRenderer.class), mock(ClientStepRenderer.class), mock(LocalClientStepRenderer.class),
+            new RestClientStepRenderer(), new RestResourceRenderer(), mock(RestFunctionHandlerRenderer.class),
+            mock(BlockingReactiveBridgeRenderer.class), mock(RemoteOperatorAdapterRenderer.class));
+        try (var files = Files.walk(tempDir)) {
+            var generated = files.filter(path -> path.getFileName().toString().matches("Expand(Resource|RestClient)\\.java")).toList();
+            assertEquals(2, generated.size());
+            for (var path : generated) {
+                assertTrue(Files.readString(path).contains("Uni<List<OutputDto>>"), path.toString());
+                assertTrue(Files.readString(path).contains("@Produces(\"application/json\")"), path.toString());
+            }
+        }
+    }
+
+    @Test
     void constructorRejectsNullDependencies() {
         assertThrows(NullPointerException.class,
             () -> new StepArtifactGenerationService(null, new GenerationPolicy(), new SideEffectBeanService(new GenerationPathResolver())));
