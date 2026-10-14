@@ -659,12 +659,15 @@ public abstract class AbstractFunctionHandlerRenderer implements PipelineRendere
      * Selects the local invocation delegate expression corresponding to the provided streaming shape.
      *
      * @param shape the streaming shape of the pipeline step
-     * @return {@code "resource::process"} for {@code UNARY_UNARY}, {@code UNARY_STREAMING}, and {@code STREAMING_STREAMING}; otherwise the lambda
+     * @return {@code "resource::remoteProcess"} for {@code UNARY_STREAMING}, whose local adapter
+     *         requires a {@code Multi} even when the REST endpoint buffers its response as a list;
+     *         {@code "resource::process"} for {@code UNARY_UNARY} and {@code STREAMING_STREAMING}; otherwise the lambda
      *         {@code "inputStream -> inputStream.collect().asList().onItem().transformToUni(resource::process)"} for {@code STREAMING_UNARY}
      */
     private static String localInvokeDelegate(StreamingShape shape) {
         return switch (shape) {
-            case UNARY_UNARY, UNARY_STREAMING, STREAMING_STREAMING -> "resource::process";
+            case UNARY_UNARY, STREAMING_STREAMING -> "resource::process";
+            case UNARY_STREAMING -> "resource::remoteProcess";
             case STREAMING_UNARY ->
                 "inputStream -> inputStream.collect().asList().onItem().transformToUni(resource::process)";
         };

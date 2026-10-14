@@ -53,6 +53,7 @@ class RestFunctionHandlerRendererTest {
         assertTrue(source.contains("FunctionTransportContext transportContext = FunctionTransportContext.of("));
         assertTrue(source.contains("FunctionSourceAdapter<ParsedDocumentDto, ParsedDocumentDto> source"));
         assertTrue(source.contains("FunctionInvokeAdapter<ParsedDocumentDto, IndexAckDto> invokeLocal"));
+        assertTrue(source.contains("new LocalUnaryFunctionInvokeAdapter<ParsedDocumentDto, IndexAckDto>(resource::process"));
         assertTrue(source.contains("FunctionInvokeAdapter<ParsedDocumentDto, IndexAckDto> invokeRemote = new HttpRemoteFunctionInvokeAdapter<>()"));
         assertFalse(source.contains("UnsupportedRemoteFunctionInvokeAdapter"));
         assertTrue(source.contains("FunctionInvokeAdapter<ParsedDocumentDto, IndexAckDto> invoke = new InvocationModeRoutingFunctionInvokeAdapter<>(invokeLocal, invokeRemote)"));
@@ -79,6 +80,10 @@ class RestFunctionHandlerRendererTest {
         assertTrue(source.contains("FunctionTransportContext transportContext = FunctionTransportContext.of("));
         assertTrue(source.contains("FunctionSourceAdapter<ParsedDocumentDto, ParsedDocumentDto> source"));
         assertTrue(source.contains("FunctionInvokeAdapter<ParsedDocumentDto, IndexAckDto> invoke"));
+        // The REST endpoint may buffer as Uni<List<Dto>>, but the local one-to-many adapter
+        // requires Multi<Dto>. The resource inherits remoteProcess with that exact signature.
+        assertTrue(source.contains("new LocalOneToManyFunctionInvokeAdapter<ParsedDocumentDto, IndexAckDto>(resource::remoteProcess"));
+        assertFalse(source.contains("new LocalOneToManyFunctionInvokeAdapter<ParsedDocumentDto, IndexAckDto>(resource::process"));
         assertTrue(source.contains("FunctionInvokeAdapter<ParsedDocumentDto, IndexAckDto> invokeRemote = new HttpRemoteFunctionInvokeAdapter<>()"));
         assertTrue(source.contains("FunctionSinkAdapter<IndexAckDto, List<IndexAckDto>> sink"));
         assertTrue(source.contains("return FunctionTransportBridge.invokeOneToMany(input, transportContext, source, invoke, sink)"));
