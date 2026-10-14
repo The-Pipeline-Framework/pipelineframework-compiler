@@ -1,7 +1,9 @@
 package org.pipelineframework.processor.renderer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -70,6 +72,10 @@ class HttpPayloadBoundaryRendererTest {
         assertTrue(uploadSource.contains("@Authenticated"));
         assertTrue(uploadSource.contains("/tpf/payloads/invoice/upload"));
         assertTrue(uploadSource.contains("transfer().upload"));
+        assertTrue(uploadSource.contains("OwnedPayloadMultipart(body, contentType)"));
+        assertTrue(uploadSource.contains("Multipart body with exactly one file part named file"));
+        assertFalse(uploadSource.contains("FileUpload"));
+        assertFalse(uploadSource.contains("uploadedFile()"));
         assertTrue(uploadSource.contains("application/pdf"));
         assertTrue(downloadSource.contains("/tpf/payloads/receipt/download"));
         assertTrue(downloadSource.contains("engine.openDownload"));
@@ -84,5 +90,38 @@ class HttpPayloadBoundaryRendererTest {
             Files.readString(repeated.resolve("org/example/pipeline/GeneratedPayloadBoundary0.java")));
         assertEquals(downloadSource,
             Files.readString(repeated.resolve("org/example/pipeline/GeneratedPayloadBoundary1.java")));
+
+        Path functionTemplate = output.resolve("function.yaml");
+        Files.writeString(functionTemplate, Files.readString(template)
+            .replace("platform: COMPUTE", "platform: FUNCTION")
+            .replace("provider: filesystem", "provider: s3"));
+        Path functionOutput = output.resolve("function");
+        new HttpPayloadBoundaryRenderer().render(new PipelineTemplateConfigLoader().load(functionTemplate),
+            functionOutput);
+        String functionUpload = Files.readString(functionOutput.resolve(
+            "org/example/pipeline/GeneratedPayloadBoundary0.java"));
+        String functionDownload = Files.readString(functionOutput.resolve(
+            "org/example/pipeline/GeneratedPayloadBoundary1.java"));
+        assertTrue(functionUpload.contains("initiateDelegatedUpload"));
+        assertTrue(functionUpload.contains("catch (PayloadTooLargeException oversized)"));
+        assertTrue(functionUpload.contains("new WebApplicationException(oversized, 413)"));
+        assertTrue(functionUpload.contains("delegatedUploadPart"));
+        assertTrue(functionUpload.contains("completeDelegatedUpload"));
+        assertTrue(functionUpload.contains("abortDelegatedUpload"));
+        for (String operation : List.of("initiate", "part", "complete", "abort")) {
+            assertTrue(functionUpload.contains("@Path(\"" + operation + "\")"));
+            assertTrue(functionUpload.contains("operationId = \"" + operation + "Payloadinvoice\""));
+        }
+        assertFalse(functionUpload.contains("OwnedPayloadMultipart"));
+        assertFalse(functionUpload.contains("FileUpload"));
+        assertTrue(functionDownload.contains("delegatedDownload"));
+        assertTrue(functionDownload.contains("operationId = \"downloadPayloadCapabilityreceipt\""));
+        assertFalse(functionDownload.contains("OwnedPayloadMultipart"));
+        assertFalse(functionDownload.contains("FileUpload"));
+
+        Files.writeString(functionTemplate, Files.readString(functionTemplate)
+            .replaceFirst("provider: s3", "provider: filesystem"));
+        assertThrows(IllegalStateException.class,
+            () -> new PipelineTemplateConfigLoader().load(functionTemplate));
     }
 }

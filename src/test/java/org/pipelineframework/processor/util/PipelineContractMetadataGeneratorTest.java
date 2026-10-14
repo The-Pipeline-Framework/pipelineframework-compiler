@@ -140,6 +140,18 @@ class PipelineContractMetadataGeneratorTest {
         assertEquals("artifact-download", routes.get(0).getAsJsonObject().get("name").getAsString());
         assertEquals("/tpf/payloads/invoice-upload/upload",
             routes.get(1).getAsJsonObject().get("route").getAsString());
+        assertEquals("DIRECT_STREAM", routes.get(1).getAsJsonObject().get("transfer").getAsString());
+
+        Path functionOutput = tempDir.resolve("payload-contract-function");
+        writeV3Metadata(yaml, functionOutput, typeModel, first, true, PipelinePlatform.FUNCTION);
+        JsonArray functionRoutes = readContract(functionOutput).getAsJsonArray("httpPayloadBoundaries");
+        assertEquals("FUNCTION", readContract(functionOutput).get("platform").getAsString());
+        assertEquals("DELEGATED_S3", functionRoutes.get(0).getAsJsonObject().get("transfer").getAsString());
+        assertEquals("download-capability", functionRoutes.get(0).getAsJsonObject()
+            .getAsJsonArray("operations").get(0).getAsString());
+        assertEquals(List.of("initiate", "part", "complete", "abort"),
+            functionRoutes.get(1).getAsJsonObject().getAsJsonArray("operations").asList().stream()
+                .map(value -> value.getAsString()).toList());
     }
 
     @Test
@@ -676,14 +688,20 @@ class PipelineContractMetadataGeneratorTest {
     private void writeV3Metadata(Path pipelineYaml, Path outputDir, PipelineTemplateTypeModel typeModel,
                                  Map<String, PipelineHttpPayloadBoundaryConfig> httpPayloads,
                                  boolean includeStep) throws IOException {
+        writeV3Metadata(pipelineYaml, outputDir, typeModel, httpPayloads, includeStep, PipelinePlatform.COMPUTE);
+    }
+
+    private void writeV3Metadata(Path pipelineYaml, Path outputDir, PipelineTemplateTypeModel typeModel,
+                                 Map<String, PipelineHttpPayloadBoundaryConfig> httpPayloads,
+                                 boolean includeStep, PipelinePlatform platform) throws IOException {
         ProcessingEnvironment processingEnv = processingEnv(outputDir, Map.of("pipeline.config", pipelineYaml.toString()));
         RoundEnvironment roundEnv = mock(RoundEnvironment.class);
         PipelineCompilationContext ctx = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
         ctx.setModuleName("orchestrator-svc");
-        ctx.setPlatformMode(PlatformMode.COMPUTE);
+        ctx.setPlatformMode(platform == PipelinePlatform.FUNCTION ? PlatformMode.FUNCTION : PlatformMode.COMPUTE);
         ctx.setTransportMode(PipelineTransport.REST);
         ctx.setPipelineTemplateConfig(new PipelineTemplateConfig(
-            3, "v3-contract", "org.example.v3", "REST", PipelinePlatform.COMPUTE,
+            3, "v3-contract", "org.example.v3", "REST", platform,
             Map.of(), Map.of(), Map.of(), Map.of(), List.of(), Map.of(), null, null,
             new PipelineTemplateMaterialization(List.of()), null, null, typeModel, Map.of(), httpPayloads));
         ctx.setStepModels(includeStep

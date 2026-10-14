@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.util.Comparator;
 import javax.lang.model.element.Modifier;
 import org.pipelineframework.config.boundary.PipelineHttpPayloadBoundaryConfig;
+import org.pipelineframework.config.template.PipelinePlatform;
 import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.processor.phase.NamingPolicy;
 
@@ -71,8 +72,19 @@ public final class HttpPayloadBoundaryRenderer {
                     ClassName.get("jakarta.ws.rs", "WebApplicationException"))
                 .addStatement("return security.getUserPrincipal().getName()")
                 .build());
-            resource.addMethod(boundary.direction() == PipelineHttpPayloadBoundaryConfig.Direction.UPLOAD
-                ? upload(boundary) : download(boundary));
+            if (config.platform() == PipelinePlatform.FUNCTION) {
+                if (boundary.direction() == PipelineHttpPayloadBoundaryConfig.Direction.UPLOAD) {
+                    resource.addMethod(initiateDelegated(boundary));
+                    resource.addMethod(delegatedPart(boundary));
+                    resource.addMethod(completeDelegated(boundary));
+                    resource.addMethod(abortDelegated(boundary));
+                } else {
+                    resource.addMethod(delegatedDownload(boundary));
+                }
+            } else {
+                resource.addMethod(boundary.direction() == PipelineHttpPayloadBoundaryConfig.Direction.UPLOAD
+                    ? upload(boundary) : download(boundary));
+            }
             JavaFile.builder(config.basePackage() + NamingPolicy.PIPELINE_PACKAGE_SUFFIX, resource.build())
                 .build().writeTo(outputDir);
             classes.add(config.basePackage() + NamingPolicy.PIPELINE_PACKAGE_SUFFIX + "." + className);
@@ -81,12 +93,11 @@ public final class HttpPayloadBoundaryRenderer {
     }
 
     private MethodSpec upload(PipelineHttpPayloadBoundaryConfig boundary) {
-        ClassName fileUpload = ClassName.get("org.jboss.resteasy.reactive.multipart", "FileUpload");
         return MethodSpec.methodBuilder("upload")
             .addModifiers(Modifier.PUBLIC)
             .addAnnotation(POST)
             .addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Consumes"))
-                .addMember("value", "$S", "multipart/form-data").build())
+                .addMember("value", "$S", "*/*").build())
             .addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Produces"))
                 .addMember("value", "$S", "application/json").build())
             .addAnnotation(AnnotationSpec.builder(ClassName.get("org.eclipse.microprofile.openapi.annotations", "Operation"))
@@ -94,9 +105,15 @@ public final class HttpPayloadBoundaryRenderer {
             .returns(com.squareup.javapoet.ParameterizedTypeName.get(
                 ClassName.get(java.util.Map.class), ClassName.get(String.class),
                 ClassName.get("org.pipelineframework.repository", "PayloadReference")))
-            .addParameter(com.squareup.javapoet.ParameterSpec.builder(fileUpload, "file")
-                .addAnnotation(AnnotationSpec.builder(ClassName.get("org.jboss.resteasy.reactive", "RestForm"))
-                    .addMember("value", "$S", "file").build()).build())
+            .addParameter(com.squareup.javapoet.ParameterSpec.builder(java.io.InputStream.class, "body")
+                .addAnnotation(AnnotationSpec.builder(ClassName.get(
+                    "org.eclipse.microprofile.openapi.annotations.parameters", "RequestBody"))
+                    .addMember("description", "$S",
+                        "Multipart body with exactly one file part named file; send the raw multipart request body")
+                    .addMember("content", "@$T(mediaType = $S)", ClassName.get(
+                        "org.eclipse.microprofile.openapi.annotations.media", "Content"),
+                        "multipart/form-data").build()).build())
+            .addParameter(header("contentType", "Content-Type"))
             .addParameter(header("tenant", "X-Tenant-Id"))
             .addParameter(header("scope", "X-Scope-Id"))
             .addParameter(com.squareup.javapoet.ParameterSpec.builder(SECURITY, "security")
@@ -104,24 +121,23 @@ public final class HttpPayloadBoundaryRenderer {
             .addParameter(com.squareup.javapoet.ParameterSpec.builder(HTTP_RESPONSE, "httpResponse")
                 .addAnnotation(CONTEXT).build())
             .addException(IOException.class)
-            .addStatement("if (file == null || file.size() > BOUNDARY.maxBytes()) throw new $T(413)",
-                ClassName.get("jakarta.ws.rs", "WebApplicationException"))
-            .addStatement("if (!BOUNDARY.contentTypes().contains(file.contentType())) throw new $T(415)",
-                ClassName.get("jakarta.ws.rs", "WebApplicationException"))
             .addStatement("var target = CONFIG.publish().get(BOUNDARY.objectName())")
             .addStatement("if (target == null) throw new $T(\"payload target is unavailable\")",
                 IllegalStateException.class)
             .addStatement("var cancelled = new $T()", java.util.concurrent.atomic.AtomicBoolean.class)
             .addStatement("httpResponse.closeHandler(ignored -> cancelled.set(true))")
-            .beginControlFlow("try (var input = $T.newInputStream(file.uploadedFile()))", java.nio.file.Files.class)
-            .beginControlFlow("try")
-            .addStatement("var reference = transfer().upload(BOUNDARY, target, principal(security), tenant, scope, file.contentType(), input, cancelled::get)")
+            .beginControlFlow("try (var input = new $T(body, contentType))",
+                ClassName.get("org.pipelineframework.connector", "OwnedPayloadMultipart"))
+            .addStatement("var reference = transfer().upload(BOUNDARY, target, principal(security), tenant, scope, input.mediaType(), input, cancelled::get)")
             .addStatement("return $T.of(BOUNDARY.referenceField(), reference)", java.util.Map.class)
+            .nextControlFlow("catch ($T oversized)", ClassName.get("org.pipelineframework.connector", "PayloadTooLargeException"))
+            .addStatement("throw new $T(oversized, 413)", ClassName.get("jakarta.ws.rs", "WebApplicationException"))
+            .nextControlFlow("catch ($T media)", ClassName.get("org.pipelineframework.connector", "PayloadMediaTypeException"))
+            .addStatement("throw new $T(media, 415)", ClassName.get("jakarta.ws.rs", "WebApplicationException"))
             .nextControlFlow("catch ($T denied)", SecurityException.class)
             .addStatement("throw new $T()", ClassName.get("jakarta.ws.rs", "ForbiddenException"))
             .nextControlFlow("catch ($T invalid)", IllegalArgumentException.class)
             .addStatement("throw new $T()", ClassName.get("jakarta.ws.rs", "BadRequestException"))
-            .endControlFlow()
             .endControlFlow()
             .build();
     }
@@ -168,6 +184,105 @@ public final class HttpPayloadBoundaryRenderer {
             .addStatement("if (reference.checksum() != null) response.header(\"ETag\", \"\\\"\" + reference.checksum() + \"\\\"\")")
             .addStatement("return response.build()")
             .build();
+    }
+
+    private MethodSpec initiateDelegated(PipelineHttpPayloadBoundaryConfig boundary) {
+        ClassName request = ClassName.get("org.pipelineframework.connector", "DelegatedUploadInitiation");
+        ClassName reservation = ClassName.get("org.pipelineframework.connector", "DelegatedPayloadTarget", "Reservation");
+        return MethodSpec.methodBuilder("initiate")
+            .addModifiers(Modifier.PUBLIC).addAnnotation(POST)
+            .addAnnotation(AnnotationSpec.builder(PATH).addMember("value", "$S", "initiate").build())
+            .addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Consumes"))
+                .addMember("value", "$S", "application/json").build())
+            .addAnnotation(AnnotationSpec.builder(ClassName.get("org.eclipse.microprofile.openapi.annotations", "Operation"))
+                .addMember("operationId", "$S", "initiatePayload" + boundary.name()).build())
+            .returns(reservation).addParameter(request, "request")
+            .addParameter(header("tenant", "X-Tenant-Id"))
+            .addParameter(header("scope", "X-Scope-Id"))
+            .addParameter(com.squareup.javapoet.ParameterSpec.builder(SECURITY, "security").addAnnotation(CONTEXT).build())
+            .addStatement("if (request == null) throw new $T()", ClassName.get("jakarta.ws.rs", "BadRequestException"))
+            .addStatement("var target = CONFIG.publish().get(BOUNDARY.objectName())")
+            .addStatement("if (target == null) throw new $T(\"payload target is unavailable\")", IllegalStateException.class)
+            .beginControlFlow("try")
+            .addStatement("return transfer().initiateDelegatedUpload(BOUNDARY, target, principal(security), tenant, scope, request.contentType(), request.bytes(), request.sha256(), request.idempotencyKey())")
+            .nextControlFlow("catch ($T media)", ClassName.get("org.pipelineframework.connector", "PayloadMediaTypeException"))
+            .addStatement("throw new $T(415)", ClassName.get("jakarta.ws.rs", "WebApplicationException"))
+            .nextControlFlow("catch ($T denied)", SecurityException.class)
+            .addStatement("throw new $T()", ClassName.get("jakarta.ws.rs", "ForbiddenException"))
+            .nextControlFlow("catch ($T oversized)",
+                ClassName.get("org.pipelineframework.connector", "PayloadTooLargeException"))
+            .addStatement("throw new $T(oversized, 413)",
+                ClassName.get("jakarta.ws.rs", "WebApplicationException"))
+            .nextControlFlow("catch ($T invalid)", IllegalArgumentException.class)
+            .addStatement("throw new $T()", ClassName.get("jakarta.ws.rs", "BadRequestException"))
+            .endControlFlow().build();
+    }
+
+    private MethodSpec delegatedPart(PipelineHttpPayloadBoundaryConfig boundary) {
+        return delegatedControl(boundary, "part", "part", "DelegatedUploadPartRequest",
+            ClassName.get("org.pipelineframework.connector", "DelegatedPayloadTarget", "PartCapability"),
+            "return transfer().delegatedUploadPart(BOUNDARY, target, principal(security), tenant, scope, request.token(), request.partNumber())");
+    }
+
+    private MethodSpec completeDelegated(PipelineHttpPayloadBoundaryConfig boundary) {
+        return delegatedControl(boundary, "complete", "complete", "DelegatedUploadTokenRequest",
+            com.squareup.javapoet.ParameterizedTypeName.get(ClassName.get(java.util.Map.class),
+                ClassName.get(String.class), ClassName.get("org.pipelineframework.repository", "PayloadReference")),
+            "return java.util.Map.of(BOUNDARY.referenceField(), transfer().completeDelegatedUpload(BOUNDARY, target, principal(security), tenant, scope, request.token()))");
+    }
+
+    private MethodSpec abortDelegated(PipelineHttpPayloadBoundaryConfig boundary) {
+        return delegatedControl(boundary, "abort", "abort", "DelegatedUploadTokenRequest",
+            com.squareup.javapoet.TypeName.VOID,
+            "transfer().abortDelegatedUpload(BOUNDARY, target, principal(security), tenant, scope, request.token())");
+    }
+
+    private MethodSpec delegatedControl(PipelineHttpPayloadBoundaryConfig boundary,
+                                        String name, String path, String requestType,
+                                        com.squareup.javapoet.TypeName responseType, String statement) {
+        return MethodSpec.methodBuilder(name).addModifiers(Modifier.PUBLIC).addAnnotation(POST)
+            .addAnnotation(AnnotationSpec.builder(PATH).addMember("value", "$S", path).build())
+            .addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Consumes"))
+                .addMember("value", "$S", "application/json").build())
+            .addAnnotation(AnnotationSpec.builder(ClassName.get("org.eclipse.microprofile.openapi.annotations", "Operation"))
+                .addMember("operationId", "$S", name + "Payload" + boundary.name()).build())
+            .returns(responseType)
+            .addParameter(ClassName.get("org.pipelineframework.connector", requestType), "request")
+            .addParameter(header("tenant", "X-Tenant-Id"))
+            .addParameter(header("scope", "X-Scope-Id"))
+            .addParameter(com.squareup.javapoet.ParameterSpec.builder(SECURITY, "security").addAnnotation(CONTEXT).build())
+            .addStatement("if (request == null) throw new $T()", ClassName.get("jakarta.ws.rs", "BadRequestException"))
+            .addStatement("var target = CONFIG.publish().get(BOUNDARY.objectName())")
+            .addStatement("if (target == null) throw new $T(\"payload target is unavailable\")", IllegalStateException.class)
+            .beginControlFlow("try")
+            .addStatement(statement)
+            .nextControlFlow("catch ($T denied)", SecurityException.class)
+            .addStatement("throw new $T()", ClassName.get("jakarta.ws.rs", "ForbiddenException"))
+            .nextControlFlow("catch ($T invalid)", IllegalArgumentException.class)
+            .addStatement("throw new $T()", ClassName.get("jakarta.ws.rs", "BadRequestException"))
+            .endControlFlow().build();
+    }
+
+    private MethodSpec delegatedDownload(PipelineHttpPayloadBoundaryConfig boundary) {
+        return MethodSpec.methodBuilder("download").addModifiers(Modifier.PUBLIC).addAnnotation(POST)
+            .addAnnotation(AnnotationSpec.builder(ClassName.get("jakarta.ws.rs", "Consumes"))
+                .addMember("value", "$S", "application/json").build())
+            .addAnnotation(AnnotationSpec.builder(ClassName.get("org.eclipse.microprofile.openapi.annotations", "Operation"))
+                .addMember("operationId", "$S", "downloadPayloadCapability" + boundary.name()).build())
+            .returns(ClassName.get("org.pipelineframework.connector", "DelegatedPayloadSource", "DownloadCapability"))
+            .addParameter(ClassName.get("org.pipelineframework.repository", "PayloadReference"), "reference")
+            .addParameter(header("tenant", "X-Tenant-Id"))
+            .addParameter(header("scope", "X-Scope-Id"))
+            .addParameter(com.squareup.javapoet.ParameterSpec.builder(SECURITY, "security").addAnnotation(CONTEXT).build())
+            .addStatement("var source = CONFIG.sources().get(BOUNDARY.objectName())")
+            .addStatement("if (source == null) throw new $T(\"payload source is unavailable\")", IllegalStateException.class)
+            .beginControlFlow("try")
+            .addStatement("return transfer().delegatedDownload(BOUNDARY, source, principal(security), tenant, scope, reference)")
+            .nextControlFlow("catch ($T denied)", SecurityException.class)
+            .addStatement("throw new $T()", ClassName.get("jakarta.ws.rs", "ForbiddenException"))
+            .nextControlFlow("catch ($T invalid)", IllegalArgumentException.class)
+            .addStatement("throw new $T()", ClassName.get("jakarta.ws.rs", "BadRequestException"))
+            .endControlFlow().build();
     }
 
     private static com.squareup.javapoet.ParameterSpec header(String name, String key) {
