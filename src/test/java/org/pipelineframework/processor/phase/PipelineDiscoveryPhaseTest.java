@@ -221,10 +221,19 @@ class PipelineDiscoveryPhaseTest {
     void discoveryReportsYamlStepDefinitionErrorsToMessager() throws Exception {
         Path yaml = tempDir.resolve("pipeline.yaml");
         Files.writeString(yaml, """
+            version: 3
             appName: "Test"
             basePackage: "com.example"
+            types:
+              TestInput:
+                fields: [[id, uuid]]
+              TestOutput:
+                fields: [[id, uuid]]
             steps:
               - name: "bad-step"
+                cardinality: ONE_TO_ONE
+                input: TestInput
+                output: TestOutput
                 service: "com.example.InternalService"
                 delegate: "com.example.ExternalService"
             """);
@@ -387,18 +396,24 @@ class PipelineDiscoveryPhaseTest {
         Path yaml = tempDir.resolve("pipeline.yaml");
         // FUNCTION platform with subscription should fail checkpoint boundary validation
         Files.writeString(yaml, """
+            version: 3
             appName: "Test"
             basePackage: "com.example"
             transport: "GRPC"
             platform: "FUNCTION"
+            types:
+              OrderRequest:
+                fields: [[id, uuid]]
+              OrderResponse:
+                fields: [[id, uuid]]
             input:
               subscription:
                 publication: "orders-ready"
             steps:
               - name: "Process Order"
                 cardinality: "ONE_TO_ONE"
-                inputTypeName: "com.example.OrderRequest"
-                outputTypeName: "com.example.OrderResponse"
+                input: OrderRequest
+                output: OrderResponse
             """);
         Files.createDirectories(yaml.getParent().resolve("src/main/resources"));
         Files.writeString(yaml.getParent().resolve("src/main/resources/application.properties"),
