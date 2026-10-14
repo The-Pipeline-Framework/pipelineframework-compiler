@@ -2,12 +2,14 @@ package org.pipelineframework.processor.phase;
 
 import java.io.IOException;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 import com.google.protobuf.DescriptorProtos;
 import com.squareup.javapoet.ClassName;
 import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.config.template.PipelineTemplateDialect;
+import org.pipelineframework.config.template.PipelineTemplateTypeModel;
 import org.pipelineframework.generated.GeneratedTypeNames;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.ir.DeploymentRole;
@@ -103,6 +105,8 @@ class StepArtifactGenerationService {
             ? config
             : null;
         boolean v3GeneratedDomainTypes = template != null && template.dialect() == PipelineTemplateDialect.V3;
+        Optional<PipelineTemplateTypeModel> canonicalTypeModel = v3GeneratedDomainTypes
+            ? Optional.of(template.typeModel()) : Optional.empty();
         for (GenerationTarget target : model.enabledTargets()) {
             switch (target) {
                 case COMMAND_CLIENT_STEP -> {
@@ -119,7 +123,7 @@ class StepArtifactGenerationService {
                         ctx.getTransportMode(),
                         template == null ? null : template.basePackage(),
                         null,
-                        v3GeneratedDomainTypes));
+                        v3GeneratedDomainTypes, canonicalTypeModel));
                     roleMetadataGenerator.recordClassWithRole(commandClientClassName, clientRole.name());
                 }
                 case DEFERRED_COMPLETION_STEP -> {
@@ -136,7 +140,7 @@ class StepArtifactGenerationService {
                         ctx.getTransportMode(),
                         template == null ? null : template.basePackage(),
                         null,
-                        v3GeneratedDomainTypes), grpcBinding);
+                        v3GeneratedDomainTypes, canonicalTypeModel), grpcBinding);
                     roleMetadataGenerator.recordClassWithRole(awaitClientClassName, clientRole.name());
                 }
                 case QUERY_CLIENT_STEP -> {
@@ -151,7 +155,10 @@ class StepArtifactGenerationService {
                         cacheKeyGenerator,
                         descriptorSet,
                         ctx.getTransportMode(),
-                        ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config ? config.basePackage() : null));
+                        template == null ? null : template.basePackage(),
+                        stepIndex,
+                        v3GeneratedDomainTypes,
+                        canonicalTypeModel));
                     roleMetadataGenerator.recordClassWithRole(queryClientClassName, clientRole.name());
                 }
                 case DYNAMIC_OPERATION_CLIENT_STEP -> {
@@ -169,7 +176,7 @@ class StepArtifactGenerationService {
                         ctx.getTransportMode(),
                         template == null ? null : template.basePackage(),
                         null,
-                        v3GeneratedDomainTypes));
+                        v3GeneratedDomainTypes, canonicalTypeModel));
                     roleMetadataGenerator.recordClassWithRole(dynamicOperationClientClassName, clientRole.name());
                 }
                 case GRPC_SERVICE -> {
@@ -221,7 +228,7 @@ class StepArtifactGenerationService {
                         ctx.getTransportMode(),
                         template == null ? null : template.basePackage(),
                         null,
-                        v3GeneratedDomainTypes));
+                        v3GeneratedDomainTypes, canonicalTypeModel));
                     roleMetadataGenerator.recordClassWithRole(grpcClassName, grpcRole.name());
                 }
                 case GRPC_SERVICE_SIDE_EFFECT_ONLY -> {
@@ -266,7 +273,7 @@ class StepArtifactGenerationService {
                         ctx.getTransportMode(),
                         template == null ? null : template.basePackage(),
                         null,
-                        v3GeneratedDomainTypes));
+                        v3GeneratedDomainTypes, canonicalTypeModel));
                     roleMetadataGenerator.recordClassWithRole(clientClassName, clientRole.name());
                 }
                 case LOCAL_CLIENT_STEP -> {
@@ -313,8 +320,10 @@ class StepArtifactGenerationService {
                         cacheKeyGenerator,
                         descriptorSet,
                         ctx.getTransportMode(),
-                        ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config ? config.basePackage() : null,
-                        stepIndex));
+                        template == null ? null : template.basePackage(),
+                        stepIndex,
+                        v3GeneratedDomainTypes,
+                        canonicalTypeModel));
                     roleMetadataGenerator.recordClassWithRole(localClientClassName, localClientRole.name());
                 }
                 case REST_RESOURCE -> {
@@ -345,7 +354,12 @@ class StepArtifactGenerationService {
                         restRole,
                         enabledAspects,
                         cacheKeyGenerator,
-                        descriptorSet).withPlatformMode(ctx.getPlatformMode()));
+                        descriptorSet,
+                        ctx.getTransportMode(),
+                        template == null ? null : template.basePackage(),
+                        stepIndex,
+                        v3GeneratedDomainTypes,
+                        canonicalTypeModel).withPlatformMode(ctx.getPlatformMode()));
                     roleMetadataGenerator.recordClassWithRole(restClassName, restRole.name());
 
                     if (ctx.isPlatformModeFunction() && !ctx.isFunctionHttpBridgeEnabled()) {
@@ -357,7 +371,12 @@ class StepArtifactGenerationService {
                             restRole,
                             enabledAspects,
                             cacheKeyGenerator,
-                            descriptorSet));
+                            descriptorSet,
+                            ctx.getTransportMode(),
+                            template == null ? null : template.basePackage(),
+                            stepIndex,
+                            v3GeneratedDomainTypes,
+                            canonicalTypeModel));
                         roleMetadataGenerator.recordClassWithRole(handlerClassName, restRole.name());
                     }
                 }
@@ -380,7 +399,12 @@ class StepArtifactGenerationService {
                         restClientRole,
                         enabledAspects,
                         cacheKeyGenerator,
-                        descriptorSet).withPlatformMode(ctx.getPlatformMode()));
+                        descriptorSet,
+                        ctx.getTransportMode(),
+                        template == null ? null : template.basePackage(),
+                        stepIndex,
+                        v3GeneratedDomainTypes,
+                        canonicalTypeModel).withPlatformMode(ctx.getPlatformMode()));
                     roleMetadataGenerator.recordClassWithRole(restClientClassName, restClientRole.name());
                 }
                 case BLOCKING_REACTIVE_BRIDGE -> {

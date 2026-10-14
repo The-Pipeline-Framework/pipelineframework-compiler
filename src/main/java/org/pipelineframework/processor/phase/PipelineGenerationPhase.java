@@ -666,6 +666,14 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
             return;
         }
 
+        org.pipelineframework.config.template.PipelineTemplateConfig template =
+            ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig config
+                ? config : null;
+        boolean v3GeneratedDomainTypes = template != null
+            && template.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3;
+        java.util.Optional<org.pipelineframework.config.template.PipelineTemplateTypeModel> canonicalTypeModel =
+            v3GeneratedDomainTypes ? java.util.Optional.of(template.typeModel()) : java.util.Optional.empty();
+
         try {
             String transport = binding.normalizedTransport();
             boolean rest = "REST".equalsIgnoreCase(transport);
@@ -678,15 +686,20 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
                     role,
                     java.util.Set.of(),
                     cacheKeyGenerator,
-                    descriptorSet));
-                if (ctx.isPlatformModeFunction() && !binding.inputStreaming() && !binding.outputStreaming()) {
+                    descriptorSet,
+                    ctx.getTransportMode(), binding.basePackage(), null,
+                    v3GeneratedDomainTypes, canonicalTypeModel));
+                if (ctx.isPlatformModeFunction() && !ctx.isFunctionHttpBridgeEnabled()
+                    && !binding.inputStreaming() && !binding.outputStreaming()) {
                     orchestratorFunctionHandlerRenderer.render(binding, org.pipelineframework.processor.renderer.Jsr269GenerationContext.create(
                         ctx.getProcessingEnv(),
                         resolveRoleOutputDir(ctx, role),
                         role,
                         java.util.Set.of(),
                         cacheKeyGenerator,
-                        descriptorSet));
+                        descriptorSet,
+                        ctx.getTransportMode(), binding.basePackage(), null,
+                        v3GeneratedDomainTypes, canonicalTypeModel));
                     roleMetadataGenerator.recordClassWithRole(
                         orchestratorFunctionHandlerRenderer.handlerFqcn(binding.basePackage()),
                         role.name());

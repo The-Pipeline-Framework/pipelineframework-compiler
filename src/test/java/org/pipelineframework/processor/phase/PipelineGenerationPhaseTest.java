@@ -570,6 +570,46 @@ class PipelineGenerationPhaseTest {
         assertDoesNotThrow(() -> phase.execute(context));
     }
 
+    @Test
+    void httpBridgeDoesNotGenerateDirectOrchestratorFunctionHandlers(@TempDir Path tempDir) throws Exception {
+        PipelineGenerationPhase phase = new PipelineGenerationPhase();
+        var context = new org.pipelineframework.processor.PipelineCompilationContext(
+            processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        context.setGeneratedSourcesRoot(tempDir);
+        context.setPlatformMode(org.pipelineframework.config.PlatformMode.FUNCTION);
+        context.setFunctionHttpBridge(true);
+        var binding = new org.pipelineframework.processor.ir.OrchestratorBinding(
+            mock(org.pipelineframework.processor.ir.PipelineStepModel.class),
+            "com.example", "REST", "Input", "Output", false, false,
+            "ProcessFirstService", org.pipelineframework.processor.ir.StreamingShape.UNARY_UNARY,
+            "test", "test", "1");
+        context.setRendererBindings(java.util.Map.of("orchestrator", binding));
+        var restRenderer = mock(org.pipelineframework.processor.renderer.OrchestratorRestResourceRenderer.class);
+        var functionRenderer = mock(
+            org.pipelineframework.processor.renderer.AbstractOrchestratorFunctionHandlerRenderer.class);
+        var roles = mock(org.pipelineframework.processor.util.RoleMetadataGenerator.class);
+        var method = PipelineGenerationPhase.class.getDeclaredMethod("generateOrchestratorServer",
+            org.pipelineframework.processor.PipelineCompilationContext.class,
+            DescriptorProtos.FileDescriptorSet.class,
+            boolean.class,
+            org.pipelineframework.processor.renderer.OrchestratorGrpcRenderer.class,
+            org.pipelineframework.processor.renderer.OrchestratorRestResourceRenderer.class,
+            org.pipelineframework.processor.renderer.AbstractOrchestratorFunctionHandlerRenderer.class,
+            org.pipelineframework.processor.renderer.OrchestratorCliRenderer.class,
+            org.pipelineframework.processor.renderer.OrchestratorIngestClientRenderer.class,
+            org.pipelineframework.processor.util.RoleMetadataGenerator.class,
+            com.squareup.javapoet.ClassName.class);
+        method.setAccessible(true);
+        method.invoke(phase, context, DescriptorProtos.FileDescriptorSet.getDefaultInstance(), false,
+            mock(org.pipelineframework.processor.renderer.OrchestratorGrpcRenderer.class), restRenderer,
+            functionRenderer, mock(org.pipelineframework.processor.renderer.OrchestratorCliRenderer.class),
+            mock(org.pipelineframework.processor.renderer.OrchestratorIngestClientRenderer.class), roles,
+            com.squareup.javapoet.ClassName.get("com.example", "CacheKeyGenerator"));
+
+        verify(restRenderer).render(eq(binding), any());
+        verify(functionRenderer, never()).render(any(), any());
+    }
+
     private static DescriptorProtos.FileDescriptorSet buildMinimalOrchestratorDescriptorSet() {
         DescriptorProtos.FileDescriptorProto proto = DescriptorProtos.FileDescriptorProto.newBuilder()
             .setName("orchestrator.proto")
