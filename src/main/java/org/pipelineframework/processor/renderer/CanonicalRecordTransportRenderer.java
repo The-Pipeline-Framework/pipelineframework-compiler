@@ -176,8 +176,8 @@ final class CanonicalRecordTransportRenderer {
                 continue;
             }
             TypeMirror nestedMirror = field.definition().repeated()
-                ? listElementType(field.javaType())
-                : field.javaType();
+                ? typeArgument(field.javaType())
+                : optionalNonNull(field.definition()) ? typeArgument(field.javaType()) : field.javaType();
             ClassName nestedJavaType = className(nestedMirror);
             String nestedName = field.definition().type().name();
             CanonicalTransportTypeBinding nestedBinding = resolver.resolve(TypeMapping.canonical(nestedJavaType, nestedName))
@@ -200,6 +200,11 @@ final class CanonicalRecordTransportRenderer {
     private String fromRest(BoundField field, Map<String, CanonicalTransportTypeBinding> nested) {
         String value = "external." + field.definition().name() + "()";
         if (optionalNonNull(field.definition())) {
+            if (nested.containsKey(field.definition().name())) {
+                return value + ".map(" + field.definition().name() + "Mapper::fromExternal)"
+                    + ".map(org.pipelineframework.type.CanonicalFieldValue::of)"
+                    + ".orElseGet(org.pipelineframework.type.CanonicalFieldValue::absent)";
+            }
             return value + ".map(org.pipelineframework.type.CanonicalFieldValue::of)"
                 + ".orElseGet(org.pipelineframework.type.CanonicalFieldValue::absent)";
         }
@@ -209,6 +214,9 @@ final class CanonicalRecordTransportRenderer {
     private String toRest(BoundField field, Map<String, CanonicalTransportTypeBinding> nested) {
         String value = "domain." + field.definition().name() + "()";
         if (optionalNonNull(field.definition())) {
+            if (nested.containsKey(field.definition().name())) {
+                return value + ".asOptional().map(" + field.definition().name() + "Mapper::toExternal)";
+            }
             return value + ".asOptional()";
         }
         return mapValue(field, value, nested, "toExternal");
@@ -294,9 +302,9 @@ final class CanonicalRecordTransportRenderer {
             .map(PipelineTemplateTypeDefinition.RecordType.class::cast);
     }
 
-    private TypeMirror listElementType(TypeMirror mirror) {
+    private TypeMirror typeArgument(TypeMirror mirror) {
         if (!(mirror instanceof DeclaredType declared) || declared.getTypeArguments().size() != 1) {
-            throw new IllegalStateException("Repeated canonical field requires a parameterized java.util.List: " + mirror);
+            throw new IllegalStateException("Nested canonical field requires one type argument: " + mirror);
         }
         return declared.getTypeArguments().getFirst();
     }
