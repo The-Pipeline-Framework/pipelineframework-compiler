@@ -51,6 +51,7 @@ class YamlDrivenStepGenerationTest {
     void generatesDelegatedArtifactsFromYamlWithoutAnnotatedGlue() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-delegate-only.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -101,6 +102,7 @@ class YamlDrivenStepGenerationTest {
     void validatesDelegatedYamlStepContractsDeterministically() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -190,6 +192,7 @@ class YamlDrivenStepGenerationTest {
     void generatesYamlInternalStepWithoutPipelineStepAnnotation() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-yaml-only.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -235,6 +238,7 @@ class YamlDrivenStepGenerationTest {
     void generatesYamlInternalStepFromPlainUniProcessMethod() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-plain-uni.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -278,6 +282,7 @@ class YamlDrivenStepGenerationTest {
     void generatesYamlInternalStepFromPlainMonoProcessMethodWithSpringProfile() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-plain-mono.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -324,6 +329,7 @@ class YamlDrivenStepGenerationTest {
     void generatesYamlInternalStepFromPlainCompletionStageProcessMethodWithSpringProfile() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-plain-stage.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -361,6 +367,7 @@ class YamlDrivenStepGenerationTest {
     void generatesYamlDelegatedStepFromPlainMonoProcessMethodWithSpringProfile() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-delegated-plain-mono.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -663,6 +670,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepFromPlainMonoProcessMethodWithoutSpringProfile() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-plain-mono-quarkus.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -709,6 +717,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepFromPlainCompletionStageProcessMethodWithoutSpringProfile() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-plain-stage-quarkus.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -745,6 +754,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenPlainMonoProcessMethodIsRaw() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-raw-plain-mono.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -795,6 +805,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenPlainCompletionStageProcessMethodIsRaw() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-raw-plain-stage.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -833,6 +844,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenPlainCompletionStageProcessMethodHasWrongArity() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-wrong-arity-plain-stage.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -872,6 +884,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenPlainCompletionStageProcessMethodReturnsVoid() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-void-plain-stage.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -906,6 +919,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenMultiplePlainReactiveProcessMethodsExist() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-multiple-plain-reactive.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -967,6 +981,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenMultiplePlainSpringProcessMethodsExist() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-multiple-plain-spring.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1018,6 +1033,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenCompletionStageCardinalityIsNonUnary() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-stage-non-unary.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1056,6 +1072,7 @@ class YamlDrivenStepGenerationTest {
     void generatesYamlInternalStepFromPlainBlockingProcessMethodWithSpringProfile() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-plain-blocking.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1081,6 +1098,7 @@ class YamlDrivenStepGenerationTest {
     void generatesYamlInternalStepFromPlainBlockingProcessMethodWithVirtualThreads() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-plain-blocking-virtual.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1107,6 +1125,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalReactiveProcessMethodWithVirtualThreads() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-plain-uni-virtual.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1144,6 +1163,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepFromPlainBlockingProcessMethodWithoutSpringProfile() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-plain-blocking-quarkus.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1169,6 +1189,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenPlainBlockingProcessMethodIsStatic() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-static-plain-blocking.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1203,6 +1224,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenPlainBlockingProcessMethodIsPrivate() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-private-plain-blocking.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1237,6 +1259,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenPlainBlockingProcessMethodHasWrongArity() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-wrong-arity-plain-blocking.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1271,6 +1294,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenPlainBlockingProcessMethodReturnsVoid() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-void-plain-blocking.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1304,6 +1328,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenMultiplePlainBlockingProcessMethodsExist() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-multiple-plain-blocking.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1350,6 +1375,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenPlainUniProcessMethodIsStatic() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-static-plain-uni.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1396,6 +1422,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenServiceClassIsMissing() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-missing-internal.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1420,6 +1447,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenServiceDoesNotImplementSupportedContract() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-bad-internal-shape.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1449,6 +1477,7 @@ class YamlDrivenStepGenerationTest {
     void generatesInternalStepFromYamlOwnedTypesAndMappers() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-yaml-owned.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1545,6 +1574,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenCardinalityConflictsWithReactiveInterface() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-bad-cardinality.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1594,6 +1624,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenMapperDomainTypeDoesNotMatchYamlType() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-bad-mapper.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1675,6 +1706,7 @@ class YamlDrivenStepGenerationTest {
     void failsYamlInternalStepWhenYamlTypesConflictWithServiceContract() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-bad-type.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1729,6 +1761,7 @@ class YamlDrivenStepGenerationTest {
     void warnsWhenYamlOverridesDeprecatedPipelineStepMetadata() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-internal-annotation-secondary.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1778,6 +1811,7 @@ class YamlDrivenStepGenerationTest {
     void doesNotGenerateArtifactsForAnnotatedServicesNotReferencedInYaml() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-referenced-only.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1837,6 +1871,7 @@ class YamlDrivenStepGenerationTest {
     void infersDelegatedExternalMapperWhenExactlyOneCandidateMatches() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-delegate-infer-mapper.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1929,6 +1964,7 @@ class YamlDrivenStepGenerationTest {
     void allowsDelegatedStepWithoutMapperWhenJacksonFallbackEnabled() throws IOException {
         Path yamlFile = tempDir.resolve("pipeline-delegate-fallback.yaml");
         Files.writeString(yamlFile, """
+            version: 1
             appName: "Test App"
             basePackage: "com.example"
             transport: "LOCAL"
@@ -1994,7 +2030,8 @@ class YamlDrivenStepGenerationTest {
         throws IOException {
         Path yamlFile = tempDir.resolve(fileName);
         Files.writeString(yamlFile,
-            "appName: \"Test App\"\n"
+            "version: 1\n"
+                + "appName: \"Test App\"\n"
                 + "basePackage: \"com.example\"\n"
                 + "transport: \"LOCAL\"\n"
                 + "steps:\n"
