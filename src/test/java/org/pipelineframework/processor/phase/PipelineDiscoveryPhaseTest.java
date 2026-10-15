@@ -270,7 +270,7 @@ class PipelineDiscoveryPhaseTest {
             .thenReturn(java.util.Optional.of(pipelineConfig));
         when(configLoader.loadAspects(eq(pipelineConfig), any(PipelineCompilerDiagnostics.class)))
             .thenReturn(java.util.List.of());
-        when(configLoader.loadTemplateConfig(eq(pipelineConfig), any(PipelineCompilerDiagnostics.class)))
+        when(configLoader.loadTemplateConfig(eq(pipelineConfig), any(), any(), any(PipelineCompilerDiagnostics.class)))
             .thenReturn(null);
         when(configLoader.loadStepConfig(
             eq(pipelineConfig),
@@ -298,7 +298,7 @@ class PipelineDiscoveryPhaseTest {
         verify(configLoader, times(1))
             .resolvePipelineConfigPath(eq(Map.of()), eq(moduleDir), any(PipelineCompilerDiagnostics.class));
         verify(configLoader, times(1)).loadAspects(eq(pipelineConfig), any(PipelineCompilerDiagnostics.class));
-        verify(configLoader, times(1)).loadTemplateConfig(eq(pipelineConfig), any(PipelineCompilerDiagnostics.class));
+        verify(configLoader, times(1)).loadTemplateConfig(eq(pipelineConfig), any(), any(), any(PipelineCompilerDiagnostics.class));
         verify(configLoader, times(1)).loadStepConfig(
             eq(pipelineConfig),
             any(Function.class),
@@ -337,7 +337,7 @@ class PipelineDiscoveryPhaseTest {
             .thenReturn(java.util.Optional.of(pipelineConfig));
         when(configLoader.loadAspects(eq(pipelineConfig), any(PipelineCompilerDiagnostics.class)))
             .thenReturn(java.util.List.of());
-        when(configLoader.loadTemplateConfig(eq(pipelineConfig), any(PipelineCompilerDiagnostics.class)))
+        when(configLoader.loadTemplateConfig(eq(pipelineConfig), any(), any(), any(PipelineCompilerDiagnostics.class)))
             .thenReturn(null);
         when(configLoader.loadStepConfig(
             eq(pipelineConfig),

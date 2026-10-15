@@ -55,7 +55,8 @@ final class CheckpointBoundaryValidator {
         if (!hasInputSubscription && !hasObjectInput && !hasOutputCheckpoint && !hasObjectOutput) {
             return;
         }
-        if (templateConfig.platform() != null && templateConfig.platform().name().equals("FUNCTION")) {
+        if ((hasInputSubscription || hasOutputCheckpoint)
+            && templateConfig.platform() != null && templateConfig.platform().name().equals("FUNCTION")) {
             throw new IllegalStateException("Checkpoint publication/subscription is not supported on FUNCTION pipelines");
         }
         if (steps.isEmpty()) {
