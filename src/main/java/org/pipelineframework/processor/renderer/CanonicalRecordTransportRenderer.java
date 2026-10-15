@@ -14,6 +14,8 @@ import javax.lang.model.element.RecordComponentElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
+import org.pipelineframework.config.template.PipelineFieldNullability;
+import org.pipelineframework.config.template.PipelineFieldPresence;
 import org.pipelineframework.config.template.PipelineTemplateJavaScalarTypes;
 import org.pipelineframework.config.template.PipelineTemplateTypeDefinition;
 import org.pipelineframework.config.template.PipelineTemplateTypeModel;
@@ -58,7 +60,9 @@ final class CanonicalRecordTransportRenderer {
             return;
         }
         String components = record.fields().stream()
-            .map(field -> dtoJavaType(field) + " " + field.name())
+            .map(field -> (optionalNonNullScalar(field)
+                ? "@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) "
+                : "") + dtoJavaType(field) + " " + field.name())
             .reduce((left, right) -> left + ", " + right)
             .orElse("");
         StringBuilder source = new StringBuilder(header(dtoType.packageName()))
@@ -119,8 +123,17 @@ final class CanonicalRecordTransportRenderer {
             .append(binding.javaType().canonicalName()).append(" domain) {\n")
             .append("        var builder = ").append(binding.grpcType().canonicalName()).append(".newBuilder();\n");
         for (BoundField field : record.fields()) {
-            source.append("        builder.").append(grpcSetter(field)).append('(')
+            boolean optional = optionalNonNullScalar(field.definition());
+            if (optional) {
+                source.append("        if (!domain.").append(field.definition().name())
+                    .append("().isAbsent()) {\n");
+            }
+            source.append(optional ? "            builder." : "        builder.")
+                .append(grpcSetter(field)).append('(')
                 .append(toGrpc(field, nested)).append(");\n");
+            if (optional) {
+                source.append("        }\n");
+            }
         }
         source.append("        return builder.build();\n    }\n\n")
             .append("    public ").append(binding.javaType().canonicalName()).append(" fromGrpc(")
@@ -203,17 +216,33 @@ final class CanonicalRecordTransportRenderer {
 
     private String fromRest(BoundField field, Map<String, CanonicalTransportTypeBinding> nested) {
         String value = "external." + field.definition().name() + "()";
-        return mapValue(field, value, nested, "fromExternal");
+        String mapped = mapValue(field, value, nested, "fromExternal");
+        return optionalNonNullScalar(field.definition())
+            ? value + " == null ? org.pipelineframework.type.CanonicalFieldValue.absent()"
+                + " : org.pipelineframework.type.CanonicalFieldValue.of(" + mapped + ")"
+            : mapped;
     }
 
     private String toRest(BoundField field, Map<String, CanonicalTransportTypeBinding> nested) {
         String value = "domain." + field.definition().name() + "()";
+        if (optionalNonNullScalar(field.definition())) {
+            String present = value + ".asOptional().orElseThrow()";
+            return value + ".isAbsent() ? null : " + mapValue(field, present, nested, "toExternal");
+        }
         return mapValue(field, value, nested, "toExternal");
     }
 
     private String fromGrpc(BoundField field, Map<String, CanonicalTransportTypeBinding> nested) {
         String value = "value.get" + capitalized(field.definition().name())
             + (field.definition().repeated() ? "List()" : "()");
+        if (optionalNonNullScalar(field.definition())) {
+            String mapped = field.definition().type() instanceof PipelineTemplateTypeReference.Scalar scalar
+                ? fromProtoScalar(scalar.name(), value)
+                : mapGrpcValue(field, value, nested, "fromProto");
+            return "value.has" + capitalized(field.definition().name())
+                + "() ? org.pipelineframework.type.CanonicalFieldValue.of(" + mapped
+                + ") : org.pipelineframework.type.CanonicalFieldValue.absent()";
+        }
         if (field.definition().type() instanceof PipelineTemplateTypeReference.Scalar scalar) {
             String converted = fromProtoScalar(scalar.name(), "item");
             return field.definition().repeated() && !"item".equals(converted)
@@ -225,6 +254,9 @@ final class CanonicalRecordTransportRenderer {
 
     private String toGrpc(BoundField field, Map<String, CanonicalTransportTypeBinding> nested) {
         String value = "domain." + field.definition().name() + "()";
+        if (optionalNonNullScalar(field.definition())) {
+            value += ".asOptional().orElseThrow()";
+        }
         if (field.definition().type() instanceof PipelineTemplateTypeReference.Scalar scalar) {
             String converted = toProtoScalar(scalar.name(), "item");
             return field.definition().repeated() && !"item".equals(converted)
@@ -270,6 +302,12 @@ final class CanonicalRecordTransportRenderer {
             ? scalarTypes.typeName(scalar.name())
             : basePackage + ".dto." + field.type().name() + "Dto";
         return field.repeated() ? "java.util.List<" + type + ">" : type;
+    }
+
+    private boolean optionalNonNullScalar(PipelineTemplateTypeDefinition.Field field) {
+        return !field.repeated() && field.type() instanceof PipelineTemplateTypeReference.Scalar
+            && field.presence() == PipelineFieldPresence.OPTIONAL
+            && field.nullability() == PipelineFieldNullability.NON_NULL;
     }
 
     private java.util.Optional<PipelineTemplateTypeDefinition.RecordType> namedRecord(PipelineTemplateTypeReference reference) {
