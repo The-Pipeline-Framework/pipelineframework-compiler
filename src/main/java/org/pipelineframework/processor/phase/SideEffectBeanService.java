@@ -62,7 +62,7 @@ public class SideEffectBeanService {
             return;
         }
 
-        TypeName observedType = resolveObservedType(model, role, grpcBinding);
+        TypeName observedType = resolveObservedType(ctx, model, role, grpcBinding);
         TypeName parentType = ParameterizedTypeName.get(model.serviceClassName(), observedType);
 
         String packageName = model.servicePackage() + NamingPolicy.PIPELINE_PACKAGE_SUFFIX;
@@ -200,13 +200,24 @@ public class SideEffectBeanService {
         return constructors.get(0);
     }
 
-    private TypeName resolveObservedType(PipelineStepModel model, DeploymentRole role, GrpcBinding grpcBinding) {
+    private TypeName resolveObservedType(PipelineCompilationContext ctx, PipelineStepModel model,
+            DeploymentRole role, GrpcBinding grpcBinding) {
         TypeName observedType = model.pipelineOutputType() != null ? model.pipelineOutputType() : model.inboundDomainType();
         if (observedType == null) {
             return ClassName.OBJECT;
         }
         if (!isCachePlugin(model)) {
             return observedType;
+        }
+        if (role == DeploymentRole.REST_SERVER
+            && ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
+            && config.dialect() == PipelineTemplateDialect.V3
+            && model.outputMapping() != null) {
+            String canonicalName = model.outputMapping().canonicalTypeName()
+                .orElseGet(() -> observedType instanceof ClassName name ? name.simpleName() : "");
+            if (config.typeModel().contains(canonicalName)) {
+                return ClassName.get(config.basePackage() + ".dto", canonicalName + "Dto");
+            }
         }
         if (role == DeploymentRole.REST_SERVER) {
             return convertDomainToDtoType(observedType);

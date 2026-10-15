@@ -4,17 +4,26 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
+import java.util.Map;
+import java.util.List;
+import java.util.Optional;
 import javax.annotation.processing.ProcessingEnvironment;
+import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.util.Elements;
 
 import com.squareup.javapoet.ClassName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.pipelineframework.processor.ir.*;
+import org.pipelineframework.config.template.PipelineTemplateTypeDefinition;
+import org.pipelineframework.config.template.PipelineTemplateTypeModel;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class RestResourceRendererTest {
 
@@ -43,6 +52,41 @@ class RestResourceRendererTest {
                 org.junit.jupiter.api.Assertions.assertFalse(source.contains(".collect().asList()"));
             }
         }
+    }
+
+    @Test
+    void v3CacheResourceKeepsTransportDtoAcrossCacheBoundary() throws IOException {
+        ClassName document = ClassName.get("org.example.canonical", "Document");
+        PipelineStepModel model = new PipelineStepModel.Builder()
+            .serviceName("ObserveCacheDocumentSideEffectService")
+            .servicePackage("org.example.service")
+            .serviceClassName(ClassName.get("org.pipelineframework.plugin.cache", "CacheService"))
+            .streamingShape(StreamingShape.UNARY_UNARY)
+            .executionMode(ExecutionMode.DEFAULT)
+            .sideEffect(true)
+            .inputMapping(TypeMapping.canonical(document, "Document"))
+            .outputMapping(TypeMapping.canonical(document, "Document"))
+            .enabledTargets(Set.of(GenerationTarget.REST_RESOURCE))
+            .build();
+        PipelineTemplateTypeModel types = new PipelineTemplateTypeModel(Map.of(
+            "Document", new PipelineTemplateTypeDefinition.RecordType("Document", List.of())));
+        ProcessingEnvironment environment = mock(ProcessingEnvironment.class);
+        Elements elements = mock(Elements.class);
+        TypeElement record = mock(TypeElement.class);
+        when(environment.getElementUtils()).thenReturn(elements);
+        when(elements.getTypeElement("org.example.canonical.Document")).thenReturn(record);
+        when(record.getKind()).thenReturn(ElementKind.RECORD);
+        when(record.getRecordComponents()).thenReturn(List.of());
+        GenerationContext context = Jsr269GenerationContext.create(environment, tempDir,
+            DeploymentRole.REST_SERVER, Set.of(), null, null, PipelineTransport.REST, "org.example", null,
+            false, Optional.of(types));
+
+        new RestResourceRenderer().render(new RestBinding(model, "/document/cache"), context);
+
+        String source = Files.readString(tempDir.resolve(
+            "org/example/service/pipeline/ObserveCacheDocumentSideEffectResource.java"));
+        assertTrue(source.contains("RestReactiveServiceAdapter<DocumentDto, DocumentDto, DocumentDto, DocumentDto>"));
+        assertTrue(source.contains("return domainService.process(inputDto);"));
     }
 
     @Test

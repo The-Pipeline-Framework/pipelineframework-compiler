@@ -30,6 +30,7 @@ import org.pipelineframework.processor.ir.ExecutionMode;
 import org.pipelineframework.processor.ir.GenerationTarget;
 import org.pipelineframework.processor.ir.GrpcBinding;
 import org.pipelineframework.processor.ir.PipelineStepModel;
+import org.pipelineframework.processor.ir.RestBinding;
 import org.pipelineframework.processor.ir.StreamingShape;
 import org.pipelineframework.processor.ir.TypeMapping;
 import org.pipelineframework.processor.renderer.ClientStepRenderer;
@@ -293,6 +294,50 @@ class StepArtifactGenerationServiceTest {
         String source = Files.readString(generatedBean);
         assertTrue(source.contains("CanonicalPaymentPersistenceMapper representationMapper"));
         assertTrue(source.contains("persistRepresentation(representationMapper.toExternal(item)).replaceWith(item)"));
+    }
+
+    @Test
+    void restRendererReceivesDiscoveredV3TypesWithoutExplicitConfigOption() throws Exception {
+        Path configPath = tempDir.resolve("pipeline.yaml");
+        Files.writeString(configPath, """
+            version: 3
+            appName: REST type context
+            basePackage: com.example
+            transport: REST
+            types:
+              ChargeRequest:
+                fields: [[id, string]]
+              ChargeResult:
+                fields: [[id, string]]
+            steps:
+              - name: charge
+                cardinality: ONE_TO_ONE
+                input: ChargeRequest
+                output: ChargeResult
+            """);
+        PipelineCompilationContext ctx = new PipelineCompilationContext(
+            processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        ctx.setPipelineTemplateConfig(new PipelineTemplateConfigLoader().load(configPath));
+        ctx.setGeneratedSourcesRoot(tempDir.resolve("generated-sources"));
+        ctx.setTransportMode(org.pipelineframework.processor.ir.PipelineTransport.REST);
+        PipelineStepModel model = buildChargeCardModel().toBuilder()
+            .enabledTargets(Set.of(GenerationTarget.REST_CLIENT_STEP))
+            .build();
+        RestBinding binding = new RestBinding(model, "/charge");
+        RestClientStepRenderer restClient = mock(RestClientStepRenderer.class);
+
+        service.generateArtifactsForModel(ctx, model, grpcBinding(), binding,
+            mock(org.pipelineframework.processor.ir.LocalBinding.class), new java.util.HashSet<>(),
+            Set.of(), DescriptorProtos.FileDescriptorSet.getDefaultInstance(),
+            ClassName.get("com.example", "CacheKeyGenerator"),
+            new RoleMetadataGenerator(processingEnv), mock(GrpcServiceAdapterRenderer.class),
+            mock(ClientStepRenderer.class), mock(LocalClientStepRenderer.class), restClient,
+            mock(RestResourceRenderer.class), mock(RestFunctionHandlerRenderer.class),
+            mock(BlockingReactiveBridgeRenderer.class), mock(RemoteOperatorAdapterRenderer.class));
+
+        ArgumentCaptor<GenerationContext> generatedContext = ArgumentCaptor.forClass(GenerationContext.class);
+        verify(restClient).render(eq(binding), generatedContext.capture());
+        assertTrue(generatedContext.getValue().canonicalTypeModel().orElseThrow().contains("ChargeRequest"));
     }
 
     private void invokeGenerateArtifacts(PipelineCompilationContext ctx, PipelineStepModel model) throws Exception {
