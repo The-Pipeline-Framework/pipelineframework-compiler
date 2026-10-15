@@ -117,7 +117,7 @@ class DiscoveryConfigLoaderTest {
     @Test
     void loadTemplateConfig_withNullConfigPath_throwsIllegalArgumentException() {
         assertThrows(IllegalArgumentException.class, () -> {
-            loader.loadTemplateConfig(null, diagnostics);
+            loader.loadTemplateConfig(null, System::getProperty, System::getenv, diagnostics);
         });
     }
 
@@ -142,7 +142,7 @@ class DiscoveryConfigLoaderTest {
         Path badYaml = tempDir.resolve("pipeline.yaml");
         Files.writeString(badYaml, "this is: [invalid: yaml: content: {{{");
 
-        assertThrows(Exception.class, () -> loader.loadTemplateConfig(badYaml, diagnostics));
+        assertThrows(Exception.class, () -> loader.loadTemplateConfig(badYaml, System::getProperty, System::getenv, diagnostics));
 
         verify(diagnostics).error(contains("Failed to load pipeline template config from"));
     }
@@ -168,7 +168,7 @@ class DiscoveryConfigLoaderTest {
                 output: OrderResponse
             """);
 
-        var config = loader.loadTemplateConfig(validYaml, diagnostics);
+        var config = loader.loadTemplateConfig(validYaml, System::getProperty, System::getenv, diagnostics);
 
         assertNotNull(config);
         assertEquals("TestApp", config.appName());
@@ -204,7 +204,7 @@ class DiscoveryConfigLoaderTest {
                 output: PaymentOutcome
             """);
 
-        var config = loader.loadTemplateConfig(yaml, (severity, message) -> { });
+        var config = loader.loadTemplateConfig(yaml, System::getProperty, System::getenv, (severity, message) -> { });
 
         assertNotNull(config);
         assertEquals(3, config.version());
@@ -236,14 +236,14 @@ class DiscoveryConfigLoaderTest {
                     urlConfigKey: tpf.remote-operators.charge-card.url
             """);
 
-        var config = loader.loadTemplateConfig(yaml, diagnostics);
+        var config = loader.loadTemplateConfig(yaml, System::getProperty, System::getenv, diagnostics);
 
         assertEquals(3, config.version());
         assertTrue(config.steps().getFirst().execution().isRemote());
     }
 
     private void assertTemplateConfigLoadFails(Path yamlPath, PipelineCompilerDiagnostics msg) {
-        Exception caught = assertThrows(Exception.class, () -> loader.loadTemplateConfig(yamlPath, msg));
+        Exception caught = assertThrows(Exception.class, () -> loader.loadTemplateConfig(yamlPath, System::getProperty, System::getenv, msg));
         assertNotNull(caught, "An exception must be thrown instead of returning null");
     }
 }

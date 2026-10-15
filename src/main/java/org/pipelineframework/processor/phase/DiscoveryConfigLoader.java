@@ -89,16 +89,21 @@ class DiscoveryConfigLoader {
      * Load the pipeline template configuration from the config file.
      *
      * @param configPath the pipeline config file path
-     * @param messager the messager for error reporting, may be null
+     * @param propertyLookup annotation processor property lookup
+     * @param envLookup environment variable lookup
+     * @param diagnostics compiler diagnostic sink
      * @return the loaded template config
      */
-    PipelineTemplateConfig loadTemplateConfig(Path configPath, PipelineCompilerDiagnostics diagnostics) {
+    PipelineTemplateConfig loadTemplateConfig(Path configPath,
+            Function<String, String> propertyLookup,
+            Function<String, String> envLookup,
+            PipelineCompilerDiagnostics diagnostics) {
         if (configPath == null) {
             throw new IllegalArgumentException("configPath must not be null");
         }
         PipelineTemplateConfigLoader loader = new PipelineTemplateConfigLoader(
-            System::getProperty,
-            System::getenv,
+            propertyLookup,
+            envLookup,
             diagnostics::warning);
         try {
             return loader.load(configPath);

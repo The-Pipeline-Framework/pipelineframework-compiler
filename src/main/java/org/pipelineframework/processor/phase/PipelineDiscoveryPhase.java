@@ -177,7 +177,7 @@ public class PipelineDiscoveryPhase implements PipelineCompilationPhase {
                 List<PipelineAspectModel> aspects = loadPipelineAspects(effectiveConfigPath, diagnostics);
                 ctx.setAspectModels(aspects);
 
-                templateConfig = loadPipelineTemplateConfig(effectiveConfigPath, diagnostics);
+                templateConfig = loadPipelineTemplateConfig(effectiveConfigPath, options, diagnostics);
                 ctx.setPipelineTemplateConfig(templateConfig);
 
                 ParsedPipelineDefinitionCatalog parsedDefinitions = parseStepDefinitions(
@@ -355,16 +355,19 @@ public class PipelineDiscoveryPhase implements PipelineCompilationPhase {
      * Loads the pipeline template configuration from the given config path.
      *
      * @param configPath an Optional containing the resolved pipeline configuration path, or empty if none was found
-     * @param messager used to report diagnostics; may be null
+     * @param options annotation processor options used for template overrides
+     * @param diagnostics compiler diagnostic sink
      * @return the loaded PipelineTemplateConfig, or `null` if no configuration path was provided or if loading fails; when loading fails a diagnostic is reported via `messager` if available
      */
     private PipelineTemplateConfig loadPipelineTemplateConfig(
             Optional<Path> configPath,
+            Map<String, String> options,
             PipelineCompilerDiagnostics diagnostics) {
         if (configPath.isEmpty()) {
             return null;
         }
-        return discoveryConfigLoader.loadTemplateConfig(configPath.get(), diagnostics);
+        return discoveryConfigLoader.loadTemplateConfig(
+            configPath.get(), options::get, System::getenv, diagnostics);
     }
 
     /**
