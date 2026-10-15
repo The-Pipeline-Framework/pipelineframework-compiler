@@ -20,8 +20,15 @@ public record AwaitStepTypeBinding(
     TypeName finalOutputType,
     String finalOutputCanonicalType,
     Optional<String> completionPayloadCanonicalType,
-    Optional<TypeName> completionPayloadType
+    Optional<TypeName> completionPayloadType,
+    boolean acknowledgementAwareCompletion
 ) {
+    public AwaitStepTypeBinding(TypeName operationOutputType, TypeName finalOutputType,
+        String finalOutputCanonicalType, Optional<String> completionPayloadCanonicalType,
+        Optional<TypeName> completionPayloadType) {
+        this(operationOutputType, finalOutputType, finalOutputCanonicalType,
+            completionPayloadCanonicalType, completionPayloadType, false);
+    }
     public AwaitStepTypeBinding {
         Objects.requireNonNull(operationOutputType, "operationOutputType");
         Objects.requireNonNull(finalOutputType, "finalOutputType");

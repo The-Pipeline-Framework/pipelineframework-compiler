@@ -571,6 +571,10 @@ public class PipelineContractMetadataGenerator {
         value.put("correlationStrategy", completion.correlationStrategy());
         completion.callback().ifPresent(callback -> {
             value.put("mode", completion.mode().name());
+            if (completion.acknowledgementAwareCompletion()) {
+                value.put("commandCompletionMode", "ACKNOWLEDGEMENT_REQUIRED");
+                value.put("commandAcknowledgementTypeId", typeId(model.outboundDomainType()));
+            }
             var operation = callback.operation();
             value.put("callback", Map.of("name", callback.descriptor().id(), "binding", operation.binding().value(),
                 "provider", operation.operation().providerId().value(), "providerVersion", operation.providerMajorVersion(),

@@ -31,6 +31,16 @@ class CommandCallbackTypeBindingTest {
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
     void projectorUsesInferredCanonicalInputInsteadOfAcknowledgement(boolean inputProjector) throws Exception {
+        assertProjectorBinding(inputProjector, false);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void acknowledgementAwareProjectorBindsCommandOutputAsSecondType(boolean acceptedAcknowledgement) throws Exception {
+        assertProjectorBinding(acceptedAcknowledgement, true);
+    }
+
+    private void assertProjectorBinding(boolean valid, boolean acknowledgementAware) throws Exception {
         var definitions = new java.util.LinkedHashMap<String, PipelineTemplateTypeDefinition>();
         var sources = new java.util.ArrayList<JavaFileObject>();
         for (String name : List.of("Input", "Accepted", "Completion", "Result")) {
@@ -53,10 +63,16 @@ class CommandCallbackTypeBindingTest {
                 }
             }
             """));
-        String contextType = inputProjector ? "Input" : "Accepted";
-        sources.add(source("Projector", "public class Projector implements org.pipelineframework.awaitable.AwaitCompletionProjector<"
-            + contextType + ", Completion, Result> { public Result project(" + contextType
-            + " input, Completion completion, org.pipelineframework.awaitable.AwaitCompletionMetadata metadata) { return new Result(); } }"));
+        String contextType = acknowledgementAware ? "Input" : valid ? "Input" : "Accepted";
+        String acknowledgementType = valid ? "Accepted" : "Input";
+        sources.add(source("Projector", acknowledgementAware
+            ? "public class Projector implements org.pipelineframework.awaitable.CommandCompletionProjector<"
+                + contextType + ", " + acknowledgementType + ", Completion, Result> { public Result project("
+                + contextType + " input, " + acknowledgementType
+                + " acknowledgement, Completion completion, org.pipelineframework.awaitable.AwaitCompletionMetadata metadata) { return new Result(); } }"
+            : "public class Projector implements org.pipelineframework.awaitable.AwaitCompletionProjector<"
+                + contextType + ", Completion, Result> { public Result project(" + contextType
+                + " input, Completion completion, org.pipelineframework.awaitable.AwaitCompletionMetadata metadata) { return new Result(); } }"));
 
         var authored = mock(PipelineTemplateStep.class);
         when(authored.name()).thenReturn("StartJob");
@@ -76,6 +92,7 @@ class CommandCallbackTypeBindingTest {
                 ClassName.get("com.example.domain", "Projector"))))));
         var invoked = new AtomicBoolean();
         var bound = new AtomicBoolean();
+        var acknowledged = new AtomicBoolean();
         var processor = new AbstractProcessor() {
             @Override public Set<String> getSupportedAnnotationTypes() { return Set.of("*"); }
             @Override public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }
@@ -83,7 +100,9 @@ class CommandCallbackTypeBindingTest {
                 if (!round.processingOver() && invoked.compareAndSet(false, true)) {
                     var context = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(round));
                     context.setPipelineTemplateConfig(config);
-                    bound.set(new AwaitStepTypeBindingResolver().resolve(context, step).isPresent());
+                    var binding = new AwaitStepTypeBindingResolver().resolve(context, step);
+                    bound.set(binding.isPresent());
+                    acknowledged.set(binding.map(AwaitStepTypeBinding::acknowledgementAwareCompletion).orElse(false));
                 }
                 return false;
             }
@@ -95,9 +114,10 @@ class CommandCallbackTypeBindingTest {
                 List.of("-proc:only", "-classpath", System.getProperty("java.class.path"), "-d", output.toString()),
                 List.of(), sources);
             task.setProcessors(List.of(processor));
-            assertEquals(inputProjector, task.call(), diagnostics.getDiagnostics().toString());
+            assertEquals(valid, task.call(), diagnostics.getDiagnostics().toString());
             assertTrue(invoked.get());
-            assertEquals(inputProjector, bound.get());
+            assertEquals(valid, bound.get());
+            assertEquals(valid && acknowledgementAware, acknowledged.get());
         }
     }
 
