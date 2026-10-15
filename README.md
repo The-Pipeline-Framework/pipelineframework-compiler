@@ -37,6 +37,23 @@ Set `-Dtpf.version=<version>` only when deliberately testing another published T
 `central-publishing` profile only to sign and deploy the canonical artifact. For the component map, see
 [TPF Components and Repositories](https://pipelineframework.org/architecture/components-and-repositories).
 
+## Canonical union REST representation
+
+For a version 3 canonical union whose variants carry named record payloads, REST generation emits a typed
+`<Union>Dto` envelope. Its `discriminator` is the authored variant key, and exactly one JSON property named for
+that variant contains its record DTO; every other variant property is null. The envelope rejects missing, unknown,
+or mismatched discriminators and missing or multiple payloads during JSON deserialization. The generated REST mapper
+converts through the corresponding canonical sealed union wrapper and the existing record REST mappers, including
+nested records. No Java class name or polymorphic type metadata is sent on the wire.
+
+The Java union variant must be a nested record with one `value` component whose type is the named record payload;
+the compiler reads that component rather than inferring a Java package. A variant key of `discriminator` is
+reserved because it would collide with the envelope tag. Other canonical union payload shapes require a separate
+REST contract and are rejected with a compiler diagnostic. Protobuf/GRPC union generation remains independent.
+The Await completion integration covered here is the no-projector REST route: its final union DTO is emitted from
+the canonical final output and carried as the wire value. An explicit union completion payload with a projector
+needs separate contract and application-level verification.
+
 ## System-test candidates
 
 `TPF Candidate Build` runs at the exact pull-request or `main` SHA with read-only permissions and no secrets. It

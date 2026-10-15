@@ -30,6 +30,10 @@ final class CanonicalTransportBindingResolver {
     }
 
     Optional<CanonicalTransportTypeBinding> resolve(TypeMapping mapping) {
+        return resolve(mapping, PipelineTransport.GRPC);
+    }
+
+    Optional<CanonicalTransportTypeBinding> resolve(TypeMapping mapping, PipelineTransport transport) {
         if (mapping == null || !(mapping.domainType() instanceof ClassName javaType)) {
             return Optional.empty();
         }
@@ -44,7 +48,9 @@ final class CanonicalTransportBindingResolver {
             return Optional.empty();
         }
         PipelineTemplateTypeDefinition definition = model.definition(canonicalName).orElse(null);
-        if (!(definition instanceof PipelineTemplateTypeDefinition.RecordType record)) {
+        if (!(definition instanceof PipelineTemplateTypeDefinition.RecordType)
+            && !(transport == PipelineTransport.REST
+                && definition instanceof PipelineTemplateTypeDefinition.UnionType)) {
             return Optional.empty();
         }
         String basePackage = Optional.ofNullable(context.pipelineBasePackage())
@@ -58,7 +64,7 @@ final class CanonicalTransportBindingResolver {
         String mapperBase = canonicalName + "_" + suffix;
         return Optional.of(new CanonicalTransportTypeBinding(
             canonicalName,
-            record,
+            definition,
             javaType,
             ClassName.get(basePackage + ".dto", canonicalName + "Dto"),
             ClassName.get(basePackage + ".transport.generated", mapperBase + "RestMapper"),
@@ -84,8 +90,8 @@ final class CanonicalTransportBindingResolver {
         TypeMapping outputMapping,
         PipelineTransport transport
     ) throws IOException {
-        Optional<CanonicalTransportTypeBinding> input = resolve(inputMapping);
-        Optional<CanonicalTransportTypeBinding> output = resolve(outputMapping);
+        Optional<CanonicalTransportTypeBinding> input = resolve(inputMapping, transport);
+        Optional<CanonicalTransportTypeBinding> output = resolve(outputMapping, transport);
         CanonicalTransportBindingPair resolved = new CanonicalTransportBindingPair(input, output);
         if (!resolved.any()) {
             return resolved;
@@ -93,7 +99,11 @@ final class CanonicalTransportBindingResolver {
         CanonicalRecordTransportRenderer renderer = new CanonicalRecordTransportRenderer(context, this);
         for (CanonicalTransportTypeBinding binding : java.util.stream.Stream.concat(input.stream(), output.stream()).toList()) {
             if (transport == PipelineTransport.REST) {
-                renderer.ensureRest(binding);
+                if (binding.definition() instanceof PipelineTemplateTypeDefinition.UnionType union) {
+                    new CanonicalUnionRestRenderer(context, this).ensureRest(binding, union);
+                } else {
+                    renderer.ensureRest(binding);
+                }
             } else {
                 renderer.ensureGrpc(binding);
             }
