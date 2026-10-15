@@ -45,6 +45,29 @@ class StepDefinitionParserTest {
     Path tempDir;
 
     @Test
+    void omittedVersionUsesV3StepGrammar() throws IOException {
+        List<StepDefinition> steps = parse("""
+            appName: Test
+            basePackage: com.example
+            types:
+              Value:
+                fields: [[id, string]]
+            steps:
+              - name: Transform value
+                service: com.example.TransformService
+                cardinality: ONE_TO_ONE
+                input: Value
+                output: Value
+                java:
+                  input: com.example.Value
+                  output: com.example.Value
+            """);
+
+        assertEquals(1, steps.size());
+        assertEquals(ClassName.get("com.example", "Value"), steps.getFirst().inputType());
+    }
+
+    @Test
     void inferredServiceUsesInternalExecutionShape() throws IOException {
         List<StepDefinition> steps = parse("""
             version: 2
@@ -211,6 +234,7 @@ class StepDefinitionParserTest {
     @Test
     void rejectsStepWhenServiceAndOperatorAreBothProvided() throws IOException {
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -226,6 +250,7 @@ class StepDefinitionParserTest {
     void rejectsOperatorMappersForInternalStep() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -243,6 +268,7 @@ class StepDefinitionParserTest {
     void parsesYamlOwnedTypesAndMappersForInternalStep() throws IOException {
         Path file = tempDir.resolve("pipeline.yaml");
         Files.writeString(file, """
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -276,6 +302,7 @@ class StepDefinitionParserTest {
     void parsesRunOnVirtualThreadsForInternalStep() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -296,6 +323,7 @@ class StepDefinitionParserTest {
     void rejectsNonBooleanRunOnVirtualThreads() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -313,6 +341,7 @@ class StepDefinitionParserTest {
     void rejectsRunOnVirtualThreadsForDelegatedStep() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -332,6 +361,7 @@ class StepDefinitionParserTest {
     void preservesClassMethodSegmentForDelegatedOperatorStep() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -353,6 +383,7 @@ class StepDefinitionParserTest {
     void rejectsMalformedClassMethodOperatorReference() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -368,6 +399,7 @@ class StepDefinitionParserTest {
 
         diagnostics.clear();
         steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -386,6 +418,7 @@ class StepDefinitionParserTest {
     void parsesExplicitFalseRunOnVirtualThreadsForInternalStep() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -407,6 +440,7 @@ class StepDefinitionParserTest {
     void internalStepWithoutRunOnVirtualThreadsDefaultsToFalse() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -425,6 +459,7 @@ class StepDefinitionParserTest {
     void rejectsRunOnVirtualThreadsAsIntegerValue() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -442,6 +477,7 @@ class StepDefinitionParserTest {
     void skipsOnlyInvalidStepWhenMultipleStepsAreDeclared() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -648,6 +684,7 @@ class StepDefinitionParserTest {
     void reportsIdempotencyAsUnsupportedForNonAwaitSteps() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2354,6 +2391,7 @@ class StepDefinitionParserTest {
     @Test
     void rejectsDelegatedStepWhenOnlyOneTypeIsProvided() throws IOException {
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2368,6 +2406,7 @@ class StepDefinitionParserTest {
     @Test
     void acceptsDelegatedStepWithOptionalOperatorMapper() throws IOException {
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2391,6 +2430,7 @@ class StepDefinitionParserTest {
     void rejectsInternalMapperFieldsForDelegatedStep() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2409,6 +2449,7 @@ class StepDefinitionParserTest {
     @Test
     void parsesDelegatedMapperFallbackJackson() throws IOException {
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2428,6 +2469,7 @@ class StepDefinitionParserTest {
     @Test
     void acceptsLegacyDelegateAndExternalMapperAliases() throws IOException {
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2448,6 +2490,7 @@ class StepDefinitionParserTest {
     @Test
     void acceptsDelegatedStepWithoutInputOutputForTypeInference() throws IOException {
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2465,6 +2508,7 @@ class StepDefinitionParserTest {
     @Test
     void rejectsStepWhenOperatorAndDelegateAliasesAreBothProvided() throws IOException {
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2479,6 +2523,7 @@ class StepDefinitionParserTest {
     @Test
     void rejectsInvalidClassNames() throws IOException {
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2488,6 +2533,7 @@ class StepDefinitionParserTest {
         assertTrue(steps.isEmpty());
 
         List<StepDefinition> steps2 = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2507,6 +2553,7 @@ class StepDefinitionParserTest {
     @Test
     void returnsEmptyWhenYamlHasNoStepsKey() throws IOException {
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             transport: "GRPC"
@@ -2518,6 +2565,7 @@ class StepDefinitionParserTest {
     void reportsWarningForUnsupportedStepKeys() throws IOException {
         Path file = tempDir.resolve("pipeline.yaml");
         Files.writeString(file, """
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2542,6 +2590,7 @@ class StepDefinitionParserTest {
     void ignoresMapperFallbackForInternalStep() throws IOException {
         Path file = tempDir.resolve("pipeline.yaml");
         Files.writeString(file, """
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2567,6 +2616,7 @@ class StepDefinitionParserTest {
     @Test
     void defaultsMapperFallbackToNoneWhenNotSpecified() throws IOException {
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2584,6 +2634,7 @@ class StepDefinitionParserTest {
     void rejectsInvalidMapperFallbackValue() throws IOException {
         Path file = tempDir.resolve("pipeline.yaml");
         Files.writeString(file, """
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2609,6 +2660,7 @@ class StepDefinitionParserTest {
     @Test
     void parsesMapperFallbackCaseInsensitive() throws IOException {
         List<StepDefinition> stepsLower = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2623,6 +2675,7 @@ class StepDefinitionParserTest {
         assertEquals(MapperFallbackMode.JACKSON, stepsLower.getFirst().mapperFallback());
 
         List<StepDefinition> stepsMixed = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2640,6 +2693,7 @@ class StepDefinitionParserTest {
     @Test
     void parsesMapperFallbackNone() throws IOException {
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2657,6 +2711,7 @@ class StepDefinitionParserTest {
     @Test
     void allowsBothOperatorMapperAndMapperFallback() throws IOException {
         List<StepDefinition> steps = parse("""
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:
@@ -2830,6 +2885,7 @@ class StepDefinitionParserTest {
         List<String> diagnostics = new ArrayList<>();
         Path file = tempDir.resolve("pipeline.yaml");
         Files.writeString(file, """
+            version: 1
             appName: "Test"
             basePackage: "com.example"
             steps:

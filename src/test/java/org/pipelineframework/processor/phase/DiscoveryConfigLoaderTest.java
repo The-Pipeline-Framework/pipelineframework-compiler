@@ -151,15 +151,21 @@ class DiscoveryConfigLoaderTest {
     void loadTemplateConfig_successfullyLoadsValidConfig() throws Exception {
         Path validYaml = tempDir.resolve("pipeline.yaml");
         Files.writeString(validYaml, """
+            version: 3
             appName: "TestApp"
             basePackage: "com.example"
             transport: "GRPC"
             platform: "COMPUTE"
+            types:
+              OrderRequest:
+                fields: [[id, uuid]]
+              OrderResponse:
+                fields: [[id, uuid]]
             steps:
               - name: "Process Order"
                 cardinality: "ONE_TO_ONE"
-                inputTypeName: "com.example.OrderRequest"
-                outputTypeName: "com.example.OrderResponse"
+                input: OrderRequest
+                output: OrderResponse
             """);
 
         var config = loader.loadTemplateConfig(validYaml, diagnostics);
@@ -167,6 +173,7 @@ class DiscoveryConfigLoaderTest {
         assertNotNull(config);
         assertEquals("TestApp", config.appName());
         assertEquals("com.example", config.basePackage());
+        assertEquals(3, config.version());
     }
 
     @Test

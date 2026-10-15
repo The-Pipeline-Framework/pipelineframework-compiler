@@ -2610,7 +2610,7 @@ public class StepDefinitionParser {
     private int parseVersion(Map<String, Object> templateData) {
         Object rawVersion = templateData.get("version");
         if (rawVersion == null) {
-            return 1;
+            return 3;
         }
         if (rawVersion instanceof Number number) {
             double value = number.doubleValue();

@@ -174,8 +174,8 @@ class CanonicalOptionalPayloadReferenceTransportTest {
             var json = new ObjectMapper().registerModule(new Jdk8Module());
             for (Boolean retryValue : new Boolean[] { null, Boolean.TRUE, Boolean.FALSE }) {
                 PayloadReference value = retryValue == null ? null : reference;
-                Object external = dto.getConstructor(String.class, PayloadReference.class, Boolean.class)
-                    .newInstance("file", value, retryValue);
+                Object external = dto.getConstructor(String.class, Optional.class, Optional.class)
+                    .newInstance("file", Optional.ofNullable(value), Optional.ofNullable(retryValue));
                 Object restored = rest.getClass().getMethod("fromExternal", dto).invoke(rest, external);
                 CanonicalFieldValue<?> fieldValue = (CanonicalFieldValue<?>) domain.getMethod("contentRef").invoke(restored);
                 assertEquals(value == null, fieldValue.isAbsent());
@@ -184,14 +184,14 @@ class CanonicalOptionalPayloadReferenceTransportTest {
                 assertEquals(value == null, retryField.isAbsent());
                 assertEquals(Optional.ofNullable(retryValue), retryField.asOptional());
                 Object returned = rest.getClass().getMethod("toExternal", domain).invoke(rest, restored);
-                assertEquals(value, dto.getMethod("contentRef").invoke(returned));
-                assertEquals(retryValue, dto.getMethod("retry").invoke(returned));
+                assertEquals(Optional.ofNullable(value), dto.getMethod("contentRef").invoke(returned));
+                assertEquals(Optional.ofNullable(retryValue), dto.getMethod("retry").invoke(returned));
                 String encodedJson = json.writeValueAsString(returned);
                 assertEquals(value != null, encodedJson.contains("\"contentRef\""));
                 assertEquals(value != null, encodedJson.contains("\"retry\""));
                 Object decodedJson = json.readValue(encodedJson, dto);
-                assertEquals(value, dto.getMethod("contentRef").invoke(decodedJson));
-                assertEquals(retryValue, dto.getMethod("retry").invoke(decodedJson));
+                assertEquals(Optional.ofNullable(value), dto.getMethod("contentRef").invoke(decodedJson));
+                assertEquals(Optional.ofNullable(retryValue), dto.getMethod("retry").invoke(decodedJson));
 
                 Object encoded = grpc.getMethod("toProto", domain).invoke(null, restored);
                 assertEquals(value != null, proto.getMethod("hasContentRef").invoke(encoded));

@@ -288,33 +288,6 @@ class PipelineProtoGeneratorTest {
     }
 
     @Test
-    void rejectsDistinctDeferredOperationOutputForLegacyProtoGeneration() throws Exception {
-        Path configPath = tempDir.resolve("deferred-pipeline-v1.yaml");
-        Files.writeString(configPath, """
-            appName: Deferred
-            basePackage: com.example.deferred
-            transport: GRPC
-            steps:
-              - name: Create pending request
-                cardinality: ONE_TO_ONE
-                inputTypeName: Request
-                inputFields: [[1, id, string]]
-                outputTypeName: Decision
-                outputFields: [[2, status, string]]
-                await:
-                  operationOutput: { type: Pending }
-                  timeout: PT5M
-                  correlation: { strategy: interactionId }
-                  transport: { type: interaction-api }
-            """);
-
-        IllegalStateException failure = assertThrows(IllegalStateException.class,
-            () -> new PipelineProtoGenerator().generate(tempDir, configPath, tempDir.resolve("generated-v1")));
-
-        assertTrue(failure.getMessage().contains("version 1 has no separate operation-output field schema"));
-    }
-
-    @Test
     void generatesV3JavaNominalRecordsAndAdaptersInDeclaredFieldOrder() throws Exception {
         Path configPath = tempDir.resolve("pipeline.yaml");
         Path outputDir = tempDir.resolve("generated-v3-java");
@@ -1776,13 +1749,19 @@ class PipelineProtoGeneratorTest {
     @Test
     void throwsExceptionWhenBasePackageMissing() {
         String yaml = """
+            version: 3
             appName: "No Package Test"
             transport: "GRPC"
+            types:
+              ItemInput:
+                fields: [[id, uuid]]
+              ItemOutput:
+                fields: [[id, uuid]]
             steps:
               - name: "Process Item"
                 cardinality: "ONE_TO_ONE"
-                inputTypeName: "ItemInput"
-                outputTypeName: "ItemOutput"
+                input: ItemInput
+                output: ItemOutput
             """;
         Path configPath = tempDir.resolve("no-package-config.yaml");
         assertDoesNotThrow(() -> Files.writeString(configPath, yaml));
@@ -1797,9 +1776,13 @@ class PipelineProtoGeneratorTest {
     @Test
     void handlesEmptyStepsList() throws Exception {
         String yaml = """
+            version: 3
             appName: "Empty Steps Test"
             basePackage: "com.example.empty"
             transport: "GRPC"
+            types:
+              EmptyRecord:
+                fields: [[id, uuid]]
             steps: []
             """;
         Path configPath = tempDir.resolve("empty-steps-config.yaml");
@@ -1810,11 +1793,17 @@ class PipelineProtoGeneratorTest {
         Files.writeString(outputDir.resolve("EXTERNAL-STEP-HOSTS.md"), "stale readme");
 
         PipelineProtoGenerator generator = new PipelineProtoGenerator();
-        generator.generate(tempDir, configPath, outputDir);
+        System.setProperty("pipeline.idl.bootstrap", "true");
+        try {
+            generator.generate(tempDir, configPath, outputDir);
+        } finally {
+            System.clearProperty("pipeline.idl.bootstrap");
+        }
 
         try (var paths = Files.list(outputDir)) {
-            assertFalse(paths.findAny().isPresent());
+            assertEquals(List.of("pipeline-types.proto"), paths.map(path -> path.getFileName().toString()).toList());
         }
+        assertTrue(Files.readString(outputDir.resolve("pipeline-types.proto")).contains("message EmptyRecord"));
     }
 
     @Test
