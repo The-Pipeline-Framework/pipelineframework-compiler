@@ -172,8 +172,8 @@ class CanonicalOptionalPayloadReferenceTransportTest {
             var reference = new PayloadReference("test", "bucket", "object.csv", "text/csv", null,
                 null, 7L, null, Map.of(), Optional.empty());
             var json = new ObjectMapper().registerModule(new Jdk8Module());
-            for (PayloadReference value : new PayloadReference[] { null, reference }) {
-                Boolean retryValue = value == null ? null : Boolean.TRUE;
+            for (Boolean retryValue : new Boolean[] { null, Boolean.TRUE, Boolean.FALSE }) {
+                PayloadReference value = retryValue == null ? null : reference;
                 Object external = dto.getConstructor(String.class, PayloadReference.class, Boolean.class)
                     .newInstance("file", value, retryValue);
                 Object restored = rest.getClass().getMethod("fromExternal", dto).invoke(rest, external);
