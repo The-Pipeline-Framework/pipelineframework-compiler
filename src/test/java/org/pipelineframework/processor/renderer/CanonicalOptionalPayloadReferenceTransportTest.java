@@ -3,6 +3,7 @@ package org.pipelineframework.processor.renderer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
@@ -204,9 +205,8 @@ class CanonicalOptionalPayloadReferenceTransportTest {
                 assertEquals(value == null, decodedRetry.isAbsent());
                 assertEquals(Optional.ofNullable(retryValue), decodedRetry.asOptional());
             }
-            Object explicitNull = json.readValue("{\"id\":\"file\",\"contentRef\":null}", dto);
-            Object explicitNullDomain = rest.getClass().getMethod("fromExternal", dto).invoke(rest, explicitNull);
-            assertTrue(((CanonicalFieldValue<?>) domain.getMethod("contentRef").invoke(explicitNullDomain)).isAbsent());
+            assertThrows(com.fasterxml.jackson.databind.JsonMappingException.class,
+                () -> json.readValue("{\"id\":\"file\",\"contentRef\":null}", dto));
             assertFalse(Files.readString(generated.resolve("example/dto/InputFileDto.java"))
                 .contains("CanonicalFieldValue"), "REST DTO keeps its simple wire type");
         }
