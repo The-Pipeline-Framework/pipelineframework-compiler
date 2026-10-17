@@ -83,6 +83,72 @@ class OrchestratorRestResourceRendererTest {
         assertTrue(source.contains("@Path(\"/subscribe\")"));
     }
 
+    @Test
+    void canonicalValuesStayInsideEveryRestIngressAndResultBoundary() throws Exception {
+        var processing = mock(ProcessingEnvironment.class);
+        var elements = mock(javax.lang.model.util.Elements.class);
+        var record = mock(javax.lang.model.element.TypeElement.class);
+        when(processing.getElementUtils()).thenReturn(elements);
+        when(processing.getOptions()).thenReturn(java.util.Map.of());
+        when(elements.getTypeElement("example.domain.Document")).thenReturn(record);
+        when(record.getKind()).thenReturn(javax.lang.model.element.ElementKind.RECORD);
+        when(record.getRecordComponents()).thenReturn(java.util.List.of());
+        var types = new org.pipelineframework.config.template.PipelineTemplateTypeModel(java.util.Map.of(
+            "Document", new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.RecordType(
+                "Document", java.util.List.of())));
+        var context = Jsr269GenerationContext.create(processing, tempDir, DeploymentRole.REST_SERVER,
+            java.util.Set.of(), null, null, PipelineTransport.REST, "example", null, true,
+            java.util.Optional.of(types));
+        var mapping = TypeMapping.canonical(com.squareup.javapoet.ClassName.get("example.domain", "Document"), "Document");
+        for (boolean inputStreaming : new boolean[]{false, true}) {
+            for (boolean outputStreaming : new boolean[]{false, true}) {
+                var model = new PipelineStepModel.Builder().serviceName("DocumentsService")
+                    .servicePackage("example.service").serviceClassName(com.squareup.javapoet.ClassName.get("example.service", "DocumentsService"))
+                    .streamingShape(streamingShape(inputStreaming, outputStreaming)).executionMode(ExecutionMode.DEFAULT)
+                    .inputMapping(mapping).outputMapping(mapping).build();
+                new OrchestratorRestResourceRenderer().render(new OrchestratorBinding(model, "example", "REST",
+                    "Document", "Document", inputStreaming, outputStreaming, "DocumentsService",
+                    model.streamingShape(), null, null, null), context);
+                String source = Files.readString(tempDir.resolve("example/orchestrator/service/PipelineRunResource.java"));
+                var mapperImport = java.util.regex.Pattern.compile(
+                    "import example\\.transport\\.generated\\.([A-Za-z0-9_]+RestMapper);").matcher(source);
+                assertTrue(mapperImport.find(), source);
+                String mapper = mapperImport.group(1);
+                String mappedItems = "input.onItem().transform(value->new" + mapper + "().fromExternal(value))";
+                String mappedItem = "new" + mapper + "().fromExternal(input)";
+                String wireResult = ".onItem().transform(value->new" + mapper + "().toExternal(value))";
+                String run = generatedMethod(source, "run");
+                assertTrue(run.contains("returnpipelineExecutionService.<Document>executePipeline"
+                    + (outputStreaming ? "Streaming" : "Unary") + "("
+                    + (inputStreaming ? mappedItems : "Uni.createFrom().item(" + mappedItem + ")")
+                    + ").onItem().invoke(pipelineOutputBus::publish)" + wireResult + ";"), run);
+                String ingest = generatedMethod(source, "ingest");
+                assertTrue(ingest.contains("returnpipelineExecutionService.<Document>executePipelineStreaming("
+                    + mappedItems + ").onItem().invoke(pipelineOutputBus::publish)" + wireResult + ";"), ingest);
+                String async = generatedMethod(source, "runAsync");
+                assertTrue(async.contains("executePipelineAsync("
+                    + (inputStreaming ? "Multi.createFrom().iterable(input).onItem().transform(value->new"
+                        + mapper + "().fromExternal(value))" : mappedItem)
+                    + ",tenantId,idempotencyKey," + outputStreaming + ")"), async);
+                String result = generatedMethod(source, "result");
+                assertTrue(result.contains("returnpipelineExecutionService.<"
+                    + (outputStreaming ? "List<Document>" : "Document")
+                    + ">getExecutionResult(tenantId,executionId,Document.class," + outputStreaming + ")"
+                    + (outputStreaming ? ".onItem().transform(items->items.stream().map(value->new"
+                        + mapper + "().toExternal(value)).toList())" : wireResult) + ";"), result);
+                assertTrue(generatedMethod(source, "subscribe").contains(
+                    "returnpipelineOutputBus.stream(Document.class)" + wireResult + ";"));
+                assertTrue(source.contains("public " + (outputStreaming ? "Multi" : "Uni") + "<DocumentDto> run("), source);
+            }
+        }
+    }
+
+    private static String generatedMethod(String source, String method) {
+        int start = source.indexOf(" " + method + "(");
+        assertTrue(start >= 0, method + " must exist");
+        return source.substring(start, source.indexOf("\n  }", start)).replaceAll("\\s+", "");
+    }
+
     private OrchestratorBinding buildBinding(boolean inputStreaming, boolean outputStreaming) {
         PipelineStepModel model = new PipelineStepModel(
             "OrchestratorService",

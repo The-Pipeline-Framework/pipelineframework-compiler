@@ -76,6 +76,18 @@ public class OrchestratorRestResourceRenderer implements PipelineRenderer<Orches
         ClassName outputType = normalizedTransport.output().map(CanonicalTransportTypeBinding::restDtoType)
             .orElseGet(() -> ClassName.get(binding.basePackage() + ".common.dto", binding.outputTypeName() + "Dto"));
 
+        TypeName canonicalOutput = normalizedTransport.output().<TypeName>map(CanonicalTransportTypeBinding::javaType)
+            .orElse(outputType);
+        CodeBlock canonicalInput = normalizedTransport.input()
+            .map(value -> CodeBlock.of("new $T().fromExternal(input)", value.restMapperType()))
+            .orElse(CodeBlock.of("input"));
+        CodeBlock canonicalInputs = normalizedTransport.input()
+            .map(value -> CodeBlock.of("input.onItem().transform(value -> new $T().fromExternal(value))", value.restMapperType()))
+            .orElse(CodeBlock.of("input"));
+        CodeBlock wireOutput = normalizedTransport.output()
+            .map(value -> CodeBlock.of(".onItem().transform(value -> new $T().toExternal(value))", value.restMapperType()))
+            .orElse(CodeBlock.of(""));
+
         FieldSpec executionField = FieldSpec.builder(executionService, "pipelineExecutionService", Modifier.PRIVATE)
             .addAnnotation(inject)
             .build();
@@ -120,13 +132,13 @@ public class OrchestratorRestResourceRenderer implements PipelineRenderer<Orches
 
         String methodSuffix = binding.outputStreaming() ? "Streaming" : "Unary";
         if (binding.inputStreaming()) {
-            runMethod.addStatement("return pipelineExecutionService.<$T>executePipeline$L(input)" +
-                    ".onItem().invoke(pipelineOutputBus::publish)",
-                outputType, methodSuffix);
+            runMethod.addStatement("return pipelineExecutionService.<$T>executePipeline$L($L)" +
+                    ".onItem().invoke(pipelineOutputBus::publish)$L",
+                canonicalOutput, methodSuffix, canonicalInputs, wireOutput);
         } else {
-            runMethod.addStatement("return pipelineExecutionService.<$T>executePipeline$L($T.createFrom().item(input))" +
-                    ".onItem().invoke(pipelineOutputBus::publish)",
-                outputType, methodSuffix, uni);
+            runMethod.addStatement("return pipelineExecutionService.<$T>executePipeline$L($T.createFrom().item($L))" +
+                    ".onItem().invoke(pipelineOutputBus::publish)$L",
+                canonicalOutput, methodSuffix, uni, canonicalInput, wireOutput);
         }
 
         MethodSpec ingestMethod = MethodSpec.methodBuilder("ingest")
@@ -142,8 +154,8 @@ public class OrchestratorRestResourceRenderer implements PipelineRenderer<Orches
             .addAnnotation(AnnotationSpec.builder(restStream).addMember("value", "$S", "application/json").build())
             .returns(ParameterizedTypeName.get(multi, outputType))
             .addParameter(ParameterizedTypeName.get(multi, inputType), "input")
-            .addStatement("return pipelineExecutionService.<$T>executePipelineStreaming(input)" +
-                ".onItem().invoke(pipelineOutputBus::publish)", outputType)
+            .addStatement("return pipelineExecutionService.<$T>executePipelineStreaming($L)" +
+                ".onItem().invoke(pipelineOutputBus::publish)$L", canonicalOutput, canonicalInputs, wireOutput)
             .build();
 
         TypeName asyncInputType = binding.inputStreaming()
@@ -187,13 +199,14 @@ public class OrchestratorRestResourceRenderer implements PipelineRenderer<Orches
             .beginControlFlow("try");
         if (binding.inputStreaming()) {
             runAsyncMethod.addStatement(
-                "return pipelineExecutionService.executePipelineAsync($T.createFrom().iterable(input), tenantId, idempotencyKey, $L)",
-                multi,
+                "return pipelineExecutionService.executePipelineAsync($T.createFrom().iterable(input)$L, tenantId, idempotencyKey, $L)",
+                multi, normalizedTransport.input().map(value -> CodeBlock.of(
+                    ".onItem().transform(value -> new $T().fromExternal(value))", value.restMapperType())).orElse(CodeBlock.of("")),
                 binding.outputStreaming());
         } else {
             runAsyncMethod.addStatement(
-                "return pipelineExecutionService.executePipelineAsync(input, tenantId, idempotencyKey, $L)",
-                binding.outputStreaming());
+                "return pipelineExecutionService.executePipelineAsync($L, tenantId, idempotencyKey, $L)",
+                canonicalInput, binding.outputStreaming());
         }
         runAsyncMethod
             .nextControlFlow("finally")
@@ -236,9 +249,12 @@ public class OrchestratorRestResourceRenderer implements PipelineRenderer<Orches
                     .addMember("value", "$S", "x-tenant-id")
                     .build())
                 .build())
-            .addStatement("return pipelineExecutionService.getExecutionResult(tenantId, executionId, $T.class, $L)",
-                outputType,
-                binding.outputStreaming())
+            .addStatement("return pipelineExecutionService.<$T>getExecutionResult(tenantId, executionId, $T.class, $L)$L",
+                binding.outputStreaming() ? ParameterizedTypeName.get(ClassName.get(List.class), canonicalOutput) : canonicalOutput,
+                canonicalOutput, binding.outputStreaming(),
+                binding.outputStreaming() ? normalizedTransport.output().map(value -> CodeBlock.of(
+                    ".onItem().transform(items -> items.stream().map(value -> new $T().toExternal(value)).toList())",
+                    value.restMapperType())).orElse(CodeBlock.of("")) : wireOutput)
             .build();
 
         MethodSpec completeAwaitMethod = MethodSpec.methodBuilder("completeAwait")
@@ -318,7 +334,7 @@ public class OrchestratorRestResourceRenderer implements PipelineRenderer<Orches
                 .build())
             .addAnnotation(AnnotationSpec.builder(restStream).addMember("value", "$S", "application/json").build())
             .returns(ParameterizedTypeName.get(multi, outputType))
-            .addStatement("return pipelineOutputBus.stream($T.class)", outputType)
+            .addStatement("return pipelineOutputBus.stream($T.class)$L", canonicalOutput, wireOutput)
             .build();
 
         TypeSpec resource = TypeSpec.classBuilder(RESOURCE_CLASS)

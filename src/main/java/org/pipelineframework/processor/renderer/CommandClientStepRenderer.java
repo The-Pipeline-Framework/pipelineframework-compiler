@@ -52,9 +52,11 @@ public class CommandClientStepRenderer {
             : model;
         CanonicalTransportBindingPair normalizedTransport = CanonicalTransportBindingResolver.resolveAndEnsure(
             ctx, transportModel, transportMode);
-        TypeName inputType = normalizedTransport.input().<TypeName>map(binding -> binding.transportType(transportMode))
+        TypeName inputType = normalizedTransport.input().<TypeName>map(binding -> transportMode == PipelineTransport.REST
+                ? binding.javaType() : binding.transportType(transportMode))
             .orElseGet(() -> clientStepType(domainInputType, transportMode, configHints.basePackage()));
-        TypeName outputType = normalizedTransport.output().<TypeName>map(binding -> binding.transportType(transportMode))
+        TypeName outputType = normalizedTransport.output().<TypeName>map(binding -> transportMode == PipelineTransport.REST
+                ? binding.javaType() : binding.transportType(transportMode))
             .orElseGet(() -> clientStepType(domainOutputType, transportMode, configHints.basePackage()));
         boolean transportMapped = transportMode != PipelineTransport.LOCAL;
         Optional<ConnectorOperationSelection> connectorSelection = model.connectorOperationSelection();
@@ -172,14 +174,15 @@ public class CommandClientStepRenderer {
             .orElseGet(() -> CodeBlock.of("descriptorFactory.descriptor($S, null, $S, $S, $S)",
                 model.serviceName(), domainInputType.toString(), domainOutputType.toString(), commandIdGeneratorName));
         if (model.deferredCompletionSelection().isPresent()) {
-            if (transportMode == PipelineTransport.LOCAL) {
+            if (transportMode == PipelineTransport.LOCAL || (transportMode == PipelineTransport.REST && normalizedInput)) {
                 body.addStatement("$T commandInput = input", domainInputType);
             } else {
                 String from = transportMode == PipelineTransport.REST ? "fromExternal"
                     : normalizedInput ? "fromGrpc" : "fromGrpcFromDto";
                 body.addStatement("$T commandInput = inputMapper.$L(input)", domainInputType, from);
             }
-            String outputConversion = transportMode == PipelineTransport.LOCAL ? ""
+            String outputConversion = transportMode == PipelineTransport.LOCAL
+                    || (transportMode == PipelineTransport.REST && normalizedOutput) ? ""
                 : transportMode == PipelineTransport.REST ? ".map(outputMapper::toExternal)"
                 : normalizedOutput ? ".map(outputMapper::toGrpc)" : ".map(outputMapper::toDtoToGrpc)";
             body.addStatement("return deferredCompletion.<$T, $T>execute(completion, commandInput, endpointResolver, "
@@ -192,12 +195,13 @@ public class CommandClientStepRenderer {
             return body.build();
         }
         if (transportMode == PipelineTransport.REST) {
-            body.addStatement("$T commandInput = inputMapper.fromExternal(input)", domainInputType)
-                .addStatement("return support.<$T, $T>execute($L, commandIdGenerator, commandInput)\n"
-                        + "    .map(commandOutput -> outputMapper.toExternal(commandOutput))",
-                    domainInputType,
-                    domainOutputType,
-                    descriptor);
+            // Commands execute through native support, not an HTTP request. Normalized REST
+            // steps therefore retain canonical values; only legacy bindings need DTO adapters.
+            body.addStatement(normalizedInput ? "$T commandInput = input" : "$T commandInput = inputMapper.fromExternal(input)",
+                domainInputType);
+            String outputConversion = normalizedOutput ? "" : ".map(commandOutput -> outputMapper.toExternal(commandOutput))";
+            body.addStatement("return support.<$T, $T>execute($L, commandIdGenerator, commandInput)$L",
+                domainInputType, domainOutputType, descriptor, outputConversion);
             return body.build();
         }
         String fromGrpc = normalizedInput ? "fromGrpc" : "fromGrpcFromDto";

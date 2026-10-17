@@ -96,7 +96,7 @@ public class DeferredCompletionStepRenderer {
             .addField(descriptor)
             .addMethod(MethodSpec.constructorBuilder().addModifiers(Modifier.PUBLIC).build())
             .addMethod(registerDescriptor(
-                model, completion, operationBoundary, completionBoundary, operationOutputType, finalOutputType))
+                model, completion, operationBoundary, completionBoundary, operationOutputType, finalOutputType, ctx.transportMode()))
             .addMethod(MethodSpec.methodBuilder("cacheKeyTargetType")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
@@ -129,14 +129,17 @@ public class DeferredCompletionStepRenderer {
         TransportBoundaryResolver.RepresentationBoundary operationBoundary,
         CompletionBoundary completionBoundary,
         TypeName operationOutputType,
-        TypeName finalOutputType
+        TypeName finalOutputType,
+        PipelineTransport transport
     ) {
         CodeBlock inputToTransport = operationBoundary.outputConvertsAtBoundary()
-            ? CodeBlock.of("value -> $T.toProto(($T) value)",
+            ? CodeBlock.of(transport == PipelineTransport.REST
+                ? "value -> new $T().toExternal(($T) value)" : "value -> $T.toProto(($T) value)",
                 operationBoundary.outputAdapterOrThrow(), operationOutputType)
             : CodeBlock.of("$T.identity()", Function.class);
         CodeBlock outputFromTransport = completionBoundary.adapter().isPresent()
-            ? CodeBlock.of("value -> $T.fromProto(($T) value)",
+            ? CodeBlock.of(transport == PipelineTransport.REST
+                ? "value -> new $T().fromExternal(($T) value)" : "value -> $T.fromProto(($T) value)",
                 completionBoundary.adapter().orElseThrow(), completionBoundary.transportType())
             : CodeBlock.of("$T.identity()", Function.class);
         CodeBlock descriptor = completion.completionProjector().isPresent()
@@ -181,9 +184,14 @@ public class DeferredCompletionStepRenderer {
             case REST -> {
                 CanonicalTransportBindingPair mapping = CanonicalTransportBindingResolver.resolveAndEnsure(
                     ctx, model, PipelineTransport.REST);
-                yield TransportBoundaryResolver.RepresentationBoundary.transportOnly(
-                    mapping.restInputOr(() -> DtoTypeUtils.toDtoType(model.inboundDomainType())),
-                    mapping.restOutputOr(() -> DtoTypeUtils.toDtoType(model.outboundDomainType())));
+                TypeName wireInput = mapping.restInputOr(() -> DtoTypeUtils.toDtoType(model.inboundDomainType()));
+                TypeName wireOutput = mapping.restOutputOr(() -> DtoTypeUtils.toDtoType(model.outboundDomainType()));
+                yield new TransportBoundaryResolver.RepresentationBoundary(
+                    mapping.input().<TypeName>map(CanonicalTransportTypeBinding::javaType).orElse(wireInput),
+                    mapping.output().<TypeName>map(CanonicalTransportTypeBinding::javaType).orElse(wireOutput),
+                    wireInput, wireOutput,
+                    mapping.input().map(CanonicalTransportTypeBinding::restMapperType),
+                    mapping.output().map(CanonicalTransportTypeBinding::restMapperType));
             }
             case GRPC -> {
                 if (grpcBinding == null) {
@@ -241,12 +249,16 @@ public class DeferredCompletionStepRenderer {
 
         CanonicalTransportBindingResolver resolver = new CanonicalTransportBindingResolver(context);
         Optional<CanonicalTransportTypeBinding> normalized = resolver.resolve(
-            TypeMapping.canonical(domainType, canonicalType));
+            TypeMapping.canonical(domainType, canonicalType), transport);
         if (normalized.isPresent()) {
             CanonicalTransportTypeBinding binding = normalized.orElseThrow();
             CanonicalRecordTransportRenderer renderer = new CanonicalRecordTransportRenderer(context, resolver);
             if (transport == PipelineTransport.REST) {
-                renderer.ensureRest(binding);
+                if (binding.definition() instanceof org.pipelineframework.config.template.PipelineTemplateTypeDefinition.UnionType union) {
+                    new CanonicalUnionRestRenderer(context, resolver).ensureRest(binding, union);
+                } else {
+                    renderer.ensureRest(binding);
+                }
                 return new CompletionBoundary(binding.restDtoType(), Optional.of(binding.restMapperType()));
             }
             renderer.ensureGrpc(binding);

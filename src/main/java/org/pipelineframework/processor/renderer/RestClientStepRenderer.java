@@ -1,7 +1,6 @@
 package org.pipelineframework.processor.renderer;
 
 import java.io.IOException;
-import java.util.Optional;
 import javax.lang.model.element.Modifier;
 
 import com.squareup.javapoet.*;
@@ -43,7 +42,7 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
         TypeName inputDto = transport.restInputOr(() -> convertDomainToDtoType(model.inboundDomainType()));
         TypeName outputDto = transport.restOutputOr(() -> convertDomainToDtoType(model.outboundDomainType()));
         TypeSpec restClientInterface = buildRestClientInterface(binding, ctx, inputDto, outputDto);
-        TypeSpec restClientStep = buildRestClientStepClass(binding, ctx, restClientInterface.name, inputDto, outputDto);
+        TypeSpec restClientStep = buildRestClientStepClass(binding, ctx, restClientInterface.name, inputDto, outputDto, transport);
 
         JavaFile clientInterfaceFile = JavaFile.builder(
                 binding.servicePackage() + NamingPolicy.PIPELINE_PACKAGE_SUFFIX,
@@ -144,8 +143,8 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
      *
      * The generated class is a public ConfigurableStep subclass that wires an injected REST client,
      * applies parallelism and role annotations, conditionally implements cache-related interfaces,
-     * and exposes step entry points that forward PipelineContext header values (versionTag, replayMode,
-     * cachePolicy) to the REST client's `process` method for the model's streaming shape.
+     * and exposes canonical step values where normalized bindings exist. Exact generated mappers convert at the
+     * HTTP boundary, while PipelineContext header values are forwarded for the model's streaming shape.
      *
      * @param binding the RestBinding containing the PipelineStepModel and service package information
      * @param ctx the GenerationContext providing generation-time metadata (for example, the DeploymentRole)
@@ -157,9 +156,17 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
         GenerationContext ctx,
         String restClientInterfaceName,
         TypeName inputDto,
-        TypeName outputDto
+        TypeName outputDto,
+        CanonicalTransportBindingPair transport
     ) {
         PipelineStepModel model = binding.model();
+        TypeName inputType = transport.input().<TypeName>map(CanonicalTransportTypeBinding::javaType).orElse(inputDto);
+        TypeName outputType = transport.output().<TypeName>map(CanonicalTransportTypeBinding::javaType).orElse(outputDto);
+        CodeBlock input = restInput(transport, "input");
+        CodeBlock inputs = transport.input().isPresent()
+            ? CodeBlock.of("inputs.onItem().transform(inputMapper::toExternal)") : CodeBlock.of("inputs");
+        CodeBlock outputMapping = transport.output().isPresent()
+            ? CodeBlock.of(".onItem().transform(outputMapper::fromExternal)") : CodeBlock.of("");
         DeploymentRole role = ctx.role();
         boolean cachePluginSideEffect = isCachePluginSideEffect(model);
         String clientStepClassName = ResourceNameUtils.normalizeBaseName(model.generatedName())
@@ -211,6 +218,12 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
                 .build())
             .build();
 
+        transport.input().ifPresent(value -> clientStepBuilder.addField(
+            FieldSpec.builder(value.restMapperType(), "inputMapper", Modifier.PRIVATE, Modifier.FINAL)
+                .initializer("new $T()", value.restMapperType()).build()));
+        transport.output().ifPresent(value -> clientStepBuilder.addField(
+            FieldSpec.builder(value.restMapperType(), "outputMapper", Modifier.PRIVATE, Modifier.FINAL)
+                .initializer("new $T()", value.restMapperType()).build()));
         clientStepBuilder.addField(restClientField);
         clientStepBuilder.addField(invocationRuntimeField);
         if (model.pagedSource()) {
@@ -231,20 +244,20 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
             case UNARY_UNARY -> {
                 clientStepBuilder.addSuperinterface(ClassName.get("org.pipelineframework.cache", "CacheKeyTarget"));
                 clientStepBuilder.addSuperinterface(ParameterizedTypeName.get(
-                    RuntimeSymbols.STEP_ONE_TO_ONE, inputDto, outputDto));
+                    RuntimeSymbols.STEP_ONE_TO_ONE, inputType, outputType));
                 MethodSpec cacheKeyTargetMethod = MethodSpec.methodBuilder("cacheKeyTargetType")
                     .addAnnotation(Override.class)
                     .addModifiers(Modifier.PUBLIC)
                     .returns(ParameterizedTypeName.get(ClassName.get(Class.class),
                         WildcardTypeName.subtypeOf(Object.class)))
-                    .addStatement("return $T.class", outputDto)
+                    .addStatement("return $T.class", outputType)
                     .build();
                 clientStepBuilder.addMethod(cacheKeyTargetMethod);
                 MethodSpec.Builder applyOneToOneMethod = MethodSpec.methodBuilder("applyOneToOne")
                     .addAnnotation(Override.class)
                     .addModifiers(Modifier.PUBLIC)
-                    .returns(ParameterizedTypeName.get(RuntimeSymbols.UNI, outputDto))
-                    .addParameter(inputDto, "input")
+                    .returns(ParameterizedTypeName.get(RuntimeSymbols.UNI, outputType))
+                    .addParameter(inputType, "input")
                     .addStatement("$T context = $T.get()",
                         ClassName.get("org.pipelineframework.context", "PipelineContext"),
                         ClassName.get("org.pipelineframework.context", "PipelineContextHolder"))
@@ -252,20 +265,20 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
                     .addStatement("String replayMode = context != null ? context.replayMode() : null")
                     .addStatement("String cachePolicy = $L", resolveOutboundCachePolicyExpression(cachePluginSideEffect));
                 applyOneToOneMethod.addStatement(
-                    "return this.invocationRuntime.invokeTransportUni(this, () -> $T.instrumentClient($S, $S, this.restClient.process(versionTag, replayMode, cachePolicy, input)))",
+                    "return this.invocationRuntime.invokeTransportUni(this, () -> $T.instrumentClient($S, $S, this.restClient.process(versionTag, replayMode, cachePolicy, $L)))$L",
                     ClassName.get("org.pipelineframework.telemetry", "HttpMetrics"),
                     model.serviceName(),
-                    "process");
+                    "process", input, outputMapping);
                 clientStepBuilder.addMethod(applyOneToOneMethod.build());
             }
             case UNARY_STREAMING -> {
                 ClassName stepInterface = RuntimeSymbols.STEP_ONE_TO_MANY;
-                clientStepBuilder.addSuperinterface(ParameterizedTypeName.get(stepInterface, inputDto, outputDto));
+                clientStepBuilder.addSuperinterface(ParameterizedTypeName.get(stepInterface, inputType, outputType));
                 MethodSpec applyOneToManyMethod = MethodSpec.methodBuilder("applyOneToMany")
                     .addAnnotation(Override.class)
                     .addModifiers(Modifier.PUBLIC)
-                    .returns(ParameterizedTypeName.get(RuntimeSymbols.MULTI, outputDto))
-                    .addParameter(inputDto, "input")
+                    .returns(ParameterizedTypeName.get(RuntimeSymbols.MULTI, outputType))
+                    .addParameter(inputType, "input")
                     .addStatement("$T context = $T.get()",
                         ClassName.get("org.pipelineframework.context", "PipelineContext"),
                         ClassName.get("org.pipelineframework.context", "PipelineContextHolder"))
@@ -273,23 +286,23 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
                     .addStatement("String replayMode = context != null ? context.replayMode() : null")
                     .addStatement("String cachePolicy = $L", resolveOutboundCachePolicyExpression(cachePluginSideEffect))
                     .addStatement(
-                        "return this.invocationRuntime.invokeTransportMulti(this, () -> $T.instrumentClient($S, $S, this.restClient.process(versionTag, replayMode, cachePolicy, input)$L))",
+                        "return this.invocationRuntime.invokeTransportMulti(this, () -> $T.instrumentClient($S, $S, this.restClient.process(versionTag, replayMode, cachePolicy, $L)$L))$L",
                         ClassName.get("org.pipelineframework.telemetry", "HttpMetrics"),
                         model.serviceName(),
-                        "process",
+                        "process", input,
                         ctx.platformMode() == org.pipelineframework.config.PlatformMode.FUNCTION
-                            ? ".onItem().transformToMulti(items -> io.smallrye.mutiny.Multi.createFrom().iterable(items))" : "")
+                            ? ".onItem().transformToMulti(items -> io.smallrye.mutiny.Multi.createFrom().iterable(items))" : "", outputMapping)
                     .build();
                 clientStepBuilder.addMethod(applyOneToManyMethod);
             }
             case STREAMING_UNARY -> {
                 clientStepBuilder.addSuperinterface(ParameterizedTypeName.get(
-                    RuntimeSymbols.STEP_MANY_TO_ONE, inputDto, outputDto));
+                    RuntimeSymbols.STEP_MANY_TO_ONE, inputType, outputType));
                 MethodSpec applyBatchMultiMethod = MethodSpec.methodBuilder("applyReduce")
                     .addAnnotation(Override.class)
                     .addModifiers(Modifier.PUBLIC)
-                    .returns(ParameterizedTypeName.get(RuntimeSymbols.UNI, outputDto))
-                    .addParameter(ParameterizedTypeName.get(RuntimeSymbols.MULTI, inputDto), "inputs")
+                    .returns(ParameterizedTypeName.get(RuntimeSymbols.UNI, outputType))
+                    .addParameter(ParameterizedTypeName.get(RuntimeSymbols.MULTI, inputType), "inputs")
                     .addStatement("$T context = $T.get()",
                         ClassName.get("org.pipelineframework.context", "PipelineContext"),
                         ClassName.get("org.pipelineframework.context", "PipelineContextHolder"))
@@ -297,21 +310,21 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
                     .addStatement("String replayMode = context != null ? context.replayMode() : null")
                     .addStatement("String cachePolicy = $L", resolveOutboundCachePolicyExpression(cachePluginSideEffect))
                     .addStatement(
-                        "return inputs.collect().asList().onItem().transformToUni(inputDtos -> this.invocationRuntime.invokeTransportUni(this, () -> $T.instrumentClient($S, $S, this.restClient.process(versionTag, replayMode, cachePolicy, inputDtos))))",
-                        ClassName.get("org.pipelineframework.telemetry", "HttpMetrics"),
+                        "return $L.collect().asList().onItem().transformToUni(inputDtos -> this.invocationRuntime.invokeTransportUni(this, () -> $T.instrumentClient($S, $S, this.restClient.process(versionTag, replayMode, cachePolicy, inputDtos))))$L",
+                        inputs, ClassName.get("org.pipelineframework.telemetry", "HttpMetrics"),
                         model.serviceName(),
-                        "process")
+                        "process", outputMapping)
                     .build();
                 clientStepBuilder.addMethod(applyBatchMultiMethod);
             }
             case STREAMING_STREAMING -> {
                 ClassName stepInterface = ClassName.get("org.pipelineframework.step", "StepManyToMany");
-                clientStepBuilder.addSuperinterface(ParameterizedTypeName.get(stepInterface, inputDto, outputDto));
+                clientStepBuilder.addSuperinterface(ParameterizedTypeName.get(stepInterface, inputType, outputType));
                 MethodSpec applyTransformMethod = MethodSpec.methodBuilder("applyTransform")
                     .addAnnotation(Override.class)
                     .addModifiers(Modifier.PUBLIC)
-                    .returns(ParameterizedTypeName.get(RuntimeSymbols.MULTI, outputDto))
-                    .addParameter(ParameterizedTypeName.get(RuntimeSymbols.MULTI, inputDto), "inputs")
+                    .returns(ParameterizedTypeName.get(RuntimeSymbols.MULTI, outputType))
+                    .addParameter(ParameterizedTypeName.get(RuntimeSymbols.MULTI, inputType), "inputs")
                     .addStatement("$T context = $T.get()",
                         ClassName.get("org.pipelineframework.context", "PipelineContext"),
                         ClassName.get("org.pipelineframework.context", "PipelineContextHolder"))
@@ -319,10 +332,10 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
                     .addStatement("String replayMode = context != null ? context.replayMode() : null")
                     .addStatement("String cachePolicy = $L", resolveOutboundCachePolicyExpression(cachePluginSideEffect))
                     .addStatement(
-                        "return this.invocationRuntime.invokeTransportMulti(this, () -> $T.instrumentClient($S, $S, this.restClient.process(versionTag, replayMode, cachePolicy, inputs)))",
+                        "return this.invocationRuntime.invokeTransportMulti(this, () -> $T.instrumentClient($S, $S, this.restClient.process(versionTag, replayMode, cachePolicy, $L)))$L",
                         ClassName.get("org.pipelineframework.telemetry", "HttpMetrics"),
                         model.serviceName(),
-                        "process")
+                        "process", inputs, outputMapping)
                     .build();
                 clientStepBuilder.addMethod(applyTransformMethod);
             }
@@ -333,19 +346,19 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
             ClassName stream = ClassName.get("org.pipelineframework.paging", "PagedSourceStream");
             ClassName frame = ClassName.get("org.pipelineframework.paging", "RemotePageFrame");
             ClassName wireRequest = ClassName.get("org.pipelineframework.paging", "RemotePageRequest");
-            clientStepBuilder.addSuperinterface(ParameterizedTypeName.get(operation, inputDto, outputDto));
+            clientStepBuilder.addSuperinterface(ParameterizedTypeName.get(operation, inputType, outputType));
             clientStepBuilder.addMethod(MethodSpec.methodBuilder("openPage")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
-                .returns(ParameterizedTypeName.get(stream, outputDto))
-                .addParameter(ParameterizedTypeName.get(request, inputDto), "request")
+                .returns(ParameterizedTypeName.get(stream, outputType))
+                .addParameter(ParameterizedTypeName.get(request, inputType), "request")
                 .addStatement("var identity = $T.get().orElseThrow(() -> new $T($S))",
                     ClassName.get("org.pipelineframework.execution", "PipelineExecutionContextHolder"),
                     IllegalStateException.class, "remote page requires a pinned execution identity")
-                .addStatement("var wire = new $T<>(request.input(), request.sourceIdentity(), request.checkpoint(), "
+                .addStatement("var wire = new $T<>($L, request.sourceIdentity(), request.checkpoint(), "
                     + "request.maxRecords(), identity.pipelineId(), identity.contractVersion(), "
                     + "identity.releaseVersion(), pageBridge.catalogFingerprint())",
-                    wireRequest)
+                    wireRequest, restInput(transport, "request.input()"))
                 .addCode("return pageBridge.open(request,\n")
                 .addCode("    invocationRuntime.invokeTransportMulti(this, () -> $T.instrumentClient($S, $S, "
                     + "restClient.openPage(wire))),\n",
@@ -353,7 +366,9 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
                     model.serviceName(), "openPage")
                 .addCode("    wireFrame -> {\n")
                 .addCode("      if (wireFrame.item().isPresent()) {\n")
-                .addCode("        return new $T.Item<>(wireFrame.item().orElseThrow());\n", frame)
+                .addCode("        return new $T.Item<>($L);\n", frame, transport.output().isPresent()
+                    ? CodeBlock.of("outputMapper.fromExternal(wireFrame.item().orElseThrow())")
+                    : CodeBlock.of("wireFrame.item().orElseThrow()"))
                 .addCode("      }\n")
                 .addCode("      return new $T.Completion<>(wireFrame.completion().orElseThrow());\n", frame)
                 .addCode("    });\n")
@@ -361,6 +376,11 @@ public class RestClientStepRenderer implements PipelineRenderer<RestBinding> {
         }
 
         return clientStepBuilder.build();
+    }
+
+    private static CodeBlock restInput(CanonicalTransportBindingPair transport, String expression) {
+        return transport.input().isPresent()
+            ? CodeBlock.of("inputMapper.toExternal($L)", expression) : CodeBlock.of("$L", expression);
     }
 
     private MethodSpec transportBoundaryMethod(String protocol, String target) {
