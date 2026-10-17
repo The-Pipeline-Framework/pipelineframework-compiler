@@ -61,6 +61,9 @@ class CanonicalRestClientBoundaryTest {
                         var persistence = step("PersistenceDocumentSideEffect", StreamingShape.UNARY_UNARY)
                             .toBuilder().sideEffect(true).build();
                         new RestClientStepRenderer().render(new RestBinding(persistence, "/persistence"), context);
+                        var command = step("WriteDocument", StreamingShape.UNARY_UNARY).toBuilder()
+                            .cacheKeyGenerator(ClassName.get("example.service", "DocumentCommandId")).build();
+                        new CommandClientStepRenderer().render(command, context);
                         var config = org.mockito.Mockito.mock(PipelineTemplateConfig.class);
                         org.mockito.Mockito.when(config.dialect()).thenReturn(PipelineTemplateDialect.V3);
                         org.mockito.Mockito.when(config.typeModel()).thenReturn(model);
@@ -189,6 +192,23 @@ class CanonicalRestClientBoundaryTest {
             cachedValue.set(null);
             assertEquals(Optional.empty(), ((Uni<?>) decorator.getClass().getMethod("get", String.class)
                 .invoke(decorator, "miss")).await().atMost(Duration.ofSeconds(2)));
+            Object command = loader.loadClass("example.service.pipeline.WriteDocumentCommandClientStep").getConstructor().newInstance();
+            Object commandSupport = loader.loadClass("org.pipelineframework.command.CommandStepSupport").getConstructor().newInstance();
+            Object commandId = loader.loadClass("example.service.DocumentCommandId").getConstructor().newInstance();
+            inject(command, "support", commandSupport);
+            inject(command, "commandIdGenerator", commandId);
+            inject(command, "descriptorFactory", loader.loadClass("org.pipelineframework.command.CommandStepDescriptorFactory").getConstructor().newInstance());
+            // Invoke the erased step bridge used by runtime dispatch: a DTO-typed command
+            // bridge throws before reaching support for both cold and cached canonical input.
+            var bridge = loader.loadClass("org.pipelineframework.step.StepOneToOne").getMethod("applyOneToOne", Object.class);
+            for (Object canonical : List.of(input, replay)) {
+                assertSame(canonical, ((Uni<?>) bridge.invoke(command, canonical)).await().atMost(Duration.ofSeconds(2)));
+                assertSame(canonical, commandSupport.getClass().getField("lastInput").get(commandSupport));
+                assertSame(commandId, commandSupport.getClass().getField("lastGenerator").get(commandSupport));
+            }
+            assertEquals(domain, command.getClass().getMethod("cacheKeyTargetType").invoke(command));
+            assertEquals("WriteDocumentService|example.domain.Document|example.domain.Document|example.service.DocumentCommandId",
+                commandSupport.getClass().getField("lastDescriptor").get(commandSupport));
             Object awaited = loader.loadClass("example.service.pipeline.AwaitDeferredCompletionStep").getConstructor().newInstance();
             inject(awaited, "descriptorRegistry", loader.loadClass("org.pipelineframework.awaitable.AwaitCompletionDescriptorRegistry").getConstructor().newInstance());
             awaited.getClass().getMethod("registerCompletion").invoke(awaited);
@@ -263,6 +283,10 @@ class CanonicalRestClientBoundaryTest {
         stub(root, "org.pipelineframework.awaitable.AwaitStreamOneToOneStep", "public interface AwaitStreamOneToOneStep<I,O> { io.smallrye.mutiny.Multi<O> applyAwaitPerItem(io.smallrye.mutiny.Multi<I> input); }");
         stub(root, "org.pipelineframework.cache.CacheReadBypass", "public interface CacheReadBypass {}");
         stub(root, "org.pipelineframework.cache.CacheKeyTarget", "public interface CacheKeyTarget { Class<?> cacheKeyTargetType(); }");
+        stub(root, "example.service.DocumentCommandId", "public class DocumentCommandId {}");
+        stub(root, "org.pipelineframework.command.CommandStep", "public interface CommandStep {}");
+        stub(root, "org.pipelineframework.command.CommandStepDescriptorFactory", "public class CommandStepDescriptorFactory { public String descriptor(String name, Object command, String input, String output, String generator) { return name + \"|\" + input + \"|\" + output + \"|\" + generator; } }");
+        stub(root, "org.pipelineframework.command.CommandStepSupport", "public class CommandStepSupport { public Object lastInput, lastGenerator, lastDescriptor; public <I,O> io.smallrye.mutiny.Uni<O> execute(Object descriptor, Object generator, I input) { lastInput=input; lastGenerator=generator; lastDescriptor=descriptor; return io.smallrye.mutiny.Uni.createFrom().item((O) input); } }");
         stub(root, "org.pipelineframework.step.ConfigurableStep", "public abstract class ConfigurableStep {}");
         stub(root, "org.pipelineframework.step.StepOneToOne", "public interface StepOneToOne<I,O> { io.smallrye.mutiny.Uni<O> applyOneToOne(I input); }");
         stub(root, "org.pipelineframework.step.StepOneToMany", "public interface StepOneToMany<I,O> { io.smallrye.mutiny.Multi<O> applyOneToMany(I input); }");
