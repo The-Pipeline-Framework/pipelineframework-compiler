@@ -50,7 +50,7 @@ class AwsDurableInputDecoderRendererTest {
     }
 
     @Test
-    void usesCanonicalRestDtoForV3RecordInputs() throws Exception {
+    void convertsCanonicalRestDtoToDomainForDurableAdmission() throws Exception {
         AwsDurableInputDecoderRenderer renderer = new AwsDurableInputDecoderRenderer();
         PipelineTemplateTypeModel typeModel = new PipelineTemplateTypeModel(Map.of(
             "Order", new PipelineTemplateTypeDefinition.RecordType("Order", List.of())));
@@ -73,7 +73,7 @@ class AwsDurableInputDecoderRendererTest {
         String source = Files.readString(output.resolve(
             "com/example/orchestrator/service/AwsDurablePipelineInputDecoder.java"));
         assertTrue(source.contains("import com.example.dto.OrderDto;"));
-        assertTrue(source.contains("mapper.readValue(inputJson, OrderDto.class)"));
+        assertTrue(source.contains(".fromExternal(mapper.readValue(inputJson, OrderDto.class))"));
         assertTrue(Files.exists(output.resolve("com/example/dto/OrderDto.java")));
     }
 

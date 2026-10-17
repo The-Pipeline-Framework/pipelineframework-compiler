@@ -5,6 +5,7 @@ import javax.lang.model.element.Modifier;
 
 import com.squareup.javapoet.AnnotationSpec;
 import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.CodeBlock;
 import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.MethodSpec;
@@ -34,18 +35,22 @@ public final class AwsDurableInputDecoderRenderer {
             throw new IllegalArgumentException(
                 "AWS_DURABLE coordination currently requires a non-streaming pipeline input");
         }
-        ClassName inputDto = CanonicalTransportBindingResolver.resolveAndEnsure(
-            context, binding.model(), PipelineTransport.REST).input()
-            .map(CanonicalTransportTypeBinding::restDtoType)
+        var inputBinding = CanonicalTransportBindingResolver.resolveAndEnsure(
+            context, binding.model(), PipelineTransport.REST).input();
+        ClassName inputDto = inputBinding.map(CanonicalTransportTypeBinding::restDtoType)
             .orElseGet(() -> ClassName.get(
                 binding.basePackage() + ".common.dto", binding.inputTypeName() + "Dto"));
+        var decoded = inputBinding.isPresent()
+            ? CodeBlock.of("new $T().fromExternal(mapper.readValue(inputJson, $T.class))",
+                inputBinding.orElseThrow().restMapperType(), inputDto)
+            : CodeBlock.of("mapper.readValue(inputJson, $T.class)", inputDto);
         MethodSpec decode = MethodSpec.methodBuilder("decode")
             .addAnnotation(Override.class)
             .addModifiers(Modifier.PUBLIC)
             .returns(Object.class)
             .addParameter(String.class, "inputJson")
             .beginControlFlow("try")
-            .addStatement("return mapper.readValue(inputJson, $T.class)", inputDto)
+            .addStatement("return $L", decoded)
             .nextControlFlow("catch ($T malformed)", JSON_PROCESSING_EXCEPTION)
             .addStatement("throw new $T($S, malformed)", IllegalArgumentException.class,
                 "AWS Durable pipeline input is not valid JSON for the generated input contract")
