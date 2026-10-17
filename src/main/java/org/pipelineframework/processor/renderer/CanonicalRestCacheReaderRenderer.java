@@ -2,6 +2,7 @@ package org.pipelineframework.processor.renderer;
 
 import com.squareup.javapoet.*;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import javax.lang.model.element.Modifier;
@@ -15,9 +16,9 @@ import org.pipelineframework.processor.routing.V3JavaTypeResolver;
 public final class CanonicalRestCacheReaderRenderer {
     public static final String CLASS_NAME = "CanonicalRestCacheReaderDecorator";
 
-    public void render(PipelineTemplateConfig config, GenerationContext context) throws IOException {
+    public boolean render(PipelineTemplateConfig config, GenerationContext context) throws IOException {
         if (config.dialect() != PipelineTemplateDialect.V3 || context.transportMode() != PipelineTransport.REST) {
-            return;
+            return false;
         }
         var resolver = new CanonicalTransportBindingResolver(context);
         var types = new V3JavaTypeResolver(config);
@@ -26,11 +27,15 @@ public final class CanonicalRestCacheReaderRenderer {
             var javaType = types.resolve(name);
             if (javaType.isEmpty()) continue;
             var mapping = TypeMapping.canonical(javaType.orElseThrow(), name);
-            var binding = resolver.resolveAndEnsure(mapping, mapping, PipelineTransport.REST).input();
+            var binding = resolver.resolve(mapping, PipelineTransport.REST);
             if (binding.isEmpty()) continue;
-            bindings.add(binding.orElseThrow());
+            var mapper = binding.orElseThrow().restMapperType();
+            var mapperSource = context.outputDir().resolve(mapper.packageName().replace('.', '/'))
+                .resolve(mapper.simpleName() + ".java");
+            // Only adapt representations already realized for this compilation's clients.
+            if (Files.exists(mapperSource)) bindings.add(binding.orElseThrow());
         }
-        if (bindings.isEmpty()) return;
+        if (bindings.isEmpty()) return false;
         ClassName reader = ClassName.get("org.pipelineframework.cache", "PipelineCacheReader");
         TypeName optionalObject = ParameterizedTypeName.get(ClassName.get(java.util.Optional.class), TypeName.OBJECT);
         var normalize = MethodSpec.methodBuilder("canonicalValue").addModifiers(Modifier.PRIVATE)
@@ -59,5 +64,6 @@ public final class CanonicalRestCacheReaderRenderer {
                 .returns(int.class).addStatement("return delegate.priority()").build())
             .addMethod(normalize.build()).build();
         JavaFile.builder(config.basePackage() + ".transport.generated", decorator).build().writeTo(context.outputDir());
+        return true;
     }
 }

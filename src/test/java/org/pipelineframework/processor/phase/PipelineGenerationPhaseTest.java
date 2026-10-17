@@ -557,8 +557,18 @@ class PipelineGenerationPhaseTest {
         context.setAspectModels(List.of(new org.pipelineframework.processor.ir.PipelineAspectModel("cache",
             org.pipelineframework.processor.ir.AspectScope.GLOBAL,
             org.pipelineframework.processor.ir.AspectPosition.AFTER_STEP, java.util.Map.of())));
-        context.setRendererBindings(java.util.Map.of());
-        context.setStepModels(List.of());
+        var document = com.squareup.javapoet.ClassName.get("example.domain", "Document");
+        var model = new org.pipelineframework.processor.ir.PipelineStepModel.Builder()
+            .serviceName("ProcessService").servicePackage("example.service")
+            .serviceClassName(com.squareup.javapoet.ClassName.get("example.service", "ProcessService"))
+            .inputMapping(org.pipelineframework.processor.ir.TypeMapping.canonical(document, "Document"))
+            .outputMapping(org.pipelineframework.processor.ir.TypeMapping.canonical(document, "Document"))
+            .streamingShape(org.pipelineframework.processor.ir.StreamingShape.UNARY_UNARY)
+            .executionMode(org.pipelineframework.processor.ir.ExecutionMode.DEFAULT)
+            .enabledTargets(Set.of(org.pipelineframework.processor.ir.GenerationTarget.REST_CLIENT_STEP)).build();
+        context.setRendererBindings(java.util.Map.of("ProcessService_rest",
+            new org.pipelineframework.processor.ir.RestBinding(model, "/document")));
+        context.setStepModels(List.of(model));
         new PipelineGenerationPhase().execute(context);
         try (var sources = Files.walk(context.getGeneratedSourcesRoot())) {
             assertTrue(sources.anyMatch(path -> path.getFileName().toString().equals("CanonicalRestCacheReaderDecorator.java")));

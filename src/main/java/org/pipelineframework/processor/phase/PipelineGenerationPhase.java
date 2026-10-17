@@ -318,12 +318,14 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
             && ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig config
             && config.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
             var role = DeploymentRole.ORCHESTRATOR_CLIENT;
-            new CanonicalRestCacheReaderRenderer().render(config, Jsr269GenerationContext.create(
+            boolean generated = new CanonicalRestCacheReaderRenderer().render(config, Jsr269GenerationContext.create(
                 ctx.getProcessingEnv(), resolveRoleOutputDir(ctx, role), role, enabledAspects,
                 cacheKeyGenerator, descriptorSet, org.pipelineframework.processor.ir.PipelineTransport.REST,
                 config.basePackage(), null, true, java.util.Optional.of(config.typeModel())));
-            roleMetadataGenerator.recordClassWithRole(config.basePackage() + ".transport.generated."
-                + CanonicalRestCacheReaderRenderer.CLASS_NAME, role.name());
+            if (generated) {
+                roleMetadataGenerator.recordClassWithRole(config.basePackage() + ".transport.generated."
+                    + CanonicalRestCacheReaderRenderer.CLASS_NAME, role.name());
+            }
         }
 
         // Write role metadata

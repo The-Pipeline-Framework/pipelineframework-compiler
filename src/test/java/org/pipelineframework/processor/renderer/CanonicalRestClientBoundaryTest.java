@@ -32,7 +32,8 @@ class CanonicalRestClientBoundaryTest {
         Files.createDirectories(classes);
         source(sources, "example/domain/Document.java", "package example.domain; public record Document(String id) {}\n");
         var model = new PipelineTemplateTypeModel(Map.of("Document", new PipelineTemplateTypeDefinition.RecordType(
-            "Document", List.of(new PipelineTemplateTypeDefinition.Field("id", new PipelineTemplateTypeReference.Scalar("string"))))));
+            "Document", List.of(new PipelineTemplateTypeDefinition.Field("id", new PipelineTemplateTypeReference.Scalar("string")))),
+            "Unrealized", new PipelineTemplateTypeDefinition.RecordType("Unrealized", List.of())));
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
         try (var files = compiler.getStandardFileManager(diagnostics, null, null)) {
@@ -81,6 +82,8 @@ class CanonicalRestClientBoundaryTest {
             }));
             assertTrue(Boolean.TRUE.equals(task.call()), diagnostics.getDiagnostics().toString());
         }
+        assertFalse(Files.exists(generated.resolve("example/dto/UnrealizedDto.java")),
+            "cache adaptation must not realize unrelated declared representations");
         runtimeSignatures(sources);
         try (var files = compiler.getStandardFileManager(diagnostics, null, null);
              var authored = Files.walk(sources); var emitted = Files.walk(generated)) {

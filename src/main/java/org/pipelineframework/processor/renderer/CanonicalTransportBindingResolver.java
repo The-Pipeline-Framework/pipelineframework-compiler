@@ -85,7 +85,7 @@ final class CanonicalTransportBindingResolver {
             .resolveAndEnsure(model.inputMapping(), model.outputMapping(), transport);
     }
 
-    CanonicalTransportBindingPair resolveAndEnsure(
+    private CanonicalTransportBindingPair resolveAndEnsure(
         TypeMapping inputMapping,
         TypeMapping outputMapping,
         PipelineTransport transport
