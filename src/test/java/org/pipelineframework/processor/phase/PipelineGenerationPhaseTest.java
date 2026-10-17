@@ -520,6 +520,52 @@ class PipelineGenerationPhaseTest {
     }
 
     @Test
+    void generatesCanonicalRestCacheDecoratorForCacheOrchestrator(@TempDir Path tempDir) throws Exception {
+        Path yaml = tempDir.resolve("pipeline.yaml");
+        Files.writeString(yaml, """
+            version: 3
+            appName: Canonical Cache
+            basePackage: example
+            transport: REST
+            types:
+              Document:
+                fields:
+                  - [id, string]
+            steps:
+              - name: Process
+                service: example.ProcessService
+                cardinality: ONE_TO_ONE
+                input: Document
+                output: Document
+            """);
+        var config = new org.pipelineframework.config.template.PipelineTemplateConfigLoader().load(yaml);
+        var record = mock(javax.lang.model.element.TypeElement.class);
+        var component = mock(javax.lang.model.element.RecordComponentElement.class);
+        var name = mock(javax.lang.model.element.Name.class);
+        when(name.toString()).thenReturn("id");
+        when(component.getSimpleName()).thenReturn(name);
+        when(component.asType()).thenReturn(mock(javax.lang.model.type.TypeMirror.class));
+        when(record.getKind()).thenReturn(javax.lang.model.element.ElementKind.RECORD);
+        when(record.getRecordComponents()).thenReturn((java.util.List) List.of(component));
+        when(processingEnv.getElementUtils().getTypeElement("example.domain.Document")).thenReturn(record);
+        var context = new org.pipelineframework.processor.PipelineCompilationContext(processingEnv,
+            org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        context.setGeneratedSourcesRoot(tempDir.resolve("generated-sources"));
+        context.setPipelineTemplateConfig(config);
+        context.setTransportMode(org.pipelineframework.processor.ir.PipelineTransport.REST);
+        context.setOrchestratorGenerated(true);
+        context.setAspectModels(List.of(new org.pipelineframework.processor.ir.PipelineAspectModel("cache",
+            org.pipelineframework.processor.ir.AspectScope.GLOBAL,
+            org.pipelineframework.processor.ir.AspectPosition.AFTER_STEP, java.util.Map.of())));
+        context.setRendererBindings(java.util.Map.of());
+        context.setStepModels(List.of());
+        new PipelineGenerationPhase().execute(context);
+        try (var sources = Files.walk(context.getGeneratedSourcesRoot())) {
+            assertTrue(sources.anyMatch(path -> path.getFileName().toString().equals("CanonicalRestCacheReaderDecorator.java")));
+        }
+    }
+
+    @Test
     void generatesOrchestratorArtifactsWhenEnabled() throws Exception {
         PipelineGenerationPhase phase = new PipelineGenerationPhase();
         org.pipelineframework.processor.PipelineCompilationContext context =

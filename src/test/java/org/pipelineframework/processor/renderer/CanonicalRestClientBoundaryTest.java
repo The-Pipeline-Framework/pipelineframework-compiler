@@ -57,6 +57,14 @@ class CanonicalRestClientBoundaryTest {
                         }
                         new RestClientStepRenderer().render(new RestBinding(step("Paged", StreamingShape.UNARY_STREAMING)
                             .toBuilder().pagedSource(true).build(), "/documents"), context);
+                        var persistence = step("PersistenceDocumentSideEffect", StreamingShape.UNARY_UNARY)
+                            .toBuilder().sideEffect(true).build();
+                        new RestClientStepRenderer().render(new RestBinding(persistence, "/persistence"), context);
+                        var config = org.mockito.Mockito.mock(PipelineTemplateConfig.class);
+                        org.mockito.Mockito.when(config.dialect()).thenReturn(PipelineTemplateDialect.V3);
+                        org.mockito.Mockito.when(config.typeModel()).thenReturn(model);
+                        org.mockito.Mockito.when(config.basePackage()).thenReturn("example");
+                        new CanonicalRestCacheReaderRenderer().render(config, context);
                         var await = step("Await", StreamingShape.UNARY_STREAMING).toBuilder()
                             .deferredCompletionSelection(new DeferredCompletionSelection(
                                 ClassName.get("example.domain", "Document"), "Document", Optional.empty(),
@@ -146,6 +154,38 @@ class CanonicalRestClientBoundaryTest {
             Object page = paged.getClass().getMethod("openPage", pageRequest).invoke(paged, request);
             assertEquals(List.of(input), ((Multi<?>) page.getClass().getMethod("items").invoke(page))
                 .collect().asList().await().atMost(Duration.ofSeconds(2)));
+            Class<?> cacheReader = loader.loadClass("org.pipelineframework.cache.PipelineCacheReader");
+            var cachedValue = new java.util.concurrent.atomic.AtomicReference<Object>(dto.getConstructor(String.class).newInstance("first"));
+            Object delegate = Proxy.newProxyInstance(loader, new Class<?>[]{cacheReader}, (proxy, method, args) -> switch (method.getName()) {
+                case "get" -> Uni.createFrom().item(Optional.ofNullable(cachedValue.get()));
+                case "exists" -> Uni.createFrom().item(cachedValue.get() != null);
+                case "priority" -> 42;
+                default -> throw new AssertionError(method);
+            });
+            Object decorator = loader.loadClass("example.transport.generated.CanonicalRestCacheReaderDecorator").getConstructor().newInstance();
+            inject(decorator, "delegate", delegate);
+            assertEquals(42, decorator.getClass().getMethod("priority").invoke(decorator));
+            assertEquals(Boolean.TRUE, ((Uni<?>) decorator.getClass().getMethod("exists", String.class).invoke(decorator, "warm")).await().atMost(Duration.ofSeconds(2)));
+            Object replay = ((Optional<?>) ((Uni<?>) decorator.getClass().getMethod("get", String.class)
+                .invoke(decorator, "warm")).await().atMost(Duration.ofSeconds(2))).orElseThrow();
+            assertEquals(input, replay);
+            Class<?> persistenceClient = loader.loadClass("example.service.pipeline.PersistenceDocumentSideEffectRestClient");
+            Object persistence = loader.loadClass("example.service.pipeline.PersistenceDocumentSideEffectRestClientStep").getConstructor().newInstance();
+            inject(persistence, "restClient", Proxy.newProxyInstance(loader, new Class<?>[]{persistenceClient}, (proxy, method, args) -> {
+                assertInstanceOf(dto, args[3]);
+                return Uni.createFrom().item(args[3]);
+            }));
+            inject(persistence, "invocationRuntime", loader.loadClass("org.pipelineframework.invocation.PipelineInvocationRuntime").getConstructor().newInstance());
+            assertEquals(input, ((Uni<?>) persistence.getClass().getMethod("applyOneToOne", domain)
+                .invoke(persistence, replay)).await().atMost(Duration.ofSeconds(2)), "warm DTO cache value must reach canonical persistence sideeffect");
+            for (Object retained : List.of(input, "negative-marker", List.of("unrelated"))) {
+                cachedValue.set(retained);
+                assertSame(retained, ((Optional<?>) ((Uni<?>) decorator.getClass().getMethod("get", String.class)
+                    .invoke(decorator, "retained")).await().atMost(Duration.ofSeconds(2))).orElseThrow());
+            }
+            cachedValue.set(null);
+            assertEquals(Optional.empty(), ((Uni<?>) decorator.getClass().getMethod("get", String.class)
+                .invoke(decorator, "miss")).await().atMost(Duration.ofSeconds(2)));
             Object awaited = loader.loadClass("example.service.pipeline.AwaitDeferredCompletionStep").getConstructor().newInstance();
             inject(awaited, "descriptorRegistry", loader.loadClass("org.pipelineframework.awaitable.AwaitCompletionDescriptorRegistry").getConstructor().newInstance());
             awaited.getClass().getMethod("registerCompletion").invoke(awaited);
@@ -193,7 +233,7 @@ class CanonicalRestClientBoundaryTest {
     private void runtimeSignatures(Path root) throws Exception {
         // Boundary-only signatures: execution uses real Mutiny, generated DTOs and exact generated mappers.
         for (String name : List.of("jakarta.enterprise.context.Dependent", "jakarta.enterprise.context.ApplicationScoped",
-            "jakarta.inject.Inject", "jakarta.annotation.PostConstruct", "io.quarkus.runtime.Startup", "io.quarkus.arc.Unremovable", "jakarta.ws.rs.POST"))
+            "jakarta.inject.Inject", "jakarta.decorator.Decorator", "jakarta.decorator.Delegate", "jakarta.enterprise.inject.Any", "jakarta.annotation.PostConstruct", "io.quarkus.runtime.Startup", "io.quarkus.arc.Unremovable", "jakarta.ws.rs.POST"))
             stub(root, name, "public @interface " + name.substring(name.lastIndexOf('.') + 1) + " {}");
         for (String name : List.of("jakarta.ws.rs.Path", "jakarta.ws.rs.HeaderParam", "org.jboss.resteasy.reactive.RestStreamElementType"))
             stub(root, name, "public @interface " + name.substring(name.lastIndexOf('.') + 1) + " { String value(); }");
@@ -208,6 +248,8 @@ class CanonicalRestClientBoundaryTest {
         stub(root, "org.pipelineframework.context.PipelineContext", "public record PipelineContext(String versionTag, String replayMode, String cachePolicy) {}");
         stub(root, "org.pipelineframework.context.PipelineContextHolder", "public class PipelineContextHolder { public static PipelineContext get() { return null; } }");
         stub(root, "org.pipelineframework.context.PipelineContextHeaders", "public class PipelineContextHeaders { public static final String VERSION=\"v\", REPLAY=\"r\", CACHE_POLICY=\"c\"; }");
+        stub(root, "jakarta.annotation.Priority", "public @interface Priority { int value(); }");
+        stub(root, "org.pipelineframework.cache.PipelineCacheReader", "public interface PipelineCacheReader { io.smallrye.mutiny.Uni<java.util.Optional<Object>> get(String key); io.smallrye.mutiny.Uni<Boolean> exists(String key); default int priority() { return 0; } }");
         stub(root, "org.pipelineframework.invocation.TransportBoundaryDescriptor", "public record TransportBoundaryDescriptor(String protocol, String target) {}");
         stub(root, "org.pipelineframework.invocation.TransportBoundaryInvocation", "public interface TransportBoundaryInvocation { TransportBoundaryDescriptor transportBoundary(); }");
         stub(root, "org.pipelineframework.invocation.PipelineInvocationRuntime", "public class PipelineInvocationRuntime { public <T> io.smallrye.mutiny.Uni<T> invokeTransportUni(Object owner, java.util.function.Supplier<io.smallrye.mutiny.Uni<T>> call) { return call.get(); } public <T> io.smallrye.mutiny.Multi<T> invokeTransportMulti(Object owner, java.util.function.Supplier<io.smallrye.mutiny.Multi<T>> call) { return call.get(); } }");
