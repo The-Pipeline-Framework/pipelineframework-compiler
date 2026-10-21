@@ -2373,6 +2373,20 @@ public class StepDefinitionParser {
             return false;
         }
         Object responseObj = transportMap.get("response");
+        if (responseObj instanceof Map<?, ?> responseMap && responseMap.containsKey("mode")) {
+            String message;
+            if (!"HOST_MANAGED".equals(responseMap.get("mode"))) {
+                message = "Skipping step '" + stepName + "': sqs await transport response.mode must be HOST_MANAGED";
+            } else if (responseMap.containsKey("queueUrl")) {
+                message = "Skipping step '" + stepName
+                    + "': sqs HOST_MANAGED response must not declare response.queueUrl";
+            } else {
+                return true;
+            }
+            LOG.warn(message);
+            report(Diagnostic.Kind.ERROR, message);
+            return false;
+        }
         if (!(responseObj instanceof Map<?, ?> responseMap) || isBlank(stringValue(responseMap.get("queueUrl")))) {
             String message = "Skipping step '" + stepName + "': sqs await transport must declare response.queueUrl";
             LOG.warn(message);

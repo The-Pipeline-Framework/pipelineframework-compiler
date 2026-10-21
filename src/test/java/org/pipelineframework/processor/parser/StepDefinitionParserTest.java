@@ -1968,6 +1968,108 @@ class StepDefinitionParserTest {
     }
 
     @Test
+    void parsesSqsHostManagedResponseWithoutPhysicalQueue() throws IOException {
+        List<String> diagnostics = new ArrayList<>();
+        List<StepDefinition> steps = parseSqsAwaitTransport(
+            "{queueUrl: 'https://sqs.example.test/requests'}",
+            "{mode: HOST_MANAGED}", diagnostics);
+
+        assertEquals(1, steps.size(), diagnostics.toString());
+        Map<?, ?> transport = steps.getFirst().deferredCompletion().orElseThrow().transportConfig();
+        assertEquals(Map.of("mode", "HOST_MANAGED"), transport.get("response"));
+        assertEquals(Map.of("queueUrl", "https://sqs.example.test/requests"), transport.get("request"));
+        assertTrue(diagnostics.stream().noneMatch(message -> message.contains(Diagnostic.Kind.ERROR.name())));
+    }
+
+    @Test
+    void rejectsSqsUnknownOrNullResponseModeEvenWithPhysicalQueue() throws IOException {
+        for (String mode : List.of("UNKNOWN", "host_managed", "null", "7", "''")) {
+            List<String> diagnostics = new ArrayList<>();
+            List<StepDefinition> steps = parseSqsAwaitTransport(
+                "{queueUrl: 'https://sqs.example.test/requests'}",
+                "{mode: " + mode + ", queueUrl: 'https://sqs.example.test/responses'}", diagnostics);
+
+            assertTrue(steps.isEmpty(), mode);
+            assertTrue(diagnostics.stream().anyMatch(message -> message.contains("response.mode must be HOST_MANAGED")),
+                mode + ": " + diagnostics);
+        }
+    }
+
+    @Test
+    void rejectsSqsHostManagedResponseWithAnyQueueUrlPresence() throws IOException {
+        for (String queue : List.of("null", "''", "'https://sqs.example.test/responses'")) {
+            List<String> diagnostics = new ArrayList<>();
+            List<StepDefinition> steps = parseSqsAwaitTransport(
+                "{queueUrl: 'https://sqs.example.test/requests'}",
+                "{mode: HOST_MANAGED, queueUrl: " + queue + "}", diagnostics);
+
+            assertTrue(steps.isEmpty(), queue);
+            assertTrue(diagnostics.stream().anyMatch(message -> message.contains("must not declare response.queueUrl")),
+                queue + ": " + diagnostics);
+        }
+    }
+
+    @Test
+    void hostManagedResponseStillRequiresPhysicalRequestQueue() throws IOException {
+        for (String request : List.of("{}", "{queueUrl: null}", "{queueUrl: ''}")) {
+            List<String> diagnostics = new ArrayList<>();
+            assertTrue(parseSqsAwaitTransport(request, "{mode: HOST_MANAGED}", diagnostics).isEmpty());
+            assertTrue(diagnostics.stream().anyMatch(message -> message.contains("request.queueUrl")), diagnostics.toString());
+        }
+    }
+
+    @Test
+    void hostManagedResponseStillRejectsFifoRequestQueues() throws IOException {
+        for (String queue : List.of("https://sqs.example.test/requests.fifo",
+            "https://sqs.example.test/requests.fifo?ignored=true#fragment")) {
+            List<String> diagnostics = new ArrayList<>();
+            assertTrue(parseSqsAwaitTransport("{queueUrl: '" + queue + "'}", "{mode: HOST_MANAGED}", diagnostics).isEmpty());
+            assertTrue(diagnostics.stream().anyMatch(message -> message.contains("standard queues only")), diagnostics.toString());
+        }
+    }
+
+    @Test
+    void legacySqsResponseStillRequiresNonBlankPhysicalQueue() throws IOException {
+        for (String response : List.of("{}", "null", "{queueUrl: null}", "{queueUrl: ''}")) {
+            List<String> diagnostics = new ArrayList<>();
+            assertTrue(parseSqsAwaitTransport("{queueUrl: 'https://sqs.example.test/requests'}", response, diagnostics).isEmpty());
+            assertTrue(diagnostics.stream().anyMatch(message -> message.contains("response.queueUrl")), diagnostics.toString());
+        }
+    }
+
+    @Test
+    void legacySqsResponseStillRejectsNormalizedFifoQueue() throws IOException {
+        List<String> diagnostics = new ArrayList<>();
+        assertTrue(parseSqsAwaitTransport("{queueUrl: 'https://sqs.example.test/requests'}",
+            "{queueUrl: 'https://sqs.example.test/responses.fifo?ignored=true#fragment'}", diagnostics).isEmpty());
+        assertTrue(diagnostics.stream().anyMatch(message -> message.contains("standard queues only")), diagnostics.toString());
+    }
+
+    private List<StepDefinition> parseSqsAwaitTransport(
+        String request, String response, List<String> diagnostics
+    ) throws IOException {
+        return parse("""
+            version: 2
+            appName: Test
+            basePackage: com.example
+            steps:
+              - name: Sqs response contract
+                service: com.example.AwaitOperationService
+                input: com.example.Input
+                output: com.example.Output
+                await:
+                  operationOutput: {type: com.example.PendingCompletion, java: com.example.PendingCompletion}
+                  timeout: PT10M
+                  correlation:
+                    strategy: signedResumeToken
+                  transport:
+                    type: sqs
+                    request: %s
+                    response: %s
+            """.formatted(request, response), diagnostics);
+    }
+
+    @Test
     void rejectsSqsAwaitStepWithoutRequestQueueUrl() throws IOException {
         List<String> diagnostics = new ArrayList<>();
         List<StepDefinition> steps = parse("""
