@@ -193,6 +193,80 @@ class BlockDefinitionImporterTest {
         }
     }
 
+    @Test void linksApplicationOwnedTypedQueryCallableSlot() throws Exception {
+        Path dependency = applicationOwnedQuerySlotDependency();
+        Path application = application(applicationOwnedQuerySlotApplication());
+
+        try (URLClassLoader loader = loader(dependency);
+             ImportedPipelineSources imported = new BlockDefinitionImporter(loader)
+                 .importInto(application)) {
+            var yaml = new org.pipelineframework.config.pipeline.PipelineYamlConfigLoader().load(imported.configPath());
+            var decide = yaml.localPipelines().get("org.example.callable/callable-loop").getFirst();
+            assertEquals("primary", decide.callables().get("lookup").using());
+            assertEquals("LookupRequest", decide.callables().get("lookup").input());
+            var provenance = imported.definitions().getFirst().resolvedCallables().getFirst();
+            assertEquals("tools", provenance.requirement());
+            assertEquals("QUERY", provenance.kind());
+        }
+    }
+
+    @Test void applicationOwnedQuerySlotCannotBindACommand() throws Exception {
+        Path dependency = applicationOwnedQuerySlotDependency();
+        Path application = application(applicationOwnedQuerySlotApplication().replace(
+            "operation: lookup, input: LookupRequest", "operation: update, input: UpdateRequest"));
+        try (URLClassLoader loader = loader(dependency)) {
+            var failure = assertThrows(RuntimeException.class,
+                () -> new BlockDefinitionImporter(loader).importInto(application));
+            assertTrue(failure.getMessage().contains("update"), failure.getMessage());
+        }
+    }
+
+    private Path applicationOwnedQuerySlotDependency() throws Exception {
+        Path dependency = callableBlockDependency();
+        Path metadata = dependency.resolve("META-INF/pipeline");
+        Files.writeString(metadata.resolve("blocks.json"), """
+            {"schemaVersion":1,"namespace":"org.example.callable",
+             "artifact":{"groupId":"org.example","artifactId":"callable-block","version":"1.0.0"},
+             "definitions":[{"name":"callable-loop","resource":"META-INF/pipeline/definition.yaml",
+               "requires":{"decision.model":{"kind":"QUERY"}}}]}
+            """);
+        Path definition = metadata.resolve("definition.yaml");
+        String block = Files.readString(definition);
+        int catalogue = block.indexOf("        callables:\n");
+        int dispatch = block.indexOf("      - name: Dispatch", catalogue);
+        Files.writeString(definition, block.substring(0, catalogue)
+            + "        callableSlot: tools\n" + block.substring(dispatch));
+        return dependency;
+    }
+
+    private String applicationOwnedQuerySlotApplication() {
+        return """
+            version: 3
+            appName: Callable Consumer
+            basePackage: com.example
+            transport: LOCAL
+            platform: COMPUTE
+            contract: { input: AgentState, output: Observation }
+            connectors:
+              primary:
+                provider: acme.operations
+                version: 1
+                config: { connection: primary-connection }
+            blockBindings:
+              org.example.callable/callable-loop:
+                decision.model: { using: primary }
+                tools:
+                  lookup: { using: primary, operation: lookup, input: LookupRequest }
+            steps:
+              - name: Run callable loop
+                pipeline: callable-loop
+                cardinality: ONE_TO_ONE
+                input: AgentState
+                output: Observation
+                java: { input: com.example.AgentState, output: com.example.Observation }
+            """;
+    }
+
     @Test void rejectsPackageOwnedCallableCommandAuthority() throws Exception {
         Path dependency = callableBlockDependency();
         Path definition = dependency.resolve("META-INF/pipeline/definition.yaml");

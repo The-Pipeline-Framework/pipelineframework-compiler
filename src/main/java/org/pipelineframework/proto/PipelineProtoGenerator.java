@@ -95,8 +95,7 @@ public class PipelineProtoGenerator {
             : resolvedModuleDir.resolve("target").resolve("generated-sources").resolve("proto");
         String resolvedTypesProtoName = validateTypesProtoName(typesProtoName);
 
-        PipelineTemplateConfigLoader loader = new PipelineTemplateConfigLoader();
-        PipelineTemplateConfig config = loader.load(resolvedConfig);
+        PipelineTemplateConfig config = new BlockAwareTemplateLoader().load(resolvedConfig);
         Path idlStatePath = idlWriter.resolveIdlStatePath(resolvedConfig);
         PipelineIdlSnapshot committedState = Files.exists(idlStatePath) ? idlWriter.readBaselineSnapshot(idlStatePath.toString()) : null;
         boolean lockMissing = committedState == null;

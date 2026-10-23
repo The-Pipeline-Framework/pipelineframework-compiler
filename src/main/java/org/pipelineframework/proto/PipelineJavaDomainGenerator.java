@@ -52,7 +52,7 @@ public final class PipelineJavaDomainGenerator {
         Path resolvedConfig = resolveConfigPath(resolvedModuleDir, configPath).toAbsolutePath().normalize();
         Path resolvedOutput = outputDir.orElseGet(() ->
             resolvedModuleDir.resolve("target").resolve("generated-sources").resolve("pipeline-domain"));
-        PipelineTemplateConfig config = new PipelineTemplateConfigLoader().load(resolvedConfig);
+        PipelineTemplateConfig config = new BlockAwareTemplateLoader().load(resolvedConfig);
         if (config.dialect() != PipelineTemplateDialect.V3) {
             throw new IllegalStateException("Java domain generation requires version: 3.");
         }

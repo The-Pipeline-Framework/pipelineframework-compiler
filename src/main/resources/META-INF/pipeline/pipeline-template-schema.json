@@ -2074,7 +2074,28 @@
           "type": "string",
           "pattern": "^[^/\\s](?:[^/]*[^/\\s])?$"
         },
-        "additionalProperties": { "$ref": "#/$defs/blockCapabilityBinding" }
+        "additionalProperties": {
+          "oneOf": [
+            { "$ref": "#/$defs/blockCapabilityBinding" },
+            {
+              "type": "object",
+              "minProperties": 1,
+              "propertyNames": { "pattern": "^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$" },
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "using": { "type": "string", "minLength": 1 },
+                  "operation": { "type": "string", "minLength": 1 },
+                  "operationVersion": { "type": "integer", "minimum": 1 },
+                  "input": { "$ref": "#/$defs/logicalContractReference" },
+                  "config": { "type": "object", "additionalProperties": true }
+                },
+                "required": ["using", "operation", "input"],
+                "additionalProperties": false
+              }
+            }
+          ]
+        }
       }
     },
     "commandTemplateStep": {
