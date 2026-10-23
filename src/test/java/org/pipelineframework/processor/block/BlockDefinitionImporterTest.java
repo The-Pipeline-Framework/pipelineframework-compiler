@@ -210,6 +210,25 @@ class BlockDefinitionImporterTest {
         }
     }
 
+    @Test void retainsApplicationOwnedQuerySlotForDomainGeneration() throws Exception {
+        Path dependency = applicationOwnedQuerySlotDependency();
+        Path definition = dependency.resolve("META-INF/pipeline/definition.yaml");
+        Files.writeString(definition, Files.readString(definition)
+            .replace("output: Decision", "output: AgentCall")
+            .replace("output: com.example.Decision", "output: com.example.AgentCall"));
+        Path application = application(applicationOwnedQuerySlotApplication());
+
+        try (URLClassLoader loader = loader(dependency);
+             ImportedPipelineSources imported = new BlockDefinitionImporter(loader)
+                 .importForGeneration(application)) {
+            var template = new PipelineTemplateConfigLoader().load(imported.configPath());
+            assertTrue(template.pipelines().containsKey("org.example.callable/callable-loop"));
+            String generatedSource = Files.readString(imported.configPath());
+            assertTrue(generatedSource.contains("callableSlot: tools"));
+            assertTrue(generatedSource.contains("using: decision.model"));
+        }
+    }
+
     @Test void applicationOwnedQuerySlotCannotBindACommand() throws Exception {
         Path dependency = applicationOwnedQuerySlotDependency();
         Path application = application(applicationOwnedQuerySlotApplication().replace(
@@ -682,7 +701,7 @@ class BlockDefinitionImporterTest {
               LookupRequest: { java: com.example.LookupRequest, fields: [[key, string]] }
               LookupResult: { java: com.example.LookupResult, fields: [[value, string]] }
               UpdateRequest: { java: com.example.UpdateRequest, fields: [[effectKey, string]] }
-              UpdateResult: { java: com.example.UpdateResult, fields: [[accepted, boolean]] }
+              UpdateResult: { java: com.example.UpdateResult, fields: [[accepted, bool]] }
             pipelines:
               lookup:
                 input: LookupRequest
@@ -779,7 +798,7 @@ class BlockDefinitionImporterTest {
               LookupRequest: { java: com.example.LookupRequest, fields: [[key, string]] }
               LookupResult: { java: com.example.LookupResult, fields: [[value, string]] }
               UpdateRequest: { java: com.example.UpdateRequest, fields: [[effectKey, string]] }
-              UpdateResult: { java: com.example.UpdateResult, fields: [[accepted, boolean]] }
+              UpdateResult: { java: com.example.UpdateResult, fields: [[accepted, bool]] }
             pipelines:
               callable-loop:
                 input: AgentState

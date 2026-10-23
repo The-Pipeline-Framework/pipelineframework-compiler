@@ -2388,6 +2388,10 @@ public final class PipelineTemplateSchemaExporter {
             "$ref": "#/$defs/llmCallable"
           }
         },
+        "callableSlot": {
+          "type": "string",
+          "minLength": 1
+        },
         "negativeCacheTtl": {
           "type": "string",
           "format": "duration",

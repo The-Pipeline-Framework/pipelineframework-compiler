@@ -1453,7 +1453,8 @@ public class StepDefinitionParser {
                 ConnectorOperationKind.QUERY, identity.majorVersion());
             // One-turn LLM completion intentionally publishes Object/Object: the completion
             // configuration validates its model-authored field and trusted input carry.
-            boolean directCompletion = "decide".equals(operation)
+            boolean directCompletion = "llm.query".equals(binding.provider())
+                && "decide".equals(operation)
                 && operationConfig.containsKey("completion")
                 && descriptor.typeContract().filter(contract -> "java.lang.Object".equals(contract.inputType())
                     && "java.lang.Object".equals(contract.outputType().orElse(""))).isPresent();
