@@ -23,6 +23,7 @@ import java.util.*;
 
 import org.pipelineframework.config.pipeline.PipelineYamlConfigLocator;
 import org.pipelineframework.config.template.*;
+import org.pipelineframework.processor.block.BlockDefinitionImporter;
 
 /**
  * Generates protobuf definitions from the pipeline template configuration.
@@ -95,7 +96,8 @@ public class PipelineProtoGenerator {
             : resolvedModuleDir.resolve("target").resolve("generated-sources").resolve("proto");
         String resolvedTypesProtoName = validateTypesProtoName(typesProtoName);
 
-        PipelineTemplateConfig config = new BlockAwareTemplateLoader().load(resolvedConfig);
+        PipelineTemplateConfig config = new PipelineTemplateConfigLoader().load(resolvedConfig,
+            new BlockDefinitionImporter(PipelineProtoGenerator.class.getClassLoader())::importForGeneration);
         Path idlStatePath = idlWriter.resolveIdlStatePath(resolvedConfig);
         PipelineIdlSnapshot committedState = Files.exists(idlStatePath) ? idlWriter.readBaselineSnapshot(idlStatePath.toString()) : null;
         boolean lockMissing = committedState == null;

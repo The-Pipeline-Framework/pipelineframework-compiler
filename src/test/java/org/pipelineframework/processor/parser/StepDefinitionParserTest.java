@@ -46,7 +46,7 @@ class StepDefinitionParserTest {
     Path tempDir;
 
     @Test
-    void unrelatedDecideQueryCannotBypassImportedBlockTypeContract() throws Exception {
+    void providerDeclaredProjectionControlsImportedBlockTypeCompatibility() throws Exception {
         Path metadataRoot = tempDir.resolve("unrelated-decide-metadata");
         Path manifest = metadataRoot.resolve("META-INF/pipeline/connector-providers.json");
         Files.createDirectories(manifest.getParent());
@@ -93,6 +93,21 @@ class StepDefinitionParserTest {
             assertTrue(parsed.localDefinitions().get("local").isEmpty(), diagnostics.toString());
             assertTrue(diagnostics.stream().anyMatch(message ->
                 message.contains("do not match provider operation types")), diagnostics.toString());
+        }
+
+        Files.writeString(manifest, Files.readString(manifest)
+            .replace("\"schemaVersion\":4", "\"schemaVersion\":8")
+            .replace("\"output\":\"java.lang.Object\"",
+                "\"output\":\"java.lang.Object\",\"mode\":\"APPLICATION_PROJECTED\""));
+        Files.writeString(pipeline, Files.readString(pipeline).replace(
+            "config: { completion: { field: answer } }", ""));
+        diagnostics.clear();
+        try (URLClassLoader loader = new URLClassLoader(new URL[] { metadataRoot.toUri().toURL() }, null)) {
+            var parsed = new StepDefinitionParser(
+                (kind, message) -> diagnostics.add(kind + ":" + message),
+                StepDefinitionParser.DEFAULT_LEGACY_INTERNAL_PACKAGE_SUFFIX,
+                loader).parseDefinitionCatalog(pipeline, Set.of("local"));
+            assertEquals(1, parsed.localDefinitions().get("local").size(), diagnostics.toString());
         }
     }
 
