@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.io.TempDir;
 import org.pipelineframework.config.template.PipelineTemplateConfigLoader;
+import org.pipelineframework.proto.PipelineProtoGenerator;
 
 class BlockDefinitionImporterTest {
     @TempDir Path directory;
@@ -226,6 +227,22 @@ class BlockDefinitionImporterTest {
             String generatedSource = Files.readString(imported.configPath());
             assertTrue(generatedSource.contains("callableSlot: tools"));
             assertTrue(generatedSource.contains("using: decision.model"));
+
+            String previousBootstrap = System.getProperty("pipeline.idl.bootstrap");
+            Path generatorConfig = directory.resolve("linked-query-slot.yaml");
+            Files.writeString(generatorConfig, generatedSource);
+            Path output = directory.resolve("generated-query-slot");
+            try {
+                System.setProperty("pipeline.idl.bootstrap", "true");
+                new PipelineProtoGenerator().generate(directory, generatorConfig, output);
+            } finally {
+                if (previousBootstrap == null) {
+                    System.clearProperty("pipeline.idl.bootstrap");
+                } else {
+                    System.setProperty("pipeline.idl.bootstrap", previousBootstrap);
+                }
+            }
+            assertTrue(Files.readString(output.resolve("pipeline-types.proto")).contains("message AgentCall"));
         }
     }
 
