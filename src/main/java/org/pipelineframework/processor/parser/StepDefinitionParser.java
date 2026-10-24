@@ -114,6 +114,7 @@ public class StepDefinitionParser {
         "capture",
         "negativeCacheTtl",
         "callables",
+        "callableSlot",
         "accepts",
         "terminal",
         "pipeline",
