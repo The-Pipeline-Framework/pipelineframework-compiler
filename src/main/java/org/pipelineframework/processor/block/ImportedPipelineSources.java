@@ -4,13 +4,14 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import org.pipelineframework.config.template.PipelineTemplateConfigLoader;
 
 /** Effective compiler input and imported-definition provenance. */
 public record ImportedPipelineSources(
     Path configPath,
     List<ImportedPipelineDefinition> definitions,
     boolean temporary
-) implements AutoCloseable {
+) implements PipelineTemplateConfigLoader.PreparedSource {
     public ImportedPipelineSources {
         if (configPath == null) {
             throw new IllegalArgumentException("configPath must not be null");

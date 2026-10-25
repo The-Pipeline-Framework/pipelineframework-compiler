@@ -42,6 +42,7 @@ import org.pipelineframework.connector.ConnectorConfigurationDocument;
 import org.pipelineframework.connector.ConnectorOperationDescriptor;
 import org.pipelineframework.connector.ConnectorOperationIdentity;
 import org.pipelineframework.connector.ConnectorOperationKind;
+import org.pipelineframework.connector.ConnectorOperationTypeMode;
 import org.pipelineframework.connector.ConnectorProviderId;
 import org.pipelineframework.connector.ConnectorProviderManifestCatalog;
 import org.pipelineframework.connector.ConnectorProviderManifestLoader;
@@ -114,6 +115,7 @@ public class StepDefinitionParser {
         "capture",
         "negativeCacheTtl",
         "callables",
+        "callableSlot",
         "accepts",
         "terminal",
         "pipeline",
@@ -1451,8 +1453,11 @@ public class StepDefinitionParser {
             ConnectorOperationDescriptor descriptor = catalog.requireOperation(
                 identity.providerId(), binding.providerVersion(), operation,
                 ConnectorOperationKind.QUERY, identity.majorVersion());
+            boolean applicationProjected = descriptor.typeContract()
+                .filter(contract -> contract.mode() == ConnectorOperationTypeMode.APPLICATION_PROJECTED)
+                .isPresent();
             validateOperationTypeContract(stepName, identity.providerId(), descriptor, inputType, outputType,
-                logicalInputType, logicalOutputType, requireExactOperationTypes);
+                logicalInputType, logicalOutputType, requireExactOperationTypes && !applicationProjected);
             catalog.validateOperationConfiguration(
                 identity.providerId(),
                 binding.providerVersion(),

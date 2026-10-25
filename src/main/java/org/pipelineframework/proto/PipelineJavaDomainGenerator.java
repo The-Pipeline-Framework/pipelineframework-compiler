@@ -27,6 +27,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import org.pipelineframework.config.pipeline.PipelineYamlConfigLocator;
 import org.pipelineframework.config.template.*;
+import org.pipelineframework.processor.block.BlockDefinitionImporter;
 
 /**
  * Generates the Java target for a resolved version 3 template.
@@ -52,7 +53,8 @@ public final class PipelineJavaDomainGenerator {
         Path resolvedConfig = resolveConfigPath(resolvedModuleDir, configPath).toAbsolutePath().normalize();
         Path resolvedOutput = outputDir.orElseGet(() ->
             resolvedModuleDir.resolve("target").resolve("generated-sources").resolve("pipeline-domain"));
-        PipelineTemplateConfig config = new PipelineTemplateConfigLoader().load(resolvedConfig);
+        PipelineTemplateConfig config = new PipelineTemplateConfigLoader().load(resolvedConfig,
+            new BlockDefinitionImporter(PipelineJavaDomainGenerator.class.getClassLoader())::importForGeneration);
         if (config.dialect() != PipelineTemplateDialect.V3) {
             throw new IllegalStateException("Java domain generation requires version: 3.");
         }

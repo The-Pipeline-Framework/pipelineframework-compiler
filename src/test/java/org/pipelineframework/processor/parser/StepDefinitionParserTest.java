@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import javax.tools.Diagnostic;
 
@@ -43,6 +44,72 @@ class StepDefinitionParserTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void providerDeclaredProjectionControlsImportedBlockTypeCompatibility() throws Exception {
+        Path metadataRoot = tempDir.resolve("unrelated-decide-metadata");
+        Path manifest = metadataRoot.resolve("META-INF/pipeline/connector-providers.json");
+        Files.createDirectories(manifest.getParent());
+        Files.writeString(manifest, """
+            {"schemaVersion":4,"providers":[{"id":"acme.work","version":{"major":1,"minor":0},
+            "operations":[{"id":"decide","kind":"tpf:query","majorVersion":1,
+            "typeContract":{"input":"java.lang.Object","output":"java.lang.Object"},
+            "queryCardinality":"ONE_TO_ONE"}]}]}
+            """);
+        Path pipeline = tempDir.resolve("unrelated-decide.yaml");
+        Files.writeString(pipeline, """
+            version: 3
+            appName: Test
+            basePackage: com.example
+            transport: LOCAL
+            platform: COMPUTE
+            types:
+              State: { java: com.example.State, fields: [[id, string]] }
+              Decision: { java: com.example.Decision, fields: [[answer, string]] }
+            connectors:
+              model: { provider: acme.work, version: 1 }
+            pipelines:
+              local:
+                input: State
+                output: Decision
+                steps:
+                  - name: Decide
+                    kind: query
+                    using: model
+                    operation: decide
+                    input: State
+                    output: Decision
+                    java: { input: com.example.State, output: com.example.Decision }
+                    config: { completion: { field: answer } }
+            """);
+        List<String> diagnostics = new ArrayList<>();
+
+        try (URLClassLoader loader = new URLClassLoader(new URL[] { metadataRoot.toUri().toURL() }, null)) {
+            var parsed = new StepDefinitionParser(
+                (kind, message) -> diagnostics.add(kind + ":" + message),
+                StepDefinitionParser.DEFAULT_LEGACY_INTERNAL_PACKAGE_SUFFIX,
+                loader).parseDefinitionCatalog(pipeline, Set.of("local"));
+
+            assertTrue(parsed.localDefinitions().get("local").isEmpty(), diagnostics.toString());
+            assertTrue(diagnostics.stream().anyMatch(message ->
+                message.contains("do not match provider operation types")), diagnostics.toString());
+        }
+
+        Files.writeString(manifest, Files.readString(manifest)
+            .replace("\"schemaVersion\":4", "\"schemaVersion\":8")
+            .replace("\"output\":\"java.lang.Object\"",
+                "\"output\":\"java.lang.Object\",\"mode\":\"APPLICATION_PROJECTED\""));
+        Files.writeString(pipeline, Files.readString(pipeline).replace(
+            "config: { completion: { field: answer } }", ""));
+        diagnostics.clear();
+        try (URLClassLoader loader = new URLClassLoader(new URL[] { metadataRoot.toUri().toURL() }, null)) {
+            var parsed = new StepDefinitionParser(
+                (kind, message) -> diagnostics.add(kind + ":" + message),
+                StepDefinitionParser.DEFAULT_LEGACY_INTERNAL_PACKAGE_SUFFIX,
+                loader).parseDefinitionCatalog(pipeline, Set.of("local"));
+            assertEquals(1, parsed.localDefinitions().get("local").size(), diagnostics.toString());
+        }
+    }
 
     @Test
     void omittedVersionUsesV3StepGrammar() throws IOException {
