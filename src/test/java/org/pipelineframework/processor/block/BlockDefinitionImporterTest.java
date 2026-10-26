@@ -211,6 +211,29 @@ class BlockDefinitionImporterTest {
         }
     }
 
+    @Test void linksAnInertCommandProposalAlongsideAQueryWithoutBlockCommandAuthority() throws Exception {
+        Path dependency = applicationOwnedQuerySlotDependency();
+        String applicationYaml = applicationOwnedQuerySlotApplication().replace(
+            "lookup: { using: primary, operation: lookup, input: LookupRequest }",
+            "lookup: { using: primary, operation: lookup, input: LookupRequest }\n"
+                + "      owner_action: { using: primary, operation: update, kind: command,"
+                + " input: UpdateRequest, trustedArguments: { effectKey: nextEffectKey } }");
+        Path application = application(applicationYaml);
+
+        try (URLClassLoader loader = loader(dependency);
+             ImportedPipelineSources imported = new BlockDefinitionImporter(loader).importInto(application)) {
+            var yaml = new org.pipelineframework.config.pipeline.PipelineYamlConfigLoader().load(imported.configPath());
+            var decide = yaml.localPipelines().get("org.example.callable/callable-loop").getFirst();
+            var proposal = decide.callables().get("owner_action");
+            assertEquals(org.pipelineframework.connector.ConnectorOperationKind.COMMAND, proposal.kind());
+            assertEquals(Map.of("effectKey", "nextEffectKey"), proposal.trustedArguments());
+            assertTrue(proposal.commandIdGenerator().isEmpty());
+            assertEquals("COMMAND", imported.definitions().getFirst().resolvedCallables().stream()
+                .filter(callable -> callable.alias().equals("owner_action"))
+                .findFirst().orElseThrow().kind());
+        }
+    }
+
     @Test void retainsApplicationOwnedQuerySlotForDomainGeneration() throws Exception {
         Path dependency = applicationOwnedQuerySlotDependency();
         Path definition = dependency.resolve("META-INF/pipeline/definition.yaml");
