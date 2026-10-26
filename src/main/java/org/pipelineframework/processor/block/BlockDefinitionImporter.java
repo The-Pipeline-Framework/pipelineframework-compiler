@@ -783,10 +783,15 @@ public final class BlockDefinitionImporter {
                 }
                 Map<String, Object> callable = mutableMap(rawCallable);
                 for (String field : callable.keySet()) {
-                    if (!Set.of("using", "operation", "operationVersion", "input", "config").contains(field)) {
-                        throw new IllegalStateException("Imported Query callable '" + alias
+                    if (!Set.of("using", "operation", "operationVersion", "input", "config", "kind",
+                        "trustedArguments").contains(field)) {
+                        throw new IllegalStateException("Imported callable '" + alias
                             + "' has unsupported field '" + field + "'.");
                     }
+                }
+                String kind = String.valueOf(callable.getOrDefault("kind", "query")).trim().toLowerCase(Locale.ROOT);
+                if (!Set.of("query", "command").contains(kind)) {
+                    throw new IllegalStateException("Imported callable '" + alias + "' kind must be query or command.");
                 }
                 String binding = requiredText(callable.get("using"), "Imported Query callable using is required");
                 String operation = requiredText(callable.get("operation"), "Imported Query callable operation is required");
@@ -804,10 +809,13 @@ public final class BlockDefinitionImporter {
                 }
                 ApplicationConnectorBinding connector = applicationConnector(
                     definition.qualifiedId(), slot + "." + alias, binding, applicationConnectors);
+                var operationKind = "command".equals(kind)
+                    ? org.pipelineframework.connector.ConnectorOperationKind.COMMAND
+                    : org.pipelineframework.connector.ConnectorOperationKind.QUERY;
                 var descriptor = providerManifestCatalog().requireOperation(
                     ConnectorProviderId.of(connector.provider()), connector.providerVersion(), operation,
-                    org.pipelineframework.connector.ConnectorOperationKind.QUERY, version);
-                if (descriptor.queryCardinality().orElseThrow()
+                    operationKind, version);
+                if ("query".equals(kind) && descriptor.queryCardinality().orElseThrow()
                     != org.pipelineframework.connector.QueryOperationCardinality.ONE_TO_ONE) {
                     throw new IllegalStateException("Imported Query callable '" + alias
                         + "' must select a ONE_TO_ONE Query operation.");
@@ -817,20 +825,30 @@ public final class BlockDefinitionImporter {
                         + "' requires a canonical type contract."));
                 providerManifestCatalog().validateOperationConfiguration(
                     ConnectorProviderId.of(connector.provider()), connector.providerVersion(), operation,
-                    org.pipelineframework.connector.ConnectorOperationKind.QUERY, version,
+                    operationKind, version,
                     new ConnectorConfigurationDocument(operationConfig),
-                    "imported Block Query callable '" + definition.qualifiedId() + "#" + alias + "'");
+                    "imported Block callable '" + definition.qualifiedId() + "#" + alias + "'");
+                if (callable.containsKey("trustedArguments")
+                    && !(callable.get("trustedArguments") instanceof Map<?, ?>)) {
+                    throw new IllegalStateException("Imported callable '" + alias
+                        + "' trustedArguments must be a map.");
+                }
+                Map<String, String> trustedArguments = callable.get("trustedArguments") instanceof Map<?, ?> rawTrusted
+                    ? stringMap(rawTrusted, "Imported callable '" + alias + "' trustedArguments") : Map.of();
                 Map<String, Object> linkedCallable = new LinkedHashMap<>(Map.of(
                     "using", binding, "operation", operation, "operationVersion", version,
-                    "kind", "query", "input", input));
+                    "kind", kind, "input", input));
                 if (!operationConfig.isEmpty()) {
                     linkedCallable.put("config", operationConfig);
                 }
+                if (!trustedArguments.isEmpty()) {
+                    linkedCallable.put("trustedArguments", trustedArguments);
+                }
                 linked.put(alias, linkedCallable);
                 resolved.add(new ImportedPipelineDefinition.ResolvedBlockCallable(
-                    String.valueOf(step.get("name")), alias, slot, "QUERY", binding, connector.provider(),
+                    String.valueOf(step.get("name")), alias, slot, kind.toUpperCase(Locale.ROOT), binding, connector.provider(),
                     connector.providerVersion(), operation, version, input,
-                    contract.outputType().orElseThrow(), Map.of(), "", "", Map.of(),
+                    contract.outputType().orElseThrow(), trustedArguments, "", "", Map.of(),
                     connectorConfigurationDigest(connector)));
             }
             step.put("callables", linked);

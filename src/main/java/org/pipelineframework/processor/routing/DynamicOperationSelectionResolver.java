@@ -15,6 +15,7 @@ import org.pipelineframework.config.pipeline.PipelineYamlConfig;
 import org.pipelineframework.config.pipeline.PipelineYamlConnectorBinding;
 import org.pipelineframework.config.pipeline.PipelineYamlStep;
 import org.pipelineframework.config.template.PipelineTemplateConfig;
+import org.pipelineframework.config.template.PipelineTemplateTypeDefinition;
 import org.pipelineframework.connector.CommandExecutionPosture;
 import org.pipelineframework.connector.CommandMachineConfirmation;
 import org.pipelineframework.connector.CommandPolicy;
@@ -73,11 +74,31 @@ public final class DynamicOperationSelectionResolver {
                 + "' exposes no capabilities");
         }
         V3JavaTypeResolver typeResolver = new V3JavaTypeResolver(template);
+        boolean inertCommandHandoffs = hasHandoffVariant(template, source.outputType());
         List<DynamicOperationSelection.CallableSelection> callables = new ArrayList<>();
         source.callables().values().stream().sorted(Comparator.comparing(PipelineYamlCallable::alias))
+            .filter(callable -> !inertCommandHandoffs || callable.kind() == ConnectorOperationKind.QUERY)
             .forEach(callable -> callables.add(resolveCallable(
                 config, typeResolver, definition, sourceStepName, runtimeStepId, callable)));
+        if (callables.isEmpty()) {
+            throw new IllegalArgumentException("dynamic Query step has no executable Query callable: "
+                + sourceStepName);
+        }
         return new DynamicOperationSelection(definition, dispatchStepName, sourceStepName, runtimeStepId, callables);
+    }
+
+    private static boolean hasHandoffVariant(PipelineTemplateConfig template, String outputType) {
+        return template.typeModel().definition(outputType)
+            .filter(PipelineTemplateTypeDefinition.UnionType.class::isInstance)
+            .map(PipelineTemplateTypeDefinition.UnionType.class::cast)
+            .map(union -> union.variants().values().stream().anyMatch(variant -> {
+                String payload = variant.payload().name();
+                return "<tpf.llm.HandoffCall>".equals(payload)
+                    || template.typeModel().contributedTypeIdentity(payload)
+                        .map(identity -> "tpf.llm.HandoffCall".equals(identity.qualifiedName()))
+                        .orElse(false);
+            }))
+            .orElse(false);
     }
 
     private DynamicOperationSelection.CallableSelection resolveCallable(
