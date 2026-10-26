@@ -213,6 +213,11 @@ class BlockDefinitionImporterTest {
 
     @Test void linksAnInertCommandProposalAlongsideAQueryWithoutBlockCommandAuthority() throws Exception {
         Path dependency = applicationOwnedQuerySlotDependency();
+        Path definition = dependency.resolve("META-INF/pipeline/definition.yaml");
+        Files.writeString(definition, Files.readString(definition).replace(
+            "Decision: { java: com.example.Decision, fields: [[kind, string]] }",
+            "Decision: { java: com.example.Decision, variants: { call: <tpf.llm.AgentCall>, handoff: <tpf.llm.HandoffCall> } }")
+            .replace("AgentCall: { java: com.example.AgentCall, fields: [[binding, string], [operation, string], [argumentsJson, string], [contextJson, string]] }", ""));
         String applicationYaml = applicationOwnedQuerySlotApplication().replace(
             "lookup: { using: primary, operation: lookup, input: LookupRequest }",
             "lookup: { using: primary, operation: lookup, input: LookupRequest }\n"
@@ -231,6 +236,58 @@ class BlockDefinitionImporterTest {
             assertEquals("COMMAND", imported.definitions().getFirst().resolvedCallables().stream()
                 .filter(callable -> callable.alias().equals("owner_action"))
                 .findFirst().orElseThrow().kind());
+
+            ClassLoader previous = Thread.currentThread().getContextClassLoader();
+            try {
+                Thread.currentThread().setContextClassLoader(loader);
+                var string = new org.pipelineframework.config.template.PipelineTemplateTypeReference.Scalar("string");
+                var callFields = java.util.List.of(
+                    new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.Field("binding", string),
+                    new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.Field("operation", string),
+                    new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.Field("argumentsJson", string),
+                    new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.Field("contextJson", string));
+                var agentCall = new org.pipelineframework.protocol.ProtocolTypeDescriptor(
+                    new org.pipelineframework.protocol.ProtocolTypeIdentity(
+                        org.pipelineframework.connector.ConnectorProviderId.of("tpf.llm"), "AgentCall"),
+                    new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.RecordType(
+                        "AgentCall", callFields));
+                var handoff = new org.pipelineframework.protocol.ProtocolTypeDescriptor(
+                    new org.pipelineframework.protocol.ProtocolTypeIdentity(
+                        org.pipelineframework.connector.ConnectorProviderId.of("tpf.llm"), "HandoffCall"),
+                    new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.RecordType(
+                        "HandoffCall", callFields));
+                var catalogue = org.pipelineframework.connector.ConnectorProviderManifestLoader.load(loader);
+                var registry = new org.pipelineframework.protocol.ProtocolTypeRegistry(
+                    java.util.List.of(agentCall, handoff), catalogue);
+                var template = new PipelineTemplateConfigLoader(System::getProperty, System::getenv,
+                    ignored -> { }, registry).load(imported.configPath());
+                var selection = new org.pipelineframework.processor.routing.DynamicOperationSelectionResolver()
+                    .resolve(yaml, template,
+                        new org.pipelineframework.processor.composition.PipelineReference(
+                            "org.example.callable/callable-loop"),
+                        "Dispatch", "Decide", "Dispatch");
+                assertEquals(java.util.List.of("lookup"), selection.callables().stream()
+                    .map(org.pipelineframework.processor.ir.DynamicOperationSelection.CallableSelection::alias)
+                    .toList());
+            } finally {
+                Thread.currentThread().setContextClassLoader(previous);
+            }
+        }
+    }
+
+    @Test void rejectsMalformedApplicationTrustedArguments() throws Exception {
+        Path dependency = applicationOwnedQuerySlotDependency();
+        for (String malformed : java.util.List.of("null", "[nextEffectKey]")) {
+            String applicationYaml = applicationOwnedQuerySlotApplication().replace(
+                "lookup: { using: primary, operation: lookup, input: LookupRequest }",
+                "lookup: { using: primary, operation: lookup, input: LookupRequest,"
+                    + " trustedArguments: " + malformed + " }");
+            try (URLClassLoader loader = loader(dependency)) {
+                var failure = assertThrows(IllegalStateException.class,
+                    () -> new BlockDefinitionImporter(loader).importInto(application(applicationYaml)));
+                assertTrue(failure.getMessage().contains("trustedArguments must be a map"),
+                    failure.getMessage());
+            }
         }
     }
 

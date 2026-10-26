@@ -828,6 +828,11 @@ public final class BlockDefinitionImporter {
                     operationKind, version,
                     new ConnectorConfigurationDocument(operationConfig),
                     "imported Block callable '" + definition.qualifiedId() + "#" + alias + "'");
+                if (callable.containsKey("trustedArguments")
+                    && !(callable.get("trustedArguments") instanceof Map<?, ?>)) {
+                    throw new IllegalStateException("Imported callable '" + alias
+                        + "' trustedArguments must be a map.");
+                }
                 Map<String, String> trustedArguments = callable.get("trustedArguments") instanceof Map<?, ?> rawTrusted
                     ? stringMap(rawTrusted, "Imported callable '" + alias + "' trustedArguments") : Map.of();
                 Map<String, Object> linkedCallable = new LinkedHashMap<>(Map.of(
