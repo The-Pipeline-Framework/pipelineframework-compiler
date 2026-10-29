@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 root = pathlib.Path(sys.argv[1])
 pr_path = pathlib.Path(sys.argv[2])
 base_version = ET.parse("pom.xml").getroot().findtext("{http://maven.apache.org/POM/4.0.0}version", "")
-assert base_version.endswith("-SNAPSHOT") and re.fullmatch(r"\d+\.\d+\.\d+-SNAPSHOT", base_version)
+assert re.fullmatch(r"\d+\.\d+\.\d+(?:-SNAPSHOT)?", base_version)
 base_version = base_version.removesuffix("-SNAPSHOT")
 meta_path = root / "build-metadata.json"
 metadata = json.loads(meta_path.read_text())

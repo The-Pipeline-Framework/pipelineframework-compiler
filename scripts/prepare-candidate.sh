@@ -10,8 +10,6 @@ import sys
 import xml.etree.ElementTree as ET
 root = ET.parse(sys.argv[1]).getroot()
 version = root.findtext("{http://maven.apache.org/POM/4.0.0}version", "")
-if not version.endswith("-SNAPSHOT"):
-    raise SystemExit("root project version must end in -SNAPSHOT")
 print(version.removesuffix("-SNAPSHOT"))
 PY
 )
