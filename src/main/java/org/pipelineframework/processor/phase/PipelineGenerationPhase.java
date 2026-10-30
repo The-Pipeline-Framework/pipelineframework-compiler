@@ -86,8 +86,9 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
 
         // Initialize renderers
         GrpcServiceAdapterRenderer grpcRenderer = new GrpcServiceAdapterRenderer(GenerationTarget.GRPC_SERVICE);
-        org.pipelineframework.processor.renderer.ClientStepRenderer clientRenderer =
-            new org.pipelineframework.processor.renderer.ClientStepRenderer(GenerationTarget.CLIENT_STEP);
+        PipelineRenderer<GrpcBinding> clientRenderer =
+            springProfile ? new SpringGrpcClientStepRenderer()
+                : new org.pipelineframework.processor.renderer.ClientStepRenderer(GenerationTarget.CLIENT_STEP);
         PipelineRenderer<LocalBinding> localClientRenderer = springProfile
             ? new SpringLocalClientStepRenderer()
             : new org.pipelineframework.processor.renderer.LocalClientStepRenderer();
@@ -280,7 +281,7 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
                     queryClientStepRenderer);
         }
 
-        if (springProfile && ctx.isTransportModeGrpc()) {
+        if (SpringRendererProfileSupport.generatesGrpcServer(ctx)) {
             if (!(ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig template)) {
                 throw new IllegalStateException("Spring GRPC requires a pipeline template");
             }
@@ -583,7 +584,7 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
             ClassName cacheKeyGenerator,
             RoleMetadataGenerator roleMetadataGenerator,
             GrpcServiceAdapterRenderer grpcRenderer,
-            org.pipelineframework.processor.renderer.ClientStepRenderer clientRenderer,
+            PipelineRenderer<GrpcBinding> clientRenderer,
             PipelineRenderer<LocalBinding> localClientRenderer,
             PipelineRenderer<RestBinding> restClientRenderer,
             PipelineRenderer<RestBinding> restRenderer,

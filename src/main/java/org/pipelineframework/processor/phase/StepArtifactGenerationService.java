@@ -91,7 +91,7 @@ class StepArtifactGenerationService {
             ClassName cacheKeyGenerator,
             RoleMetadataGenerator roleMetadataGenerator,
             GrpcServiceAdapterRenderer grpcRenderer,
-            ClientStepRenderer clientRenderer,
+            PipelineRenderer<GrpcBinding> clientRenderer,
             PipelineRenderer<LocalBinding> localClientRenderer,
             PipelineRenderer<RestBinding> restClientRenderer,
             PipelineRenderer<RestBinding> restRenderer,
@@ -272,7 +272,7 @@ class StepArtifactGenerationService {
                         descriptorSet,
                         ctx.getTransportMode(),
                         template == null ? null : template.basePackage(),
-                        null,
+                        stepIndex,
                         v3GeneratedDomainTypes, canonicalTypeModel));
                     roleMetadataGenerator.recordClassWithRole(clientClassName, clientRole.name());
                 }
@@ -459,7 +459,7 @@ class StepArtifactGenerationService {
             ClassName cacheKeyGenerator,
             RoleMetadataGenerator roleMetadataGenerator,
             GrpcServiceAdapterRenderer grpcRenderer,
-            ClientStepRenderer clientRenderer,
+            PipelineRenderer<GrpcBinding> clientRenderer,
             PipelineRenderer<LocalBinding> localClientRenderer,
             PipelineRenderer<RestBinding> restClientRenderer,
             PipelineRenderer<RestBinding> restRenderer,

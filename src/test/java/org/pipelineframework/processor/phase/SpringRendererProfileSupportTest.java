@@ -99,15 +99,23 @@ class SpringRendererProfileSupportTest {
     }
 
     @Test
-    void rejectsGrpcClientStep() {
+    void acceptsGrpcClientStep() {
         PipelineCompilationContext context = context();
         context.setTransportMode(PipelineTransport.GRPC);
-        context.setStepModels(List.of(step(Set.of(GenerationTarget.LOCAL_CLIENT_STEP),
+        context.setStepModels(List.of(step(Set.of(GenerationTarget.CLIENT_STEP),
             StreamingShape.UNARY_UNARY, ServiceApiKind.REACTIVE, DeploymentRole.ORCHESTRATOR_CLIENT)));
+        assertDoesNotThrow(() -> SpringRendererProfileSupport.validateGenerationSupported(context));
+        org.junit.jupiter.api.Assertions.assertFalse(SpringRendererProfileSupport.generatesGrpcServer(context));
+    }
 
-        IllegalStateException failure = assertThrows(IllegalStateException.class,
+    @Test
+    void rejectsGrpcPluginClient() {
+        PipelineCompilationContext context = context();
+        context.setTransportMode(PipelineTransport.GRPC);
+        context.setStepModels(List.of(step(Set.of(GenerationTarget.CLIENT_STEP),
+            StreamingShape.UNARY_UNARY, ServiceApiKind.REACTIVE, DeploymentRole.PLUGIN_CLIENT)));
+        assertThrows(IllegalStateException.class,
             () -> SpringRendererProfileSupport.validateGenerationSupported(context));
-        assertTrue(failure.getMessage().contains("pipeline-server steps"));
     }
 
     @Test

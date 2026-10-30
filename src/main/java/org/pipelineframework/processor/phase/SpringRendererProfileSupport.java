@@ -42,6 +42,11 @@ final class SpringRendererProfileSupport {
         return ctx != null && SPRING_PROFILE.equalsIgnoreCase(ctx.getRendererProfile());
     }
 
+    static boolean generatesGrpcServer(PipelineCompilationContext ctx) {
+        return isSpringProfile(ctx) && ctx.isTransportModeGrpc()
+            && ctx.getStepModels().stream().anyMatch(model -> model.deploymentRole() == DeploymentRole.PIPELINE_SERVER);
+    }
+
     static void validateGenerationSupported(PipelineCompilationContext ctx) {
         if (!isSpringProfile(ctx)) {
             return;
@@ -74,10 +79,13 @@ final class SpringRendererProfileSupport {
     private static void validateModel(PipelineStepModel model, PipelineTransport transportMode, List<String> errors) {
         Set<GenerationTarget> supportedTargets = transportMode == PipelineTransport.REST
             ? Set.of(GenerationTarget.LOCAL_CLIENT_STEP, GenerationTarget.REST_RESOURCE, GenerationTarget.REST_CLIENT_STEP)
-            : Set.of(GenerationTarget.LOCAL_CLIENT_STEP);
+            : transportMode == PipelineTransport.GRPC
+                ? Set.of(GenerationTarget.LOCAL_CLIENT_STEP, GenerationTarget.CLIENT_STEP)
+                : Set.of(GenerationTarget.LOCAL_CLIENT_STEP);
         if (transportMode == PipelineTransport.GRPC
-            && model.deploymentRole() != DeploymentRole.PIPELINE_SERVER) {
-            errors.add("Spring GRPC supports only local pipeline-server steps; step '"
+            && model.deploymentRole() != DeploymentRole.PIPELINE_SERVER
+            && model.deploymentRole() != DeploymentRole.ORCHESTRATOR_CLIENT) {
+            errors.add("Spring GRPC supports only pipeline-server and ordinary client-role steps; step '"
                 + model.serviceName() + "' resolved role " + model.deploymentRole() + ".");
         }
         if (transportMode == PipelineTransport.GRPC

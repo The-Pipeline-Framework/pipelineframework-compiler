@@ -199,6 +199,19 @@ class PipelineTargetResolutionPhaseTest {
     }
 
     @Test
+    void springGrpcBlockingClientUsesOnlyNonblockingRemoteAdapter() throws Exception {
+        PipelineTargetResolutionPhase phase = new PipelineTargetResolutionPhase();
+        PipelineCompilationContext context = new PipelineCompilationContext(null,
+            org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        context.setRendererProfile("spring");
+        context.setTransportMode(PipelineTransport.GRPC);
+        context.setStepModels(List.of(step("ProcessRemoteService", DeploymentRole.ORCHESTRATOR_CLIENT)
+            .toBuilder().serviceApiKind(org.pipelineframework.processor.ir.ServiceApiKind.BLOCKING).build()));
+        phase.execute(context);
+        assertEquals(Set.of(GenerationTarget.CLIENT_STEP), context.getStepModels().getFirst().enabledTargets());
+    }
+
+    @Test
     void preservesDelegationMetadataWhenResolvingTargets() throws Exception {
         PipelineTargetResolutionPhase phase = new PipelineTargetResolutionPhase();
         PipelineCompilationContext context = new PipelineCompilationContext(null, org.pipelineframework.processor.Jsr269SourceInventory.empty());

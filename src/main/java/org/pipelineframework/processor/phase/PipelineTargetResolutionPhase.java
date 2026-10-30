@@ -235,7 +235,10 @@ public class PipelineTargetResolutionPhase implements PipelineCompilationPhase {
             return Set.of(GenerationTarget.LOCAL_CLIENT_STEP);
         }
         LinkedHashSet<GenerationTarget> targets = new LinkedHashSet<>(resolveTargetsForRole(model.deploymentRole(), transportMode));
-        if (model.serviceApiKind() != ServiceApiKind.REACTIVE
+        boolean springGrpcClient = SpringRendererProfileSupport.isSpringProfile(ctx)
+            && transportMode == PipelineTransport.GRPC
+            && model.deploymentRole() == DeploymentRole.ORCHESTRATOR_CLIENT;
+        if (!springGrpcClient && model.serviceApiKind() != ServiceApiKind.REACTIVE
             && model.delegateService() == null
             && (model.remoteExecution() == null || !model.remoteExecution().isRemote())) {
             targets.add(GenerationTarget.BLOCKING_REACTIVE_BRIDGE);

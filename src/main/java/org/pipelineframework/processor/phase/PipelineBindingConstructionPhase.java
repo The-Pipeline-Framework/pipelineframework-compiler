@@ -82,7 +82,7 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
         DescriptorProtos.FileDescriptorSet descriptorSet = ctx.getDescriptorSet();
 
         boolean grpcTransport = ctx.isTransportModeGrpc();
-        boolean springGrpc = grpcTransport && SpringRendererProfileSupport.isSpringProfile(ctx);
+        boolean springGrpc = SpringRendererProfileSupport.generatesGrpcServer(ctx);
         boolean requiresGrpcArtifacts = ctx.getStepModels().stream().anyMatch(this::isGrpcBoundStep);
         boolean requiresRemoteOperatorDescriptors = ctx.getStepModels().stream().anyMatch(this::isRemoteOperatorStep);
         if (descriptorSet == null
@@ -120,11 +120,11 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
         if (!ctx.isTransportModeGrpc()) {
             return;
         }
-        if (SpringRendererProfileSupport.isSpringProfile(ctx)
+        if (SpringRendererProfileSupport.generatesGrpcServer(ctx)
             && (descriptorSet == null || descriptorSet.getFileCount() == 0)) {
             throw new IllegalStateException("Spring GRPC requires a protobuf descriptor set with PipelineService.Run");
         }
-        if (SpringRendererProfileSupport.isSpringProfile(ctx)
+        if (SpringRendererProfileSupport.generatesGrpcServer(ctx)
             && descriptorSet.getFileList().stream()
                 .flatMap(file -> file.getServiceList().stream())
                 .noneMatch(service -> "PipelineService".equals(service.getName()))) {
@@ -200,9 +200,10 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
         DescriptorFileLocator locator = new DescriptorFileLocator();
         Set<String> expectedServices = ctx.getStepModels().stream()
             .filter(model -> model.delegateService() == null)
+            .filter(this::isGrpcBoundStep)
             .map(PipelineStepModel::serviceName)
             .collect(Collectors.toCollection(java.util.HashSet::new));
-        if (ctx.isTransportModeGrpc() && SpringRendererProfileSupport.isSpringProfile(ctx)) {
+        if (SpringRendererProfileSupport.generatesGrpcServer(ctx)) {
             expectedServices.add("PipelineService");
         }
         return locator.locateAndLoadDescriptors(

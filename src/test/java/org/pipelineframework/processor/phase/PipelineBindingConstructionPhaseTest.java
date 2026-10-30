@@ -307,6 +307,9 @@ class PipelineBindingConstructionPhaseTest {
         context.setRendererProfile("spring");
         context.setTransportMode(PipelineTransport.GRPC);
         context.setDescriptorSet(descriptorSetForService("AnotherService"));
+        context.setStepModels(List.of(TestModelFactory.createTestModelWithTargets("LocalService",
+            Set.of(GenerationTarget.LOCAL_CLIENT_STEP)).toBuilder()
+            .deploymentRole(DeploymentRole.PIPELINE_SERVER).build()));
 
         IllegalStateException error = assertThrows(IllegalStateException.class, () -> phase.execute(context));
         assertTrue(error.getMessage().contains("PipelineService.Run"));
