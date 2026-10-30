@@ -49,8 +49,9 @@ final class SpringRendererProfileSupport {
 
         List<String> errors = new ArrayList<>();
         PipelineTransport transportMode = ctx.getTransportMode();
-        if (transportMode != PipelineTransport.LOCAL && transportMode != PipelineTransport.REST) {
-            errors.add("Spring renderer profile currently supports only pipeline.transport=LOCAL or REST.");
+        if (transportMode != PipelineTransport.LOCAL && transportMode != PipelineTransport.REST
+            && transportMode != PipelineTransport.GRPC) {
+            errors.add("Spring renderer profile currently supports only pipeline.transport=LOCAL, REST, or GRPC.");
         }
         if (ctx.isPlatformModeFunction()) {
             errors.add("Spring renderer profile currently supports only pipeline.platform=COMPUTE.");
@@ -74,6 +75,16 @@ final class SpringRendererProfileSupport {
         Set<GenerationTarget> supportedTargets = transportMode == PipelineTransport.REST
             ? Set.of(GenerationTarget.LOCAL_CLIENT_STEP, GenerationTarget.REST_RESOURCE, GenerationTarget.REST_CLIENT_STEP)
             : Set.of(GenerationTarget.LOCAL_CLIENT_STEP);
+        if (transportMode == PipelineTransport.GRPC
+            && model.deploymentRole() != DeploymentRole.PIPELINE_SERVER) {
+            errors.add("Spring GRPC supports only local pipeline-server steps; step '"
+                + model.serviceName() + "' resolved role " + model.deploymentRole() + ".");
+        }
+        if (transportMode == PipelineTransport.GRPC
+            && model.deferredCompletionSelection().isPresent()) {
+            errors.add("Spring GRPC does not support durable await or broker completion; step '"
+                + model.serviceName() + "'.");
+        }
         if (!supportedTargets.containsAll(model.enabledTargets())) {
             errors.add("Spring renderer profile currently supports only " + supportedTargets + " generation; step '"
                 + model.serviceName() + "' resolved targets " + model.enabledTargets() + ".");

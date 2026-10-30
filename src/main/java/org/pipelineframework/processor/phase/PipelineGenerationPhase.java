@@ -280,7 +280,23 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
                     queryClientStepRenderer);
         }
 
-        if (ctx.isTransportModeGrpc() && descriptorSet != null) {
+        if (springProfile && ctx.isTransportModeGrpc()) {
+            if (!(ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig template)) {
+                throw new IllegalStateException("Spring GRPC requires a pipeline template");
+            }
+            boolean v3 = template.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3;
+            new SpringGrpcPipelineServiceRenderer().render(
+                ctx.getStepModels().getFirst(), ctx.getStepModels().getLast(),
+                Jsr269GenerationContext.create(ctx.getProcessingEnv(),
+                    generationPathResolver.resolveRoleOutputDir(ctx, DeploymentRole.PIPELINE_SERVER),
+                    DeploymentRole.PIPELINE_SERVER, enabledAspects, cacheKeyGenerator, descriptorSet,
+                    ctx.getTransportMode(), template.basePackage(), null, v3,
+                    v3 ? Optional.of(template.typeModel()) : Optional.empty()));
+            roleMetadataGenerator.recordClassWithRole(template.basePackage() + ".pipeline."
+                + SpringGrpcPipelineServiceRenderer.CLASS_NAME, DeploymentRole.PIPELINE_SERVER.name());
+        }
+
+        if (!springProfile && ctx.isTransportModeGrpc() && descriptorSet != null) {
             protobufParserService.generateProtobufParsers(ctx, descriptorSet);
         }
 

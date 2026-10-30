@@ -82,10 +82,12 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
         DescriptorProtos.FileDescriptorSet descriptorSet = ctx.getDescriptorSet();
 
         boolean grpcTransport = ctx.isTransportModeGrpc();
+        boolean springGrpc = grpcTransport && SpringRendererProfileSupport.isSpringProfile(ctx);
         boolean requiresGrpcArtifacts = ctx.getStepModels().stream().anyMatch(this::isGrpcBoundStep);
         boolean requiresRemoteOperatorDescriptors = ctx.getStepModels().stream().anyMatch(this::isRemoteOperatorStep);
         if (descriptorSet == null
-            && ((grpcTransport && requiresGrpcArtifacts) || needsGrpcBindings(ctx) || requiresRemoteOperatorDescriptors)) {
+            && ((grpcTransport && requiresGrpcArtifacts) || springGrpc
+                || needsGrpcBindings(ctx) || requiresRemoteOperatorDescriptors)) {
             descriptorSet = loadDescriptorSet(ctx);
             ctx.setDescriptorSet(descriptorSet);
         }
@@ -117,6 +119,10 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
             DescriptorProtos.FileDescriptorSet descriptorSet) {
         if (!ctx.isTransportModeGrpc()) {
             return;
+        }
+        if (SpringRendererProfileSupport.isSpringProfile(ctx)
+            && (descriptorSet == null || descriptorSet.getFileCount() == 0)) {
+            throw new IllegalStateException("Spring GRPC requires a protobuf descriptor set with PipelineService.Run");
         }
         boolean hasNonDelegatedGrpcSteps = false;
         for (PipelineStepModel model : ctx.getStepModels()) {
@@ -187,7 +193,10 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
         Set<String> expectedServices = ctx.getStepModels().stream()
             .filter(model -> model.delegateService() == null)
             .map(PipelineStepModel::serviceName)
-            .collect(Collectors.toSet());
+            .collect(Collectors.toCollection(java.util.HashSet::new));
+        if (ctx.isTransportModeGrpc() && SpringRendererProfileSupport.isSpringProfile(ctx)) {
+            expectedServices.add("PipelineService");
+        }
         return locator.locateAndLoadDescriptors(
             ctx.getCompilerOptions().asMap(),
             expectedServices,

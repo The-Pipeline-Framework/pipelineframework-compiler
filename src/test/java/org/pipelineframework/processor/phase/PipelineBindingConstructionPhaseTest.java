@@ -206,6 +206,7 @@ class PipelineBindingConstructionPhaseTest {
         PipelineBindingConstructionPhase phase = new PipelineBindingConstructionPhase();
         PipelineCompilationContext context = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
         context.setRendererProfile("spring");
+        context.setTransportMode(PipelineTransport.LOCAL);
 
         PipelineStepModel delegatedModel = TestModelFactory
             .createTestModelWithTargets("DelegatedLocalService", Set.of(GenerationTarget.LOCAL_CLIENT_STEP))

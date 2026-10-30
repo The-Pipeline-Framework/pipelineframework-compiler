@@ -91,12 +91,41 @@ class SpringRendererProfileSupportTest {
     }
 
     @Test
-    void rejectsGrpcTransport() {
+    void acceptsGrpcComputeUnaryPipelineServer() {
         PipelineCompilationContext context = context();
         context.setTransportMode(PipelineTransport.GRPC);
 
-        assertThrows(IllegalStateException.class,
+        assertDoesNotThrow(() -> SpringRendererProfileSupport.validateGenerationSupported(context));
+    }
+
+    @Test
+    void rejectsGrpcClientStep() {
+        PipelineCompilationContext context = context();
+        context.setTransportMode(PipelineTransport.GRPC);
+        context.setStepModels(List.of(step(Set.of(GenerationTarget.LOCAL_CLIENT_STEP),
+            StreamingShape.UNARY_UNARY, ServiceApiKind.REACTIVE, DeploymentRole.ORCHESTRATOR_CLIENT)));
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
             () -> SpringRendererProfileSupport.validateGenerationSupported(context));
+        assertTrue(failure.getMessage().contains("pipeline-server steps"));
+    }
+
+    @Test
+    void rejectsGrpcDurableCompletion() {
+        PipelineCompilationContext context = context();
+        context.setTransportMode(PipelineTransport.GRPC);
+        var completion = new org.pipelineframework.processor.ir.DeferredCompletionSelection(
+            ClassName.get("com.example.service", "PaymentStatus"), "PaymentStatus",
+            java.util.Optional.empty(), java.time.Duration.ofMinutes(1), List.of(),
+            "paymentId", "kafka", java.util.Map.of(),
+            java.util.Optional.empty(), java.util.Optional.empty());
+        context.setStepModels(List.of(step(Set.of(GenerationTarget.LOCAL_CLIENT_STEP),
+            StreamingShape.UNARY_UNARY, ServiceApiKind.REACTIVE)
+            .toBuilder().deferredCompletionSelection(completion).build()));
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+            () -> SpringRendererProfileSupport.validateGenerationSupported(context));
+        assertTrue(failure.getMessage().contains("durable await or broker completion"));
     }
 
     @Test

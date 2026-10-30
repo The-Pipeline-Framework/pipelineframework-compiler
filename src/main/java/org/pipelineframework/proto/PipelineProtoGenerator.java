@@ -31,6 +31,7 @@ import org.pipelineframework.processor.block.BlockDefinitionImporter;
 public class PipelineProtoGenerator {
 
     private static final String ORCHESTRATOR_PROTO = "orchestrator.proto";
+    private static final String SPRING_UNARY_PROTO = "pipeline-unary.proto";
     private static final String TYPES_PROTO = "pipeline-types.proto";
     private static final String IDL_BOOTSTRAP_PROPERTY = "pipeline.idl.bootstrap";
     private static final String REQUIRE_COMMITTED_IDL_STATE_PROPERTY = "pipeline.idl.require-committed-state";
@@ -38,6 +39,7 @@ public class PipelineProtoGenerator {
     private final PipelineStepNormalizer stepNormalizer = new PipelineStepNormalizer();
     private final PipelineStepProtoRenderer stepRenderer = new PipelineStepProtoRenderer();
     private final PipelineOrchestratorProtoRenderer orchestratorRenderer = new PipelineOrchestratorProtoRenderer();
+    private final SpringGrpcUnaryProtoRenderer springUnaryRenderer = new SpringGrpcUnaryProtoRenderer();
     private final ExternalStepHostContractRenderer externalRenderer = new ExternalStepHostContractRenderer();
     private final PipelineIdlSnapshotWriter idlWriter = new PipelineIdlSnapshotWriter();
 
@@ -55,7 +57,8 @@ public class PipelineProtoGenerator {
     public static void main(String[] args) {
         Arguments arguments = Arguments.parse(args);
         PipelineProtoGenerator generator = new PipelineProtoGenerator();
-        generator.generate(arguments.moduleDir(), arguments.configPath(), arguments.outputDir(), arguments.typesProtoName());
+        generator.generate(arguments.moduleDir(), arguments.configPath(), arguments.outputDir(),
+            arguments.typesProtoName(), arguments.springGrpcUnary());
     }
 
     /**
@@ -89,6 +92,11 @@ public class PipelineProtoGenerator {
      * @throws IllegalStateException if the configuration is invalid or missing required values, if the config cannot be located, if output directories cannot be created, or if IDL compatibility checks fail
      */
     public void generate(Path moduleDir, Path configPath, Path outputDir, String typesProtoName) {
+        generate(moduleDir, configPath, outputDir, typesProtoName, false);
+    }
+
+    public void generate(Path moduleDir, Path configPath, Path outputDir, String typesProtoName,
+                         boolean springGrpcUnary) {
         Path resolvedModuleDir = moduleDir == null ? Path.of("") : moduleDir;
         Path resolvedConfig = resolveConfigPath(resolvedModuleDir, configPath).toAbsolutePath().normalize();
         Path resolvedOutput = outputDir != null
@@ -98,6 +106,10 @@ public class PipelineProtoGenerator {
 
         PipelineTemplateConfig config = new PipelineTemplateConfigLoader().load(resolvedConfig,
             new BlockDefinitionImporter(PipelineProtoGenerator.class.getClassLoader())::importForGeneration);
+        if (springGrpcUnary && (!"GRPC".equalsIgnoreCase(config.transport())
+            || config.platform() != org.pipelineframework.config.template.PipelinePlatform.COMPUTE)) {
+            throw new IllegalStateException("--spring-grpc-unary requires transport=GRPC and platform=COMPUTE");
+        }
         Path idlStatePath = idlWriter.resolveIdlStatePath(resolvedConfig);
         PipelineIdlSnapshot committedState = Files.exists(idlStatePath) ? idlWriter.readBaselineSnapshot(idlStatePath.toString()) : null;
         boolean lockMissing = committedState == null;
@@ -128,6 +140,9 @@ public class PipelineProtoGenerator {
         }
         List<PipelineTemplateStep> steps = config.steps();
         if (steps == null || steps.isEmpty()) {
+            if (springGrpcUnary) {
+                throw new IllegalStateException("--spring-grpc-unary requires at least one pipeline step");
+            }
             externalRenderer.write(config.basePackage(), resolvedOutput, List.of(), resolvedTypesProtoName);
             if (config.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
                 writeProto(resolvedOutput.resolve(resolvedTypesProtoName),
@@ -168,8 +183,14 @@ public class PipelineProtoGenerator {
         }
         externalRenderer.write(config.basePackage(), resolvedOutput, resolvedSteps, resolvedTypesProtoName);
 
+        if (springGrpcUnary) {
+            writeProto(resolvedOutput.resolve(SPRING_UNARY_PROTO), springUnaryRenderer.render(
+                config.basePackage(), resolvedSteps.getFirst(), resolvedSteps.getLast(),
+                sharedTypes, resolvedTypesProtoName));
+        }
+
         String transport = config.transport();
-        if (transport == null || transport.isBlank() || "GRPC".equalsIgnoreCase(transport)) {
+        if (!springGrpcUnary && (transport == null || transport.isBlank() || "GRPC".equalsIgnoreCase(transport))) {
             String content = orchestratorRenderer.renderOrchestratorProto(config.basePackage(), resolvedSteps, sharedTypes, resolvedTypesProtoName);
             Path protoPath = resolvedOutput.resolve(ORCHESTRATOR_PROTO);
             writeProto(protoPath, content);
@@ -214,7 +235,8 @@ public class PipelineProtoGenerator {
         }
     }
 
-    private record Arguments(Path moduleDir, Path configPath, Path outputDir, String typesProtoName) {
+    private record Arguments(Path moduleDir, Path configPath, Path outputDir, String typesProtoName,
+                             boolean springGrpcUnary) {
         /**
          * Parse command-line options and produce an Arguments instance with the resolved paths.
          *
@@ -233,6 +255,7 @@ public class PipelineProtoGenerator {
             Path configPath = null;
             Path outputDir = null;
             String typesProtoName = TYPES_PROTO;
+            boolean springGrpcUnary = false;
             if (args != null) {
                 for (int i = 0; i < args.length; i++) {
                     String arg = args[i];
@@ -255,13 +278,15 @@ public class PipelineProtoGenerator {
                         typesProtoName = arg.substring("--types-proto-name=".length());
                     } else if ("--types-proto-name".equals(arg) && i + 1 < args.length) {
                         typesProtoName = args[++i];
+                    } else if ("--spring-grpc-unary".equals(arg)) {
+                        springGrpcUnary = true;
                     } else if ("--help".equals(arg) || "-h".equals(arg)) {
                         printUsage();
                         System.exit(0);
                     }
                 }
             }
-            return new Arguments(moduleDir, configPath, outputDir, typesProtoName);
+            return new Arguments(moduleDir, configPath, outputDir, typesProtoName, springGrpcUnary);
         }
 
         /**
@@ -271,7 +296,7 @@ public class PipelineProtoGenerator {
          */
         static void printUsage() {
             System.out.println(
-                "Usage: PipelineProtoGenerator [--module-dir DIR] [--config PATH] [--output-dir DIR] [--types-proto-name FILE]");
+                "Usage: PipelineProtoGenerator [--module-dir DIR] [--config PATH] [--output-dir DIR] [--types-proto-name FILE] [--spring-grpc-unary]");
         }
     }
 }

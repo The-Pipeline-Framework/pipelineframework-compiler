@@ -204,6 +204,11 @@ public class PipelineTargetResolutionPhase implements PipelineCompilationPhase {
             return Set.of(GenerationTarget.LOCAL_CLIENT_STEP);
         }
         if (SpringRendererProfileSupport.isSpringProfile(ctx)
+            && transportMode == PipelineTransport.GRPC
+            && model.deploymentRole() == DeploymentRole.PIPELINE_SERVER) {
+            return Set.of(GenerationTarget.LOCAL_CLIENT_STEP);
+        }
+        if (SpringRendererProfileSupport.isSpringProfile(ctx)
             && transportMode == PipelineTransport.REST
             && model.sideEffect()
             && model.deploymentRole() == DeploymentRole.PIPELINE_SERVER) {
