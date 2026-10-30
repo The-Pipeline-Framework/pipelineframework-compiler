@@ -129,6 +129,25 @@ public class GrpcJavaTypeResolver {
         }
     }
 
+    /** Resolve grpc-java service and future-stub names independently of Mutiny bindings. */
+    public GrpcJavaServiceTypes resolveJavaService(GrpcBinding binding) {
+        if (!(binding.serviceDescriptor() instanceof Descriptors.ServiceDescriptor service)
+            || !(binding.methodDescriptor() instanceof Descriptors.MethodDescriptor method)
+            || method.getService() != service) {
+            throw new IllegalStateException("Spring GRPC requires matching service and method descriptors");
+        }
+        if (method.isClientStreaming() || method.isServerStreaming()) {
+            throw new IllegalStateException("Spring GRPC client steps require a unary RPC: " + method.getFullName());
+        }
+        String javaPackage = service.getFile().getOptions().hasJavaPackage()
+            ? service.getFile().getOptions().getJavaPackage() : service.getFile().getPackage();
+        ClassName serviceClass = ClassName.get(javaPackage, service.getName() + "Grpc");
+        return new GrpcJavaServiceTypes(serviceClass,
+            serviceClass.nestedClass(service.getName() + "FutureStub"), method.getName());
+    }
+
+    public record GrpcJavaServiceTypes(ClassName serviceClass, ClassName futureStub, String methodName) {}
+
     /**
      * Resolve a protobuf message fully-qualified name to the corresponding JavaPoet ClassName,
      * honouring `java_package`, `java_outer_classname` and `java_multiple_files` file options.

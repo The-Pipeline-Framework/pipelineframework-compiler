@@ -47,6 +47,106 @@ class PipelineProtoGeneratorTest {
     Path tempDir;
 
     @Test
+    void springUnaryContractUsesFirstInputAndFinalOutput() throws Exception {
+        Path config = tempDir.resolve("pipeline.yaml");
+        Path output = tempDir.resolve("generated");
+        Files.writeString(config, """
+            version: 2
+            appName: SpringUnary
+            basePackage: com.example.springunary
+            transport: GRPC
+            platform: COMPUTE
+            types:
+              PaymentRequest: { fields: [[1, id, string]] }
+              ValidatedPayment: { fields: [[1, id, string]] }
+              PaymentReceipt: { fields: [[1, id, string]] }
+            steps:
+              - name: Validate Payment
+                cardinality: ONE_TO_ONE
+                input: PaymentRequest
+                output: ValidatedPayment
+              - name: Complete Payment
+                cardinality: ONE_TO_ONE
+                input: ValidatedPayment
+                output: PaymentReceipt
+            """);
+
+        new PipelineProtoGenerator().generate(tempDir, config, output, "pipeline-types.proto", true);
+
+        String proto = Files.readString(output.resolve("pipeline-unary.proto"));
+        assertTrue(proto.contains("import \"pipeline-types.proto\";"));
+        assertTrue(proto.contains("rpc Run(PaymentRequest) returns (PaymentReceipt);"));
+        assertFalse(proto.contains("ValidatedPayment"));
+        assertFalse(Files.exists(output.resolve("orchestrator.proto")));
+
+        new PipelineProtoGenerator().generate(tempDir, config, output, "pipeline-types.proto", false);
+        assertTrue(Files.exists(output.resolve("orchestrator.proto")));
+        assertFalse(Files.exists(output.resolve("pipeline-unary.proto")));
+        new PipelineProtoGenerator().generate(tempDir, config, output, "pipeline-types.proto", true);
+        assertFalse(Files.exists(output.resolve("orchestrator.proto")));
+        assertTrue(Files.exists(output.resolve("pipeline-unary.proto")));
+    }
+
+    @Test
+    void springUnaryRejectsTypesFileCollisionBeforeWriting() throws Exception {
+        Path config = tempDir.resolve("pipeline.yaml");
+        Files.writeString(config, "unused");
+        Path output = tempDir.resolve("generated");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> new PipelineProtoGenerator().generate(tempDir, config, output, "pipeline-unary.proto", true));
+        assertTrue(error.getMessage().contains("--types-proto-name"));
+        assertFalse(Files.exists(output));
+    }
+
+    @Test
+    void springUnaryRejectsEmptyPipelineBeforeWritingIdl() throws Exception {
+        Path config = tempDir.resolve("pipeline.yaml");
+        Files.writeString(config, """
+            version: 2
+            appName: Empty
+            basePackage: com.example.empty
+            transport: GRPC
+            platform: COMPUTE
+            types:
+              Input: { fields: [[1, id, string]] }
+            steps: []
+            """);
+        Path output = tempDir.resolve("generated");
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new PipelineProtoGenerator().generate(tempDir, config, output, "pipeline-types.proto", true));
+        assertTrue(error.getMessage().contains("at least one pipeline step"));
+        assertFalse(Files.exists(output));
+        try (var files = Files.list(tempDir)) {
+            assertEquals(List.of(config), files.toList());
+        }
+    }
+
+    @Test
+    void springUnaryContractRejectsNonGrpcTransport() throws Exception {
+        Path config = tempDir.resolve("local.yaml");
+        Files.writeString(config, """
+            version: 2
+            appName: Local
+            basePackage: com.example.local
+            transport: LOCAL
+            platform: COMPUTE
+            types:
+              Input: { fields: [[1, id, string]] }
+              Output: { fields: [[1, id, string]] }
+            steps:
+              - name: Process
+                cardinality: ONE_TO_ONE
+                input: Input
+                output: Output
+            """);
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+            () -> new PipelineProtoGenerator().generate(tempDir, config, tempDir.resolve("out"),
+                "pipeline-types.proto", true));
+        assertTrue(failure.getMessage().contains("transport=GRPC and platform=COMPUTE"));
+    }
+
+    @Test
     void v3PagedSourceAddsPageRpcWithoutChangingRemoteProcess() throws Exception {
         Path config = tempDir.resolve("paged.yaml");
         Path output = tempDir.resolve("paged-generated");

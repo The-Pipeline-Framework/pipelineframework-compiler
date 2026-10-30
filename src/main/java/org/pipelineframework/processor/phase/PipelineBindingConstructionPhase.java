@@ -82,10 +82,12 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
         DescriptorProtos.FileDescriptorSet descriptorSet = ctx.getDescriptorSet();
 
         boolean grpcTransport = ctx.isTransportModeGrpc();
+        boolean springGrpc = SpringRendererProfileSupport.generatesGrpcServer(ctx);
         boolean requiresGrpcArtifacts = ctx.getStepModels().stream().anyMatch(this::isGrpcBoundStep);
         boolean requiresRemoteOperatorDescriptors = ctx.getStepModels().stream().anyMatch(this::isRemoteOperatorStep);
         if (descriptorSet == null
-            && ((grpcTransport && requiresGrpcArtifacts) || needsGrpcBindings(ctx) || requiresRemoteOperatorDescriptors)) {
+            && ((grpcTransport && requiresGrpcArtifacts) || springGrpc
+                || needsGrpcBindings(ctx) || requiresRemoteOperatorDescriptors)) {
             descriptorSet = loadDescriptorSet(ctx);
             ctx.setDescriptorSet(descriptorSet);
         }
@@ -117,6 +119,18 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
             DescriptorProtos.FileDescriptorSet descriptorSet) {
         if (!ctx.isTransportModeGrpc()) {
             return;
+        }
+        if (SpringRendererProfileSupport.generatesGrpcServer(ctx)
+            && (descriptorSet == null || descriptorSet.getFileCount() == 0)) {
+            throw new IllegalStateException("Spring GRPC requires a protobuf descriptor set with PipelineService.Run");
+        }
+        if (SpringRendererProfileSupport.generatesGrpcServer(ctx)
+            && descriptorSet.getFileList().stream()
+                .flatMap(file -> file.getServiceList().stream())
+                .noneMatch(service -> "PipelineService".equals(service.getName()))) {
+            throw new IllegalStateException(
+                "Spring GRPC requires PipelineService.Run in the protobuf descriptor set. "
+                    + "Enable --spring-grpc-unary to generate it.");
         }
         boolean hasNonDelegatedGrpcSteps = false;
         for (PipelineStepModel model : ctx.getStepModels()) {
@@ -184,14 +198,23 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
      */
     private DescriptorProtos.FileDescriptorSet loadDescriptorSet(PipelineCompilationContext ctx) throws IOException {
         DescriptorFileLocator locator = new DescriptorFileLocator();
-        Set<String> expectedServices = ctx.getStepModels().stream()
-            .filter(model -> model.delegateService() == null)
-            .map(PipelineStepModel::serviceName)
-            .collect(Collectors.toSet());
+        Set<String> expectedServices = expectedDescriptorServices(ctx);
         return locator.locateAndLoadDescriptors(
             ctx.getCompilerOptions().asMap(),
             expectedServices,
             ctx.getProcessingEnv().getMessager());
+    }
+
+    Set<String> expectedDescriptorServices(PipelineCompilationContext ctx) {
+        Set<String> expected = ctx.getStepModels().stream()
+            .filter(model -> model.delegateService() == null)
+            .filter(model -> isGrpcBoundStep(model) || isRemoteOperatorStep(model))
+            .map(PipelineStepModel::serviceName)
+            .collect(Collectors.toCollection(java.util.HashSet::new));
+        if (SpringRendererProfileSupport.generatesGrpcServer(ctx)) {
+            expected.add("PipelineService");
+        }
+        return Set.copyOf(expected);
     }
 
 }

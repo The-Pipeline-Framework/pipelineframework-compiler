@@ -84,6 +84,19 @@ public class GrpcBindingResolver {
                 .build();
     }
 
+    /** Resolve the opt-in whole-pipeline unary RPC from the compiled descriptor set. */
+    public Descriptors.MethodDescriptor resolvePipelineRun(DescriptorProtos.FileDescriptorSet descriptorSet) {
+        if (descriptorSet == null || descriptorSet.getFileCount() == 0) {
+            throw new IllegalStateException("Spring GRPC requires a descriptor set containing PipelineService.Run");
+        }
+        Descriptors.ServiceDescriptor service = findServiceDescriptor("PipelineService", descriptorSet);
+        Descriptors.MethodDescriptor method = service.findMethodByName("Run");
+        if (method == null || method.isClientStreaming() || method.isServerStreaming()) {
+            throw new IllegalStateException("PipelineService.Run must be a unary RPC");
+        }
+        return method;
+    }
+
     /**
          * Locate the service descriptor whose name matches the step's configured service.
          *
@@ -108,6 +121,11 @@ public class GrpcBindingResolver {
                     stepModel.serviceName(), expectedServiceName));
         }
 
+        return findServiceDescriptor(expectedServiceName, descriptorSet);
+    }
+
+    private Descriptors.ServiceDescriptor findServiceDescriptor(String expectedServiceName,
+                                                                 DescriptorProtos.FileDescriptorSet descriptorSet) {
         // Build all file descriptors with proper dependency resolution
         // This handles complex dependency scenarios including imported files and transitive dependencies
         Map<String, Descriptors.FileDescriptor> builtFileDescriptors = new HashMap<>();
@@ -163,7 +181,7 @@ public class GrpcBindingResolver {
                     } catch (Exception e) {
                         throw new IllegalStateException(
                             String.format("Build error for step '%s': Failed to build file descriptor for '%s': %s",
-                                stepModel.serviceName(), fileName, e.getMessage()), e);
+                                expectedServiceName, fileName, e.getMessage()), e);
                     }
                 } else {
                     allBuilt = false; // Need another iteration
@@ -179,7 +197,7 @@ public class GrpcBindingResolver {
             String message = String.format(
                 "Build error for step '%s': Could not resolve all file descriptor dependencies after %d iterations. " +
                     "Built: %d, Expected: %d. Unbuilt files: [%s]",
-                stepModel.serviceName(),
+                expectedServiceName,
                 iterations,
                 builtProjectCount,
                 projectFileNames.size(),
@@ -196,7 +214,7 @@ public class GrpcBindingResolver {
                     if (foundService != null) {
                         throw new IllegalStateException(
                             String.format("Build error for step '%s': Multiple services named '%s' found in descriptor set",
-                                stepModel.serviceName(), expectedServiceName));
+                                expectedServiceName, expectedServiceName));
                     }
                     foundService = service;
                 }
@@ -206,7 +224,7 @@ public class GrpcBindingResolver {
         if (foundService == null) {
             throw new IllegalStateException(
                 String.format("Build error for step '%s': Service named '%s' not found in descriptor set",
-                    stepModel.serviceName(), expectedServiceName));
+                    expectedServiceName, expectedServiceName));
         }
 
         return foundService;

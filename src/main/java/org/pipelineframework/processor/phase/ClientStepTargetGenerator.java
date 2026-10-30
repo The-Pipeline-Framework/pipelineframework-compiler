@@ -5,7 +5,8 @@ import java.util.Objects;
 
 import org.pipelineframework.processor.ir.DeploymentRole;
 import org.pipelineframework.processor.ir.GenerationTarget;
-import org.pipelineframework.processor.renderer.ClientStepRenderer;
+import org.pipelineframework.processor.renderer.PipelineRenderer;
+import org.pipelineframework.processor.ir.GrpcBinding;
 import org.pipelineframework.processor.renderer.GenerationContext;
 
 /**
@@ -15,12 +16,12 @@ public class ClientStepTargetGenerator implements TargetGenerator {
 
     private static final String SERVICE_SUFFIX = "Service";
 
-    private final ClientStepRenderer renderer;
+    private final PipelineRenderer<GrpcBinding> renderer;
     private final GenerationPolicy policy;
     private final GenerationPathResolver pathResolver;
 
     public ClientStepTargetGenerator(
-            ClientStepRenderer renderer,
+            PipelineRenderer<GrpcBinding> renderer,
             GenerationPolicy policy,
             GenerationPathResolver pathResolver) {
         this.renderer = Objects.requireNonNull(renderer, "renderer must not be null");

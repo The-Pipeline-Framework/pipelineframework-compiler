@@ -206,6 +206,7 @@ class PipelineBindingConstructionPhaseTest {
         PipelineBindingConstructionPhase phase = new PipelineBindingConstructionPhase();
         PipelineCompilationContext context = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
         context.setRendererProfile("spring");
+        context.setTransportMode(PipelineTransport.LOCAL);
 
         PipelineStepModel delegatedModel = TestModelFactory
             .createTestModelWithTargets("DelegatedLocalService", Set.of(GenerationTarget.LOCAL_CLIENT_STEP))
@@ -296,6 +297,37 @@ class PipelineBindingConstructionPhaseTest {
 
         IllegalStateException error = assertThrows(IllegalStateException.class, () -> phase.execute(context));
         assertTrue(error.getMessage().contains("Service named 'ProcessDelegatedEmptyDescriptorService' not found in descriptor set"));
+    }
+
+    @Test
+    void descriptorSelectionIncludesRemoteOperatorOnlyTargets() {
+        PipelineCompilationContext context = new PipelineCompilationContext(processingEnv,
+            org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        var remote = TestModelFactory.createTestModelWithTargets("ProcessRemoteService",
+            Set.of(GenerationTarget.REMOTE_OPERATOR_ADAPTER));
+        var delegated = TestModelFactory.createTestModelWithTargets("ProcessDelegatedService",
+            Set.of(GenerationTarget.REMOTE_OPERATOR_ADAPTER)).toBuilder()
+            .delegateService(ClassName.get("example", "Delegate")).build();
+        context.setStepModels(List.of(remote, delegated));
+        assertEquals(Set.of("ProcessRemoteService"),
+            new PipelineBindingConstructionPhase().expectedDescriptorServices(context));
+    }
+
+    @Test
+    void springGrpcDescriptorWithoutPipelineServiceNamesGeneratorOption() {
+        PipelineBindingConstructionPhase phase = new PipelineBindingConstructionPhase();
+        PipelineCompilationContext context = new PipelineCompilationContext(processingEnv,
+            org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        context.setRendererProfile("spring");
+        context.setTransportMode(PipelineTransport.GRPC);
+        context.setDescriptorSet(descriptorSetForService("AnotherService"));
+        context.setStepModels(List.of(TestModelFactory.createTestModelWithTargets("LocalService",
+            Set.of(GenerationTarget.LOCAL_CLIENT_STEP)).toBuilder()
+            .deploymentRole(DeploymentRole.PIPELINE_SERVER).build()));
+
+        IllegalStateException error = assertThrows(IllegalStateException.class, () -> phase.execute(context));
+        assertTrue(error.getMessage().contains("PipelineService.Run"));
+        assertTrue(error.getMessage().contains("--spring-grpc-unary"));
     }
 
     private static DescriptorProtos.FileDescriptorSet descriptorSetForService(String serviceName) {
