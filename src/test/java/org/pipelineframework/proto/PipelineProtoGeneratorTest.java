@@ -78,6 +78,47 @@ class PipelineProtoGeneratorTest {
         assertTrue(proto.contains("rpc Run(PaymentRequest) returns (PaymentReceipt);"));
         assertFalse(proto.contains("ValidatedPayment"));
         assertFalse(Files.exists(output.resolve("orchestrator.proto")));
+
+        new PipelineProtoGenerator().generate(tempDir, config, output, "pipeline-types.proto", false);
+        assertTrue(Files.exists(output.resolve("orchestrator.proto")));
+        assertFalse(Files.exists(output.resolve("pipeline-unary.proto")));
+        new PipelineProtoGenerator().generate(tempDir, config, output, "pipeline-types.proto", true);
+        assertFalse(Files.exists(output.resolve("orchestrator.proto")));
+        assertTrue(Files.exists(output.resolve("pipeline-unary.proto")));
+    }
+
+    @Test
+    void springUnaryRejectsTypesFileCollisionBeforeWriting() throws Exception {
+        Path config = tempDir.resolve("pipeline.yaml");
+        Files.writeString(config, "unused");
+        Path output = tempDir.resolve("generated");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> new PipelineProtoGenerator().generate(tempDir, config, output, "pipeline-unary.proto", true));
+        assertTrue(error.getMessage().contains("--types-proto-name"));
+        assertFalse(Files.exists(output));
+    }
+
+    @Test
+    void springUnaryRejectsEmptyPipelineBeforeWritingIdl() throws Exception {
+        Path config = tempDir.resolve("pipeline.yaml");
+        Files.writeString(config, """
+            version: 2
+            appName: Empty
+            basePackage: com.example.empty
+            transport: GRPC
+            platform: COMPUTE
+            types:
+              Input: { fields: [[1, id, string]] }
+            steps: []
+            """);
+        Path output = tempDir.resolve("generated");
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new PipelineProtoGenerator().generate(tempDir, config, output, "pipeline-types.proto", true));
+        assertTrue(error.getMessage().contains("at least one pipeline step"));
+        assertFalse(Files.exists(output));
+        try (var files = Files.list(tempDir)) {
+            assertEquals(List.of(config), files.toList());
+        }
     }
 
     @Test

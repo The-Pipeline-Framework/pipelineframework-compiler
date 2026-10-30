@@ -103,6 +103,10 @@ public class PipelineProtoGenerator {
             ? outputDir
             : resolvedModuleDir.resolve("target").resolve("generated-sources").resolve("proto");
         String resolvedTypesProtoName = validateTypesProtoName(typesProtoName);
+        if (springGrpcUnary && SPRING_UNARY_PROTO.equals(resolvedTypesProtoName)) {
+            throw new IllegalArgumentException("--types-proto-name must not be " + SPRING_UNARY_PROTO
+                + " when --spring-grpc-unary is enabled");
+        }
 
         PipelineTemplateConfig config = new PipelineTemplateConfigLoader().load(resolvedConfig,
             new BlockDefinitionImporter(PipelineProtoGenerator.class.getClassLoader())::importForGeneration);
@@ -124,6 +128,9 @@ public class PipelineProtoGenerator {
             && lockMissing && hasSemanticTypes);
         PipelineIdlStateResolver.Resolved idl = new PipelineIdlStateResolver().resolve(config, committedState, initializeIdl);
         config = idl.config();
+        if (springGrpcUnary && (config.steps() == null || config.steps().isEmpty())) {
+            throw new IllegalStateException("--spring-grpc-unary requires at least one pipeline step");
+        }
         if (config.basePackage() == null || config.basePackage().isBlank()) {
             throw new IllegalStateException("pipeline-config.yaml is missing basePackage");
         }
@@ -140,9 +147,6 @@ public class PipelineProtoGenerator {
         }
         List<PipelineTemplateStep> steps = config.steps();
         if (steps == null || steps.isEmpty()) {
-            if (springGrpcUnary) {
-                throw new IllegalStateException("--spring-grpc-unary requires at least one pipeline step");
-            }
             externalRenderer.write(config.basePackage(), resolvedOutput, List.of(), resolvedTypesProtoName);
             if (config.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
                 writeProto(resolvedOutput.resolve(resolvedTypesProtoName),
@@ -184,6 +188,7 @@ public class PipelineProtoGenerator {
         externalRenderer.write(config.basePackage(), resolvedOutput, resolvedSteps, resolvedTypesProtoName);
 
         if (springGrpcUnary) {
+            deleteProtoIfPresent(resolvedOutput.resolve(ORCHESTRATOR_PROTO));
             writeProto(resolvedOutput.resolve(SPRING_UNARY_PROTO), springUnaryRenderer.render(
                 config.basePackage(), resolvedSteps.getFirst(), resolvedSteps.getLast(),
                 sharedTypes, resolvedTypesProtoName));
@@ -191,6 +196,7 @@ public class PipelineProtoGenerator {
 
         String transport = config.transport();
         if (!springGrpcUnary && (transport == null || transport.isBlank() || "GRPC".equalsIgnoreCase(transport))) {
+            deleteProtoIfPresent(resolvedOutput.resolve(SPRING_UNARY_PROTO));
             String content = orchestratorRenderer.renderOrchestratorProto(config.basePackage(), resolvedSteps, sharedTypes, resolvedTypesProtoName);
             Path protoPath = resolvedOutput.resolve(ORCHESTRATOR_PROTO);
             writeProto(protoPath, content);
@@ -232,6 +238,14 @@ public class PipelineProtoGenerator {
             Files.writeString(outputPath, content);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to write proto file: " + outputPath, e);
+        }
+    }
+
+    private void deleteProtoIfPresent(Path outputPath) {
+        try {
+            Files.deleteIfExists(outputPath);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to delete proto file: " + outputPath, e);
         }
     }
 
