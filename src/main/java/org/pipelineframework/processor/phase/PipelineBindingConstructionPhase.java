@@ -124,6 +124,14 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
             && (descriptorSet == null || descriptorSet.getFileCount() == 0)) {
             throw new IllegalStateException("Spring GRPC requires a protobuf descriptor set with PipelineService.Run");
         }
+        if (SpringRendererProfileSupport.isSpringProfile(ctx)
+            && descriptorSet.getFileList().stream()
+                .flatMap(file -> file.getServiceList().stream())
+                .noneMatch(service -> "PipelineService".equals(service.getName()))) {
+            throw new IllegalStateException(
+                "Spring GRPC requires PipelineService.Run in the protobuf descriptor set. "
+                    + "Enable --spring-grpc-unary to generate it.");
+        }
         boolean hasNonDelegatedGrpcSteps = false;
         for (PipelineStepModel model : ctx.getStepModels()) {
             if (!isGrpcBoundStep(model)) {

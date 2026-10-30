@@ -299,6 +299,20 @@ class PipelineBindingConstructionPhaseTest {
         assertTrue(error.getMessage().contains("Service named 'ProcessDelegatedEmptyDescriptorService' not found in descriptor set"));
     }
 
+    @Test
+    void springGrpcDescriptorWithoutPipelineServiceNamesGeneratorOption() {
+        PipelineBindingConstructionPhase phase = new PipelineBindingConstructionPhase();
+        PipelineCompilationContext context = new PipelineCompilationContext(processingEnv,
+            org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        context.setRendererProfile("spring");
+        context.setTransportMode(PipelineTransport.GRPC);
+        context.setDescriptorSet(descriptorSetForService("AnotherService"));
+
+        IllegalStateException error = assertThrows(IllegalStateException.class, () -> phase.execute(context));
+        assertTrue(error.getMessage().contains("PipelineService.Run"));
+        assertTrue(error.getMessage().contains("--spring-grpc-unary"));
+    }
+
     private static DescriptorProtos.FileDescriptorSet descriptorSetForService(String serviceName) {
         DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
             .setName(serviceName.toLowerCase() + ".proto")
