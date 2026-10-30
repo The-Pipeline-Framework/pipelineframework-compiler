@@ -198,18 +198,23 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
      */
     private DescriptorProtos.FileDescriptorSet loadDescriptorSet(PipelineCompilationContext ctx) throws IOException {
         DescriptorFileLocator locator = new DescriptorFileLocator();
-        Set<String> expectedServices = ctx.getStepModels().stream()
-            .filter(model -> model.delegateService() == null)
-            .filter(this::isGrpcBoundStep)
-            .map(PipelineStepModel::serviceName)
-            .collect(Collectors.toCollection(java.util.HashSet::new));
-        if (SpringRendererProfileSupport.generatesGrpcServer(ctx)) {
-            expectedServices.add("PipelineService");
-        }
+        Set<String> expectedServices = expectedDescriptorServices(ctx);
         return locator.locateAndLoadDescriptors(
             ctx.getCompilerOptions().asMap(),
             expectedServices,
             ctx.getProcessingEnv().getMessager());
+    }
+
+    Set<String> expectedDescriptorServices(PipelineCompilationContext ctx) {
+        Set<String> expected = ctx.getStepModels().stream()
+            .filter(model -> model.delegateService() == null)
+            .filter(model -> isGrpcBoundStep(model) || isRemoteOperatorStep(model))
+            .map(PipelineStepModel::serviceName)
+            .collect(Collectors.toCollection(java.util.HashSet::new));
+        if (SpringRendererProfileSupport.generatesGrpcServer(ctx)) {
+            expected.add("PipelineService");
+        }
+        return Set.copyOf(expected);
     }
 
 }

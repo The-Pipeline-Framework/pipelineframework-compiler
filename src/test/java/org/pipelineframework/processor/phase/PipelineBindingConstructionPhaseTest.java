@@ -300,6 +300,20 @@ class PipelineBindingConstructionPhaseTest {
     }
 
     @Test
+    void descriptorSelectionIncludesRemoteOperatorOnlyTargets() {
+        PipelineCompilationContext context = new PipelineCompilationContext(processingEnv,
+            org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        var remote = TestModelFactory.createTestModelWithTargets("ProcessRemoteService",
+            Set.of(GenerationTarget.REMOTE_OPERATOR_ADAPTER));
+        var delegated = TestModelFactory.createTestModelWithTargets("ProcessDelegatedService",
+            Set.of(GenerationTarget.REMOTE_OPERATOR_ADAPTER)).toBuilder()
+            .delegateService(ClassName.get("example", "Delegate")).build();
+        context.setStepModels(List.of(remote, delegated));
+        assertEquals(Set.of("ProcessRemoteService"),
+            new PipelineBindingConstructionPhase().expectedDescriptorServices(context));
+    }
+
+    @Test
     void springGrpcDescriptorWithoutPipelineServiceNamesGeneratorOption() {
         PipelineBindingConstructionPhase phase = new PipelineBindingConstructionPhase();
         PipelineCompilationContext context = new PipelineCompilationContext(processingEnv,
