@@ -79,16 +79,30 @@ class PipelineBranchingMetadataGeneratorTest {
         ctx.setBranchingPlan(new PipelineBranchingPlan(true, -1, List.of(new PipelineBranchingPlan.BranchStep(
             0, "Decide", "Request", "Result", List.of("Request"), List.of("Accepted", "Rejected"),
             List.of(ClassName.get("com.example.domain", "Request")), false))));
+        PipelineReference child = new PipelineReference("child");
+        when(config.pipelines()).thenReturn(Map.of(child.logicalId(),
+            new org.pipelineframework.config.template.PipelineTemplateDefinition("Request", "Result", List.of())));
+        ctx.setLocalDefinitionStepModels(Map.of(child.logicalId(), List.of(
+            stepModel("Decide", "com.example", "Request", "Result").toBuilder().definition(child).build())));
+        ctx.setLocalDefinitionBranchingPlans(Map.of(child, ctx.getBranchingPlan()));
         new PipelineBranchingMetadataGenerator(env).writeBranchingMetadata(ctx);
         JsonObject metadata = new Gson().fromJson(Files.readString(output.resolve("META-INF/pipeline/branching.json")),
             JsonObject.class);
-        assertEquals(1, metadata.getAsJsonArray("steps").size());
+        assertEquals(2, metadata.getAsJsonArray("steps").size());
+        assertEquals(2, metadata.getAsJsonArray("definitionCompletions").size());
         JsonObject completion = metadata.getAsJsonArray("definitionCompletions").get(0).getAsJsonObject();
         assertEquals("$root", completion.get("definitionId").getAsString());
         assertEquals("com.example.domain.Result", completion.get("outputRuntimeClass").getAsString());
         assertEquals(2, completion.getAsJsonArray("acceptedRuntimeClasses").size());
-        assertEquals("accepted", completion.getAsJsonArray("variants").get(0).getAsJsonObject()
-            .get("discriminator").getAsString());
+        JsonObject acceptedVariant = completion.getAsJsonArray("variants").get(0).getAsJsonObject();
+        assertEquals("accepted", acceptedVariant.get("discriminator").getAsString());
+        assertEquals("Accepted", acceptedVariant.get("payloadContract").getAsString());
+        JsonObject rejectedVariant = completion.getAsJsonArray("variants").get(1).getAsJsonObject();
+        assertEquals("rejected", rejectedVariant.get("discriminator").getAsString());
+        assertEquals("Rejected", rejectedVariant.get("payloadContract").getAsString());
+        JsonObject childCompletion = metadata.getAsJsonArray("definitionCompletions").get(1).getAsJsonObject();
+        assertEquals("child", childCompletion.get("definitionId").getAsString());
+        assertEquals("com.example.domain.Result", childCompletion.get("outputRuntimeClass").getAsString());
     }
 
     @Test

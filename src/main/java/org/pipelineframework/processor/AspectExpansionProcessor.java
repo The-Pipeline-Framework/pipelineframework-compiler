@@ -54,6 +54,7 @@ public class AspectExpansionProcessor {
         List<ResolvedStep> expandedSteps = new ArrayList<>();
         
         Set<String> generatedKeys = new java.util.HashSet<>();
+        Map<String, TypeName> syntheticDomains = new HashMap<>();
 
         for (ResolvedStep originalStep : originalStepsSnapshot) {
             PipelineStepModel originalModel = originalStep.model();
@@ -78,6 +79,7 @@ public class AspectExpansionProcessor {
 
             for (PipelineAspectModel aspect : beforeAspects) {
                 ResolvedStep synthetic = createSyntheticStep(originalStep, aspect, AspectPosition.BEFORE_STEP);
+                validateSharedSyntheticDomain(synthetic, syntheticDomains);
                 String key = originalModel.definition().logicalId() + ":"
                     + synthetic.model().serviceName() + ":" + aspect.name() + ":before";
                 if (generatedKeys.add(key)) {
@@ -89,6 +91,7 @@ public class AspectExpansionProcessor {
 
             for (PipelineAspectModel aspect : afterAspects) {
                 ResolvedStep synthetic = createSyntheticStep(originalStep, aspect, AspectPosition.AFTER_STEP);
+                validateSharedSyntheticDomain(synthetic, syntheticDomains);
                 String key = originalModel.definition().logicalId() + ":"
                     + synthetic.model().serviceName() + ":" + aspect.name() + ":after";
                 if (generatedKeys.add(key)) {
@@ -98,6 +101,16 @@ public class AspectExpansionProcessor {
         }
         
         return expandedSteps;
+    }
+
+    private void validateSharedSyntheticDomain(ResolvedStep synthetic, Map<String, TypeName> syntheticDomains) {
+        String serviceName = synthetic.model().serviceName();
+        TypeName domain = synthetic.model().inputMapping().domainType();
+        TypeName existing = syntheticDomains.putIfAbsent(serviceName, domain);
+        if (existing != null && !existing.equals(domain)) {
+            throw new IllegalStateException("Synthetic observer service '" + serviceName
+                + "' cannot be shared by different domain types: '" + existing + "' and '" + domain + "'.");
+        }
     }
     
     private ResolvedStep createSyntheticStep(

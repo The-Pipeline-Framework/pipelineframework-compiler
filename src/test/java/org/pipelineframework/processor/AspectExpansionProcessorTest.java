@@ -20,6 +20,28 @@ import static org.junit.jupiter.api.Assertions.*;
 class AspectExpansionProcessorTest {
 
     @Test
+    void rejectsSharedObserverNamesForDifferentDomainTypes() throws Exception {
+        ResolvedStep original = resolvedStep("ProcessFolderService");
+        for (String definition : List.of("$root", "child")) {
+            PipelineStepModel conflicting = original.model().toBuilder()
+                .definition(new PipelineReference(definition))
+                .inputMapping(TypeMapping.withoutMapper(ClassName.get("other.domain", "CsvFolder")))
+                .outputMapping(TypeMapping.withoutMapper(ClassName.get("other.domain", "CsvPaymentsInputFile")))
+                .build();
+            ResolvedStep other = new ResolvedStep(conflicting, original.grpcBinding(), original.restBinding());
+            for (AspectPosition position : AspectPosition.values()) {
+                PipelineAspectModel aspect = new PipelineAspectModel("persistence", AspectScope.GLOBAL, position,
+                    aspectConfig("org.pipelineframework.plugin.persistence.PersistenceService"));
+                var error = assertThrows(IllegalStateException.class, () -> new AspectExpansionProcessor()
+                    .expandAspects(List.of(original, other), List.of(aspect)));
+                assertTrue(error.getMessage().contains("different domain types"), error.getMessage());
+                assertTrue(error.getMessage().contains("other.domain"), error.getMessage());
+                assertTrue(error.getMessage().contains("org.pipelineframework.csv.common.domain"), error.getMessage());
+            }
+        }
+    }
+
+    @Test
     void preservesObserverOccurrenceInEachDefinitionWhileReusingImplementation() throws Exception {
         ResolvedStep original = resolvedStep("ProcessFolderService");
         PipelineReference root = new PipelineReference("$root");
