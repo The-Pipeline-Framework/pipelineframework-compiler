@@ -48,6 +48,77 @@ import org.pipelineframework.processor.composition.PipelineReference;
 class PipelineBranchRoutingPlannerTest {
 
     @Test
+    void plansUnionReturnWithoutAnAuthoredMergeAndRejectsAmbiguousPayloadTags() {
+        for (boolean ambiguous : List.of(false, true)) {
+            List<String> diagnostics = new ArrayList<>();
+            var ctx = context(diagnostics);
+            Map<String, PipelineTemplateTypeDefinition> types = new LinkedHashMap<>();
+            for (String name : List.of("Request", "Accepted", "Rejected")) {
+                types.put(name, new PipelineTemplateTypeDefinition.RecordType(name, List.of()));
+            }
+            types.put("Result", new PipelineTemplateTypeDefinition.UnionType("Result", Map.of(
+                "accepted", new PipelineTemplateTypeDefinition.Variant("accepted",
+                    new PipelineTemplateTypeReference.Named("Accepted")),
+                "rejected", new PipelineTemplateTypeDefinition.Variant("rejected",
+                    new PipelineTemplateTypeReference.Named(ambiguous ? "Accepted" : "Rejected")))));
+            var config = v3Config("Union return", "com.example", List.of(
+                step("approve", "Request", "Accepted", List.of(), false)), new PipelineTemplateTypeModel(types));
+            when(config.outputContract()).thenReturn("Result");
+            ctx.setPipelineTemplateConfig(config);
+            ctx.setStepDefinitions(List.of(stepDefinition("approve", "Request", "Accepted")));
+            var plan = planner.plan(ctx);
+            if (ambiguous) {
+                assertTrue(plan.isEmpty());
+                assertTrue(diagnostics.stream().anyMatch(message -> message.contains("cannot choose")
+                    && message.contains("Result") && message.contains("Accepted")), diagnostics.toString());
+            } else {
+                assertTrue(plan.isPresent(), diagnostics.toString());
+                assertTrue(plan.orElseThrow().branchAware());
+                assertEquals(-1, plan.orElseThrow().terminalStepIndex());
+            }
+        }
+    }
+
+    @Test
+    void completesDisjointBranchesAgainstTheDefinitionOutputWithoutIdentityMerge() {
+        for (String output : List.of("Result", "Decision")) {
+            List<String> diagnostics = new ArrayList<>();
+            PipelineCompilationContext ctx = context(diagnostics);
+            Map<String, PipelineTemplateTypeDefinition> types = new LinkedHashMap<>();
+            for (String name : List.of("Request", "Accepted", "Rejected", "Result")) {
+                types.put(name, new PipelineTemplateTypeDefinition.RecordType(name, List.of()));
+            }
+            types.put("Decision", new PipelineTemplateTypeDefinition.UnionType("Decision", Map.of(
+                "accepted", new PipelineTemplateTypeDefinition.Variant("accepted",
+                    new PipelineTemplateTypeReference.Named("Accepted")),
+                "rejected", new PipelineTemplateTypeDefinition.Variant("rejected",
+                    new PipelineTemplateTypeReference.Named("Rejected")))));
+            PipelineTemplateConfig config = v3Config("Branches", "com.example", List.of(
+                step("decide", "Request", "Decision", List.of(), false),
+                step("approve", "Decision", "Result", List.of("Accepted"), false),
+                step("reject", "Decision", "Result", List.of("Rejected"), false)),
+                new PipelineTemplateTypeModel(types));
+            when(config.outputContract()).thenReturn(output);
+            ctx.setPipelineTemplateConfig(config);
+            ctx.setStepDefinitions(List.of(
+                stepDefinition("decide", "Request", "Decision"),
+                stepDefinition("approve", "Decision", "Result"),
+                stepDefinition("reject", "Decision", "Result")));
+            var plan = planner.plan(ctx);
+            if (output.equals("Result")) {
+                assertTrue(plan.isPresent(), diagnostics.toString());
+                assertEquals(-1, plan.orElseThrow().terminalStepIndex());
+                assertTrue(plan.orElseThrow().steps().stream().noneMatch(PipelineBranchingPlan.BranchStep::terminal));
+            } else {
+                assertTrue(plan.isEmpty());
+                assertTrue(diagnostics.stream().anyMatch(message ->
+                    message.contains("does not cover reachable branch-end types") && message.contains("Result")),
+                    diagnostics.toString());
+            }
+        }
+    }
+
+    @Test
     void resolvesScalarAliasesToCanonicalJavaBoundaryTypes() {
         PipelineTemplateTypeModel model = new PipelineTemplateTypeModel(Map.of(
             "Description", new PipelineTemplateTypeDefinition.AliasType(

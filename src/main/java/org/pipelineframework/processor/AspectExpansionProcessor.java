@@ -78,7 +78,8 @@ public class AspectExpansionProcessor {
 
             for (PipelineAspectModel aspect : beforeAspects) {
                 ResolvedStep synthetic = createSyntheticStep(originalStep, aspect, AspectPosition.BEFORE_STEP);
-                String key = synthetic.model().serviceName() + ":" + aspect.name() + ":before";
+                String key = originalModel.definition().logicalId() + ":"
+                    + synthetic.model().serviceName() + ":" + aspect.name() + ":before";
                 if (generatedKeys.add(key)) {
                     expandedSteps.add(synthetic);
                 }
@@ -88,7 +89,8 @@ public class AspectExpansionProcessor {
 
             for (PipelineAspectModel aspect : afterAspects) {
                 ResolvedStep synthetic = createSyntheticStep(originalStep, aspect, AspectPosition.AFTER_STEP);
-                String key = synthetic.model().serviceName() + ":" + aspect.name() + ":after";
+                String key = originalModel.definition().logicalId() + ":"
+                    + synthetic.model().serviceName() + ":" + aspect.name() + ":after";
                 if (generatedKeys.add(key)) {
                     expandedSteps.add(synthetic);
                 }

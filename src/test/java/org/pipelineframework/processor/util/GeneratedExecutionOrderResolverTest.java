@@ -8,9 +8,13 @@ import java.util.Set;
 import com.squareup.javapoet.ClassName;
 import org.junit.jupiter.api.Test;
 import org.pipelineframework.processor.Jsr269SourceInventory;
+import org.pipelineframework.processor.AspectExpansionProcessor;
+import org.pipelineframework.processor.ResolvedStep;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.composition.PipelineReference;
 import org.pipelineframework.processor.ir.AspectPosition;
+import org.pipelineframework.processor.ir.AspectScope;
+import org.pipelineframework.processor.ir.PipelineAspectModel;
 import org.pipelineframework.processor.ir.DeploymentRole;
 import org.pipelineframework.processor.ir.ExecutionMode;
 import org.pipelineframework.processor.ir.GenerationTarget;
@@ -20,6 +24,41 @@ import org.pipelineframework.processor.ir.StreamingShape;
 import org.pipelineframework.processor.ir.TypeMapping;
 
 class GeneratedExecutionOrderResolverTest {
+
+    @Test
+    void expansionKeepsSharedObserverInBothDefinitionOrders() {
+        PipelineReference root = new PipelineReference("$root");
+        PipelineReference child = new PipelineReference("child");
+        PipelineStepModel rootStep = model("Root", "RootService", false, root, null);
+        PipelineStepModel childStep = model("Child", "ChildService", false, child, null);
+        for (AspectScope scope : AspectScope.values()) {
+            for (AspectPosition position : AspectPosition.values()) {
+                var config = new java.util.HashMap<String, Object>();
+                config.put("pluginImplementationClass", "com.example.PersistenceService");
+                if (scope == AspectScope.STEPS) {
+                    config.put("targetSteps", List.of("Root", "Child"));
+                }
+                var aspect = new PipelineAspectModel("persistence", scope, position, config);
+                var expanded = new AspectExpansionProcessor().expandAspects(
+                    List.of(new ResolvedStep(rootStep, null, null), new ResolvedStep(childStep, null, null)),
+                    List.of(aspect));
+                PipelineCompilationContext ctx = new PipelineCompilationContext(null, Jsr269SourceInventory.empty());
+                ctx.setTransportMode(PipelineTransport.LOCAL);
+                ctx.setStepModels(expanded.stream().map(ResolvedStep::model)
+                    .map(model -> model.withDeploymentRole(DeploymentRole.ORCHESTRATOR_CLIENT)).toList());
+                var resolver = new GeneratedExecutionOrderResolver();
+                String observer = "com.example.pipeline.PersistenceValueSideEffectLocalClientStep";
+                String rootClass = "com.example.pipeline.RootLocalClientStep";
+                String childClass = "com.example.pipeline.ChildLocalClientStep";
+                assertEquals(position == AspectPosition.BEFORE_STEP ? List.of(observer, rootClass)
+                        : List.of(rootClass, observer),
+                    resolver.weave(ctx, root, List.of(rootClass), true));
+                assertEquals(position == AspectPosition.BEFORE_STEP ? List.of(observer, childClass)
+                        : List.of(childClass, observer),
+                    resolver.weave(ctx, child, List.of(childClass), true));
+            }
+        }
+    }
 
     @Test
     void weavesOnlySideEffectsOwnedByTheSelectedDefinition() {

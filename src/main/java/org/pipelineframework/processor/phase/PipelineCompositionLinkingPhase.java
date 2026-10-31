@@ -27,11 +27,16 @@ final class PipelineCompositionLinkingPhase {
     private static final PipelineReference ROOT = new PipelineReference("$root");
 
     void link(PipelineCompilationContext ctx) {
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
-            || (config.pipelines().isEmpty() && !containsPipelineReference(config.steps()))) {
+        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)) {
             return;
         }
-        if (!ctx.isTransportModeLocal()) {
+        boolean invocation = !config.pipelines().isEmpty() || containsPipelineReference(config.steps());
+        boolean implicitCompletion = ctx.getBranchingPlan() != null && ctx.getBranchingPlan().branchAware()
+            && ctx.getBranchingPlan().terminalStepIndex() == -1;
+        if (!invocation && !implicitCompletion) {
+            return;
+        }
+        if (invocation && !ctx.isTransportModeLocal()) {
             throw new IllegalArgumentException("Local pipeline invocation currently requires pipeline.transport=LOCAL; "
                 + "remote pipeline invocation is not implemented in this slice.");
         }
@@ -39,7 +44,8 @@ final class PipelineCompositionLinkingPhase {
         Map<PipelineReference, PipelineBranchingPlan> branchPlans = new LinkedHashMap<>();
         branchPlans.put(ROOT, ctx.getBranchingPlan() == null ? PipelineBranchingPlan.disabled() : ctx.getBranchingPlan());
         Map<PipelineReference, PipelineDefinition> definitions = new LinkedHashMap<>();
-        definitions.put(ROOT, definition(ROOT, config.inputContract(), config.outputContract(), config.steps(),
+        String rootInput = config.inputContract() == null ? config.steps().getFirst().inputTypeName() : config.inputContract();
+        definitions.put(ROOT, definition(ROOT, rootInput, config.outputContract(), config.steps(),
             ctx.getStepDefinitions(), branchPlans.get(ROOT)));
         for (var entry : config.pipelines().entrySet()) {
             PipelineReference reference = new PipelineReference(entry.getKey());
