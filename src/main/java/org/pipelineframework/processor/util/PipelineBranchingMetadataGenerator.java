@@ -31,6 +31,11 @@ import org.pipelineframework.processor.ir.PipelineStepModel;
 import org.pipelineframework.processor.ir.PipelineTransport;
 import org.pipelineframework.processor.ir.StepDefinition;
 import org.pipelineframework.processor.routing.PipelineBranchingPlan;
+import org.pipelineframework.processor.routing.V3JavaTypeResolver;
+import org.pipelineframework.config.template.PipelineTemplateConfig;
+import org.pipelineframework.config.template.PipelineTemplateDialect;
+import org.pipelineframework.config.template.PipelineTemplateTypeDefinition;
+import org.pipelineframework.config.template.PipelineTemplateTypeReference;
 import org.pipelineframework.processor.composition.PipelineReference;
 import org.pipelineframework.processor.composition.LocalPipelineInvocationClassName;
 import org.pipelineframework.branching.BranchVariantIdentity;
@@ -97,7 +102,7 @@ public final class PipelineBranchingMetadataGenerator {
         }
         BranchingMetadata metadata = new BranchingMetadata(
             rootBranchAware ? rootPlan.terminalStepIndex() : -1,
-            steps);
+            steps, definitionCompletions(ctx));
         if (processingEnv != null) {
             javax.tools.FileObject resourceFile = processingEnv.getFiler()
                 .createResource(StandardLocation.CLASS_OUTPUT, "", RESOURCE, (javax.lang.model.element.Element[]) null);
@@ -627,9 +632,60 @@ public final class PipelineBranchingMetadataGenerator {
             .toList();
     }
 
+    private List<DefinitionCompletionMetadata> definitionCompletions(PipelineCompilationContext ctx) {
+        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
+            || config.dialect() != PipelineTemplateDialect.V3) {
+            return List.of();
+        }
+        List<DefinitionCompletionMetadata> completions = new ArrayList<>();
+        if (ctx.getBranchingPlan() != null && ctx.getBranchingPlan().branchAware()
+            && ctx.getBranchingPlan().terminalStepIndex() == -1 && config.outputContract() != null) {
+            completions.add(completion(config, "$root", config.outputContract()));
+        }
+        ctx.getLocalDefinitionBranchingPlans().entrySet().stream()
+            .filter(entry -> entry.getValue().branchAware() && entry.getValue().terminalStepIndex() == -1)
+            .sorted(Map.Entry.comparingByKey(Comparator.comparing(PipelineReference::logicalId)))
+            .forEach(entry -> completions.add(completion(config, entry.getKey().logicalId(),
+                config.pipelines().get(entry.getKey().logicalId()).outputContract())));
+        return List.copyOf(completions);
+    }
+
+    private DefinitionCompletionMetadata completion(PipelineTemplateConfig config, String definition, String output) {
+        V3JavaTypeResolver javaTypes = new V3JavaTypeResolver(config);
+        String runtimeClass = javaTypes.resolve(output).orElseThrow().reflectionName();
+        PipelineTemplateTypeReference resolved = config.typeModel().resolveAliases(
+            new PipelineTemplateTypeReference.Named(output));
+        PipelineTemplateTypeDefinition type = resolved instanceof PipelineTemplateTypeReference.Named named
+            ? config.typeModel().definitions().get(named.name()) : config.typeModel().definitions().get(output);
+        List<String> contracts = new ArrayList<>();
+        List<VariantMetadata> variants = new ArrayList<>();
+        if (type instanceof PipelineTemplateTypeDefinition.UnionType union) {
+            union.variants().values().stream()
+                .sorted(Comparator.comparing(PipelineTemplateTypeDefinition.Variant::discriminator))
+                .forEach(variant -> {
+                    var payload = config.typeModel().resolveAliases(variant.payload());
+                    if (!(payload instanceof PipelineTemplateTypeReference.Named named)) {
+                        throw new IllegalStateException("Definition output union must contain named contracts: " + output);
+                    }
+                    contracts.add(named.name());
+                    variants.add(new VariantMetadata(union.name(), variant.discriminator(), named.name()));
+                });
+        } else {
+            contracts.add(type.name());
+        }
+        List<String> accepted = contracts.stream().distinct().toList();
+        return new DefinitionCompletionMetadata(definition, runtimeClass, accepted,
+            accepted.stream().map(contract -> javaTypes.resolve(contract).orElseThrow().reflectionName()).toList(),
+            List.copyOf(variants));
+    }
+
+    private record DefinitionCompletionMetadata(String definitionId, String outputRuntimeClass,
+        List<String> acceptedContracts, List<String> acceptedRuntimeClasses, List<VariantMetadata> variants) { }
+
     private record BranchingMetadata(
         int terminalStepIndex,
-        List<StepMetadata> steps
+        List<StepMetadata> steps,
+        List<DefinitionCompletionMetadata> definitionCompletions
     ) {
     }
 

@@ -184,6 +184,12 @@ public class PipelineDiscoveryPhase implements PipelineCompilationPhase {
                     effectiveConfigPath, diagnostics, imported.definitions().stream()
                         .map(org.pipelineframework.processor.block.ImportedPipelineDefinition::qualifiedId)
                         .collect(java.util.stream.Collectors.toUnmodifiableSet()));
+                if (templateConfig != null) {
+                    var lowered = new PipelineRecurrenceLowering().lower(templateConfig, parsedDefinitions);
+                    templateConfig = lowered.config();
+                    parsedDefinitions = lowered.parsed();
+                    ctx.setPipelineTemplateConfig(templateConfig);
+                }
                 ctx.setParsedPipelineDefinitionCatalog(parsedDefinitions);
                 ctx.setStepDefinitions(parsedDefinitions.rootSteps());
                 validateCheckpointBoundaries(templateConfig, ctx, diagnostics);

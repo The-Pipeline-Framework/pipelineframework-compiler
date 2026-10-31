@@ -7,6 +7,8 @@ import org.pipelineframework.branching.BranchVariantIdentity;
 
 /**
  * Build-time branch-routing plan derived from the authored linear pipeline sequence.
+ * A terminal step index of -1 in an enabled plan denotes completion against the
+ * definition's explicit output contract rather than an authored terminal merge.
  */
 public record PipelineBranchingPlan(
     boolean branchAware,
@@ -31,10 +33,10 @@ public record PipelineBranchingPlan(
                             + steps.get(i).index() + ".");
                 }
             }
-            if (terminalStepIndex < 0 || terminalStepIndex >= steps.size()) {
+            if (terminalStepIndex < -1 || terminalStepIndex >= steps.size()) {
                 throw new IllegalArgumentException("terminalStepIndex out of bounds for branch-aware plan.");
             }
-            if (!steps.get(terminalStepIndex).terminal()) {
+            if (terminalStepIndex >= 0 && !steps.get(terminalStepIndex).terminal()) {
                 throw new IllegalArgumentException("terminalStepIndex must point at a terminal branch step.");
             }
         }

@@ -20,6 +20,29 @@ import static org.junit.jupiter.api.Assertions.*;
 class AspectExpansionProcessorTest {
 
     @Test
+    void preservesObserverOccurrenceInEachDefinitionWhileReusingImplementation() throws Exception {
+        ResolvedStep original = resolvedStep("ProcessFolderService");
+        PipelineReference root = new PipelineReference("$root");
+        PipelineReference child = new PipelineReference("child");
+        ResolvedStep rootStep = new ResolvedStep(original.model().toBuilder().definition(root).build(),
+            original.grpcBinding(), original.restBinding());
+        ResolvedStep childStep = new ResolvedStep(original.model().toBuilder().definition(child).build(),
+            original.grpcBinding(), original.restBinding());
+        for (AspectPosition position : AspectPosition.values()) {
+            PipelineAspectModel aspect = new PipelineAspectModel("persistence", AspectScope.GLOBAL, position,
+                aspectConfig("org.pipelineframework.plugin.persistence.PersistenceService"));
+            List<ResolvedStep> expanded = new AspectExpansionProcessor().expandAspects(
+                List.of(rootStep, childStep), List.of(aspect));
+            List<PipelineStepModel> observers = expanded.stream().map(ResolvedStep::model)
+                .filter(PipelineStepModel::sideEffect).toList();
+            assertEquals(List.of(root, child), observers.stream().map(PipelineStepModel::definition).toList());
+            assertEquals(observers.getFirst().serviceName(), observers.getLast().serviceName());
+            assertEquals(2, expanded.stream().filter(step -> root.equals(step.model().definition())).count());
+            assertEquals(2, expanded.stream().filter(step -> child.equals(step.model().definition())).count());
+        }
+    }
+
+    @Test
     void expandsGlobalAspectsAfterSteps() throws Exception {
         PipelineReference definition = new PipelineReference("deployment-lifecycle");
         ResolvedStep original = resolvedStep("ProcessFolderService");
