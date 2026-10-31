@@ -54,6 +54,62 @@ class PipelineBranchingMetadataGeneratorTest {
     Path tempDir;
 
     @Test
+    void writesCanonicalDefinitionCompletionWithoutAddingAnAuthoredStep() throws IOException {
+        Path output = tempDir.resolve("definition-completion");
+        ProcessingEnvironment env = mock(ProcessingEnvironment.class);
+        when(env.getOptions()).thenReturn(Map.of());
+        when(env.getFiler()).thenReturn(new PathResourceFiler(output));
+        var ctx = new PipelineCompilationContext(env, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        ctx.setTransportMode(PipelineTransport.LOCAL);
+        PipelineTemplateConfig config = mock(PipelineTemplateConfig.class);
+        when(config.dialect()).thenReturn(PipelineTemplateDialect.V3);
+        when(config.basePackage()).thenReturn("com.example");
+        when(config.outputContract()).thenReturn("Result");
+        var accepted = new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.RecordType("Accepted", List.of());
+        var rejected = new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.RecordType("Rejected", List.of());
+        var childResult = new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.RecordType("ChildResult", List.of());
+        var result = new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.UnionType("Result", Map.of(
+            "accepted", new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.Variant("accepted",
+                new org.pipelineframework.config.template.PipelineTemplateTypeReference.Named("Accepted")),
+            "rejected", new org.pipelineframework.config.template.PipelineTemplateTypeDefinition.Variant("rejected",
+                new org.pipelineframework.config.template.PipelineTemplateTypeReference.Named("Rejected"))));
+        when(config.typeModel()).thenReturn(new org.pipelineframework.config.template.PipelineTemplateTypeModel(
+            Map.of("Accepted", accepted, "Rejected", rejected, "Result", result, "ChildResult", childResult)));
+        ctx.setPipelineTemplateConfig(config);
+        ctx.setStepModels(List.of(stepModel("Decide", "com.example", "Request", "Result")));
+        ctx.setBranchingPlan(new PipelineBranchingPlan(true, -1, List.of(new PipelineBranchingPlan.BranchStep(
+            0, "Decide", "Request", "Result", List.of("Request"), List.of("Accepted", "Rejected"),
+            List.of(ClassName.get("com.example.domain", "Request")), false))));
+        PipelineReference child = new PipelineReference("child");
+        when(config.pipelines()).thenReturn(Map.of(child.logicalId(),
+            new org.pipelineframework.config.template.PipelineTemplateDefinition("Request", "ChildResult", List.of())));
+        ctx.setLocalDefinitionStepModels(Map.of(child.logicalId(), List.of(
+            stepModel("Decide", "com.example", "Request", "ChildResult").toBuilder().definition(child).build())));
+        ctx.setLocalDefinitionBranchingPlans(Map.of(child, new PipelineBranchingPlan(true, -1,
+            List.of(new PipelineBranchingPlan.BranchStep(0, "Decide", "Request", "ChildResult",
+                List.of("Request"), List.of("ChildResult"),
+                List.of(ClassName.get("com.example.domain", "Request")), false)))));
+        new PipelineBranchingMetadataGenerator(env).writeBranchingMetadata(ctx);
+        JsonObject metadata = new Gson().fromJson(Files.readString(output.resolve("META-INF/pipeline/branching.json")),
+            JsonObject.class);
+        assertEquals(2, metadata.getAsJsonArray("steps").size());
+        assertEquals(2, metadata.getAsJsonArray("definitionCompletions").size());
+        JsonObject completion = metadata.getAsJsonArray("definitionCompletions").get(0).getAsJsonObject();
+        assertEquals("$root", completion.get("definitionId").getAsString());
+        assertEquals("com.example.domain.Result", completion.get("outputRuntimeClass").getAsString());
+        assertEquals(2, completion.getAsJsonArray("acceptedRuntimeClasses").size());
+        JsonObject acceptedVariant = completion.getAsJsonArray("variants").get(0).getAsJsonObject();
+        assertEquals("accepted", acceptedVariant.get("discriminator").getAsString());
+        assertEquals("Accepted", acceptedVariant.get("payloadContract").getAsString());
+        JsonObject rejectedVariant = completion.getAsJsonArray("variants").get(1).getAsJsonObject();
+        assertEquals("rejected", rejectedVariant.get("discriminator").getAsString());
+        assertEquals("Rejected", rejectedVariant.get("payloadContract").getAsString());
+        JsonObject childCompletion = metadata.getAsJsonArray("definitionCompletions").get(1).getAsJsonObject();
+        assertEquals("child", childCompletion.get("definitionId").getAsString());
+        assertEquals("com.example.domain.ChildResult", childCompletion.get("outputRuntimeClass").getAsString());
+    }
+
+    @Test
     void writesAuthoredRuntimeClassForDirectV3RootWithoutGeneratedClient() throws IOException {
         Path classOutput = tempDir.resolve("class-output-v3-root");
         ProcessingEnvironment processingEnv = mock(ProcessingEnvironment.class);

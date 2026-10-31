@@ -54,6 +54,7 @@ public class AspectExpansionProcessor {
         List<ResolvedStep> expandedSteps = new ArrayList<>();
         
         Set<String> generatedKeys = new java.util.HashSet<>();
+        Map<String, SyntheticImplementation> syntheticDomains = new HashMap<>();
 
         for (ResolvedStep originalStep : originalStepsSnapshot) {
             PipelineStepModel originalModel = originalStep.model();
@@ -78,7 +79,9 @@ public class AspectExpansionProcessor {
 
             for (PipelineAspectModel aspect : beforeAspects) {
                 ResolvedStep synthetic = createSyntheticStep(originalStep, aspect, AspectPosition.BEFORE_STEP);
-                String key = synthetic.model().serviceName() + ":" + aspect.name() + ":before";
+                validateSharedSyntheticDomain(synthetic, syntheticDomains);
+                String key = originalModel.definition().logicalId() + ":"
+                    + synthetic.model().serviceName() + ":" + aspect.name() + ":before";
                 if (generatedKeys.add(key)) {
                     expandedSteps.add(synthetic);
                 }
@@ -88,7 +91,9 @@ public class AspectExpansionProcessor {
 
             for (PipelineAspectModel aspect : afterAspects) {
                 ResolvedStep synthetic = createSyntheticStep(originalStep, aspect, AspectPosition.AFTER_STEP);
-                String key = synthetic.model().serviceName() + ":" + aspect.name() + ":after";
+                validateSharedSyntheticDomain(synthetic, syntheticDomains);
+                String key = originalModel.definition().logicalId() + ":"
+                    + synthetic.model().serviceName() + ":" + aspect.name() + ":after";
                 if (generatedKeys.add(key)) {
                     expandedSteps.add(synthetic);
                 }
@@ -96,6 +101,26 @@ public class AspectExpansionProcessor {
         }
         
         return expandedSteps;
+    }
+
+    private record SyntheticImplementation(TypeName domainType, ClassName pluginClass) { }
+
+    private void validateSharedSyntheticDomain(ResolvedStep synthetic,
+        Map<String, SyntheticImplementation> syntheticDomains) {
+        String serviceName = synthetic.model().serviceName();
+        TypeName domain = synthetic.model().inputMapping().domainType();
+        ClassName pluginClass = synthetic.model().serviceClassName();
+        SyntheticImplementation existing = syntheticDomains.putIfAbsent(serviceName,
+            new SyntheticImplementation(domain, pluginClass));
+        if (existing != null && !existing.domainType().equals(domain)) {
+            throw new IllegalStateException("Synthetic observer service '" + serviceName
+                + "' cannot be shared by different domain types: '" + existing.domainType() + "' and '" + domain + "'.");
+        }
+        if (existing != null && !existing.pluginClass().equals(pluginClass)) {
+            throw new IllegalStateException("Synthetic observer service '" + serviceName
+                + "' cannot be shared by different plugin classes: '" + existing.pluginClass()
+                + "' and '" + pluginClass + "'.");
+        }
     }
     
     private ResolvedStep createSyntheticStep(

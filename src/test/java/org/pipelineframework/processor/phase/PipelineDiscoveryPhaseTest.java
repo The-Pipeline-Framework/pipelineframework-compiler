@@ -74,6 +74,56 @@ class PipelineDiscoveryPhaseTest {
     }
 
     @Test
+    void discoveryStoresRecurrentContinuationInTemplateAndParsedCatalogue() throws Exception {
+        Path yaml = tempDir.resolve("pipeline.yaml");
+        Files.writeString(yaml, """
+            version: 3
+            appName: Recurrent agent
+            basePackage: com.example
+            transport: LOCAL
+            contract: { input: TurnState, output: Result }
+            types:
+              TurnState: { fields: [[turn, int32]] }
+              Result: { fields: [[message, string]] }
+              TurnOutcome: { variants: { again: TurnState, finished: Result } }
+            pipelines:
+              agent:
+                input: TurnState
+                output: Result
+                recur: [TurnState]
+                steps:
+                  - name: Decide next turn
+                    service: com.example.Advance
+                    cardinality: ONE_TO_ONE
+                    input: TurnState
+                    output: TurnOutcome
+                    java: { input: com.example.domain.TurnState, output: com.example.domain.TurnOutcome }
+            steps:
+              - name: Run agent
+                pipeline: agent
+                cardinality: ONE_TO_ONE
+                input: TurnState
+                output: Result
+                java: { input: com.example.domain.TurnState, output: com.example.domain.Result }
+            """);
+        when(processingEnv.getOptions()).thenReturn(Map.of("pipeline.config", yaml.toString()));
+        var context = new PipelineCompilationContext(processingEnv,
+            org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+
+        new PipelineDiscoveryPhase().execute(context);
+
+        var template = assertInstanceOf(org.pipelineframework.config.template.PipelineTemplateConfig.class,
+            context.getPipelineTemplateConfig());
+        assertEquals("$recur", template.pipelines().get("agent").steps().getLast().name());
+        assertEquals(java.util.List.of("TurnState"), template.pipelines().get("agent").recur());
+        assertEquals(java.util.List.of("TurnState"), template.pipelines().get("agent").steps().getLast().accepts());
+        assertEquals("$recur", context.getParsedPipelineDefinitionCatalog().localDefinitions().get("agent")
+            .getLast().name());
+        assertEquals(java.util.List.of("TurnState"), context.getParsedPipelineDefinitionCatalog().localDefinitions()
+            .get("agent").getLast().accepts());
+    }
+
+    @Test
     void testDiscoveryPhaseInitialization() {
         PipelineDiscoveryPhase phase = new PipelineDiscoveryPhase();
         assertNotNull(phase);

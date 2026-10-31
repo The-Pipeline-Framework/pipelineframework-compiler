@@ -42,7 +42,8 @@ public final class PipelineBranchRoutingPlanner {
             return Optional.of(PipelineBranchingPlan.disabled());
         }
 
-        boolean branchAware = templateSteps.stream()
+        boolean branchAware = (templateConfig.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3
+            && isUnionContract(templateConfig, templateConfig.outputContract())) || templateSteps.stream()
             .filter(Objects::nonNull)
             .anyMatch(step -> !step.accepts().isEmpty() || step.terminal()
                 || isUnionContract(templateConfig, step.inputTypeName()));
@@ -102,7 +103,23 @@ public final class PipelineBranchRoutingPlanner {
             return Optional.empty();
         }
 
-        if (terminalCount == 0) {
+        if (terminalCount == 0 && templateConfig.version() >= 3 && !isBlank(templateConfig.outputContract())) {
+            Optional<PipelineTemplateTypeDefinition> output = v3Definition(templateConfig, templateConfig.outputContract());
+            if (output.isPresent() && output.orElseThrow() instanceof PipelineTemplateTypeDefinition.UnionType union) {
+                Set<String> payloads = new LinkedHashSet<>();
+                for (var variant : union.variants().values()) {
+                    Optional<String> payload = v3NamedContract(templateConfig, variant.payload());
+                    if (payload.isPresent() && !payloads.add(payload.orElseThrow())) {
+                        error(ctx, "Implicit definition completion cannot choose between output union '"
+                            + union.name() + "' variants for concrete type '" + payload.orElseThrow()
+                            + "'. Produce the declared union explicitly in a terminal operation.");
+                        return Optional.empty();
+                    }
+                }
+            }
+        }
+
+        if (terminalCount == 0 && (templateConfig.version() < 3 || isBlank(templateConfig.outputContract()))) {
             error(ctx, "Branch-aware pipelines require exactly one step with terminal: true.");
             return Optional.empty();
         }
@@ -110,12 +127,12 @@ public final class PipelineBranchRoutingPlanner {
             error(ctx, "Branch-aware pipelines may declare only one terminal: true step.");
             return Optional.empty();
         }
-        if (terminalIndex != resolvedSteps.size() - 1) {
+        if (terminalCount > 0 && terminalIndex != resolvedSteps.size() - 1) {
             error(ctx, "The terminal: true step must be the last authored step in a branch-aware pipeline.");
             return Optional.empty();
         }
 
-        if (!validateReachability(ctx, resolvedSteps)) {
+        if (!validateReachability(ctx, templateConfig, resolvedSteps)) {
             return Optional.empty();
         }
 
@@ -411,9 +428,18 @@ public final class PipelineBranchRoutingPlanner {
         }
     }
 
-    private boolean validateReachability(PipelineCompilationContext ctx, List<ResolvedStep> resolvedSteps) {
+    private boolean validateReachability(PipelineCompilationContext ctx, PipelineTemplateConfig config,
+        List<ResolvedStep> resolvedSteps) {
         ResolvedStep firstStep = resolvedSteps.getFirst();
         Set<String> reachable = new LinkedHashSet<>(firstStep.inputLeafTypes());
+        if (config.version() >= 3 && !isBlank(config.inputContract())) {
+            Set<String> inputs = expandLeafTypes(ctx, config, config.inputContract(),
+                "$definition", "input contract", false);
+            if (inputs == null) {
+                return false;
+            }
+            reachable = new LinkedHashSet<>(inputs);
+        }
         for (ResolvedStep step : resolvedSteps) {
             Set<String> unreachable = new LinkedHashSet<>(step.acceptedLeafTypes());
             unreachable.removeAll(reachable);
@@ -436,6 +462,20 @@ public final class PipelineBranchRoutingPlanner {
             Set<String> nextReachable = new LinkedHashSet<>(skipped);
             nextReachable.addAll(step.producedLeafTypes());
             reachable = nextReachable;
+        }
+        if (!isBlank(config.outputContract())) {
+            Set<String> outputs = expandLeafTypes(ctx, config, config.outputContract(),
+                "$definition", "output contract", false);
+            if (outputs == null) {
+                return false;
+            }
+            Set<String> unfinished = new LinkedHashSet<>(reachable);
+            unfinished.removeAll(outputs);
+            if (!unfinished.isEmpty()) {
+                error(ctx, "Pipeline output contract '" + config.outputContract()
+                    + "' does not cover reachable branch-end types: " + unfinished + ".");
+                return false;
+            }
         }
         return true;
     }
