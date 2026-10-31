@@ -115,8 +115,12 @@ class PipelineDiscoveryPhaseTest {
         var template = assertInstanceOf(org.pipelineframework.config.template.PipelineTemplateConfig.class,
             context.getPipelineTemplateConfig());
         assertEquals("$recur", template.pipelines().get("agent").steps().getLast().name());
+        assertEquals(java.util.List.of("TurnState"), template.pipelines().get("agent").recur());
+        assertEquals(java.util.List.of("TurnState"), template.pipelines().get("agent").steps().getLast().accepts());
         assertEquals("$recur", context.getParsedPipelineDefinitionCatalog().localDefinitions().get("agent")
             .getLast().name());
+        assertEquals(java.util.List.of("TurnState"), context.getParsedPipelineDefinitionCatalog().localDefinitions()
+            .get("agent").getLast().accepts());
     }
 
     @Test

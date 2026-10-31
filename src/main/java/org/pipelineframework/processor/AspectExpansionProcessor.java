@@ -54,7 +54,7 @@ public class AspectExpansionProcessor {
         List<ResolvedStep> expandedSteps = new ArrayList<>();
         
         Set<String> generatedKeys = new java.util.HashSet<>();
-        Map<String, TypeName> syntheticDomains = new HashMap<>();
+        Map<String, SyntheticImplementation> syntheticDomains = new HashMap<>();
 
         for (ResolvedStep originalStep : originalStepsSnapshot) {
             PipelineStepModel originalModel = originalStep.model();
@@ -103,13 +103,23 @@ public class AspectExpansionProcessor {
         return expandedSteps;
     }
 
-    private void validateSharedSyntheticDomain(ResolvedStep synthetic, Map<String, TypeName> syntheticDomains) {
+    private record SyntheticImplementation(TypeName domainType, ClassName pluginClass) { }
+
+    private void validateSharedSyntheticDomain(ResolvedStep synthetic,
+        Map<String, SyntheticImplementation> syntheticDomains) {
         String serviceName = synthetic.model().serviceName();
         TypeName domain = synthetic.model().inputMapping().domainType();
-        TypeName existing = syntheticDomains.putIfAbsent(serviceName, domain);
-        if (existing != null && !existing.equals(domain)) {
+        ClassName pluginClass = synthetic.model().serviceClassName();
+        SyntheticImplementation existing = syntheticDomains.putIfAbsent(serviceName,
+            new SyntheticImplementation(domain, pluginClass));
+        if (existing != null && !existing.domainType().equals(domain)) {
             throw new IllegalStateException("Synthetic observer service '" + serviceName
-                + "' cannot be shared by different domain types: '" + existing + "' and '" + domain + "'.");
+                + "' cannot be shared by different domain types: '" + existing.domainType() + "' and '" + domain + "'.");
+        }
+        if (existing != null && !existing.pluginClass().equals(pluginClass)) {
+            throw new IllegalStateException("Synthetic observer service '" + serviceName
+                + "' cannot be shared by different plugin classes: '" + existing.pluginClass()
+                + "' and '" + pluginClass + "'.");
         }
     }
     

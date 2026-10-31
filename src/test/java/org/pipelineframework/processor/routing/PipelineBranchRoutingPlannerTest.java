@@ -48,6 +48,28 @@ import org.pipelineframework.processor.composition.PipelineReference;
 class PipelineBranchRoutingPlannerTest {
 
     @Test
+    void v2UnionOutputAloneDoesNotEnableBranchAwareRouting() {
+        var diagnostics = new ArrayList<String>();
+        var ctx = context(diagnostics);
+        var config = mock(PipelineTemplateConfig.class);
+        when(config.version()).thenReturn(2);
+        when(config.dialect()).thenReturn(PipelineTemplateDialect.V2);
+        when(config.appName()).thenReturn("Legacy union output");
+        when(config.basePackage()).thenReturn("com.example.order");
+        when(config.messages()).thenReturn(messages());
+        when(config.unions()).thenReturn(unions());
+        when(config.outputContract()).thenReturn("OrderCompletion");
+        when(config.steps()).thenReturn(List.of(step("reserve", "PhysicalOrder", "StockReserved", List.of(), false)));
+        ctx.setPipelineTemplateConfig(config);
+        ctx.setStepDefinitions(List.of(stepDefinition("reserve", "PhysicalOrder", "StockReserved")));
+
+        var plan = planner.plan(ctx).orElseThrow();
+
+        assertFalse(plan.branchAware());
+        assertTrue(diagnostics.isEmpty(), diagnostics.toString());
+    }
+
+    @Test
     void plansUnionReturnWithoutAnAuthoredMergeAndRejectsAmbiguousPayloadTags() {
         for (boolean ambiguous : List.of(false, true)) {
             List<String> diagnostics = new ArrayList<>();

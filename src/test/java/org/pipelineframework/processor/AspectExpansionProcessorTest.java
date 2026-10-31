@@ -25,8 +25,10 @@ class AspectExpansionProcessorTest {
         for (String definition : List.of("$root", "child")) {
             PipelineStepModel conflicting = original.model().toBuilder()
                 .definition(new PipelineReference(definition))
-                .inputMapping(TypeMapping.withoutMapper(ClassName.get("other.domain", "CsvFolder")))
-                .outputMapping(TypeMapping.withoutMapper(ClassName.get("other.domain", "CsvPaymentsInputFile")))
+                .inputMapping(new TypeMapping(ClassName.get("other.domain", "CsvFolder"),
+                    original.model().inputMapping().mapperType().orElseThrow(), true))
+                .outputMapping(new TypeMapping(ClassName.get("other.domain", "CsvPaymentsInputFile"),
+                    original.model().outputMapping().mapperType().orElseThrow(), true))
                 .build();
             ResolvedStep other = new ResolvedStep(conflicting, original.grpcBinding(), original.restBinding());
             for (AspectPosition position : AspectPosition.values()) {
@@ -38,6 +40,28 @@ class AspectExpansionProcessorTest {
                 assertTrue(error.getMessage().contains("other.domain"), error.getMessage());
                 assertTrue(error.getMessage().contains("org.pipelineframework.csv.common.domain"), error.getMessage());
             }
+        }
+    }
+
+    @Test
+    void rejectsNormalisedObserverNamesWithDifferentPluginImplementations() throws Exception {
+        ResolvedStep original = resolvedStep("ProcessFolderService");
+        ResolvedStep child = new ResolvedStep(original.model().toBuilder()
+            .serviceName("ProcessOtherFolderService").definition(new PipelineReference("child")).build(),
+            original.grpcBinding(), original.restBinding());
+        var first = aspectConfig("com.first.AuditPlugin");
+        first.put("targetSteps", List.of(original.model().serviceName()));
+        var second = aspectConfig("com.second.AuditPlugin");
+        second.put("targetSteps", List.of(child.model().serviceName()));
+        for (AspectPosition position : AspectPosition.values()) {
+            var aspects = List.of(
+                new PipelineAspectModel("audit-log", AspectScope.STEPS, position, first),
+                new PipelineAspectModel("audit_log", AspectScope.STEPS, position, second));
+            var error = assertThrows(IllegalStateException.class, () -> new AspectExpansionProcessor()
+                .expandAspects(List.of(original, child), aspects));
+            assertTrue(error.getMessage().contains("different plugin classes"), error.getMessage());
+            assertTrue(error.getMessage().contains("com.first.AuditPlugin"), error.getMessage());
+            assertTrue(error.getMessage().contains("com.second.AuditPlugin"), error.getMessage());
         }
     }
 

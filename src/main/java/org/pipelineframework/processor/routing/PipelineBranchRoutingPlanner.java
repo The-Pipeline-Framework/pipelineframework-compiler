@@ -42,7 +42,8 @@ public final class PipelineBranchRoutingPlanner {
             return Optional.of(PipelineBranchingPlan.disabled());
         }
 
-        boolean branchAware = isUnionContract(templateConfig, templateConfig.outputContract()) || templateSteps.stream()
+        boolean branchAware = (templateConfig.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3
+            && isUnionContract(templateConfig, templateConfig.outputContract())) || templateSteps.stream()
             .filter(Objects::nonNull)
             .anyMatch(step -> !step.accepts().isEmpty() || step.terminal()
                 || isUnionContract(templateConfig, step.inputTypeName()));
