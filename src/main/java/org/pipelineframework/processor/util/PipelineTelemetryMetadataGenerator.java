@@ -42,7 +42,11 @@ public class PipelineTelemetryMetadataGenerator {
     private static final Logger LOGGER = Logger.getLogger(PipelineTelemetryMetadataGenerator.class.getName());
 
     private final ProcessingEnvironment processingEnv;
-    private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
+    private final Gson gson = new GsonBuilder().setPrettyPrinting()
+        .registerTypeHierarchyAdapter(Optional.class,
+            (com.google.gson.JsonSerializer<Optional<?>>) (value, type, context) ->
+                value.map(context::serialize).orElse(com.google.gson.JsonNull.INSTANCE))
+        .create();
 
     /**
      * Creates a new metadata generator.
@@ -115,7 +119,8 @@ public class PipelineTelemetryMetadataGenerator {
         PipelineYamlConfig pipelineConfig = loadPipelineConfig(ctx);
         Map<String, PipelineYamlStep> configStepsByToken = indexPipelineSteps(pipelineConfig);
         List<ReplayTopologyStep> steps = new ArrayList<>();
-        List<ReplayTopologyStep> baseSteps = buildBaseReplaySteps(ctx, orderedBase, configStepsByToken);
+        List<ReplayTopologyStep> baseSteps = withRootInvocations(ctx,
+            buildBaseReplaySteps(ctx, orderedBase, configStepsByToken));
         Map<String, String> parentByPluginRuntimeClass = resolveStepParents(ctx, orderedBase);
         Map<String, List<PipelineStepModel>> sideEffectsByParent = new LinkedHashMap<>();
         for (PipelineStepModel model : orderedClientModels) {
@@ -146,10 +151,10 @@ public class PipelineTelemetryMetadataGenerator {
                     cardinality(sideEffect.streamingShape()),
                     index++,
                     true,
-                    baseStep.step(),
-                    resolvePluginKind(sideEffectService, sideEffectStep),
+                    Optional.ofNullable(baseStep.step()),
+                    Optional.ofNullable(resolvePluginKind(sideEffectService, sideEffectStep)),
                     resolvePluginRenderRole(resolvePluginKind(sideEffectService, sideEffectStep)),
-                    resolvePluginActorKind(resolvePluginKind(sideEffectService, sideEffectStep)),
+                    Optional.ofNullable(resolvePluginActorKind(resolvePluginKind(sideEffectService, sideEffectStep))),
                     false));
             }
         }
@@ -157,11 +162,11 @@ public class PipelineTelemetryMetadataGenerator {
         index = appendAwaitActors(baseSteps, configStepsByToken, steps, transitions, index);
         index = appendPersistenceStore(baseSteps, steps, transitions, index);
         for (ReplayTopologyStep step : steps) {
-            if (!step.sideEffect() || step.parentStep() == null || !shouldAddBranchTransition(step)) {
+            if (!step.sideEffect() || step.parentStep().isEmpty() || !shouldAddBranchTransition(step)) {
                 continue;
             }
             ReplayTopologyStep parent = steps.stream()
-                .filter(candidate -> step.parentStep().equals(candidate.step()))
+                .filter(candidate -> step.parentStep().orElseThrow().equals(candidate.step()))
                 .findFirst()
                 .orElse(null);
             if (parent == null) {
@@ -187,6 +192,40 @@ public class PipelineTelemetryMetadataGenerator {
         try (var output = resourceFile.openWriter()) {
             output.write(writer.toString());
         }
+    }
+
+    private List<ReplayTopologyStep> withRootInvocations(
+        PipelineCompilationContext ctx, List<ReplayTopologyStep> baseSteps) {
+        if (ctx.getResolvedPipelineDefinitionGraph().isEmpty()
+            || !(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig template)) {
+            return baseSteps;
+        }
+        var graph = ctx.getResolvedPipelineDefinitionGraph().orElseThrow();
+        var steps = new ArrayList<>(baseSteps);
+        for (var binding : graph.invocationBindings()) {
+            var location = binding.invocationLocation().definitionLocalLocation();
+            if (!location.definition().equals(graph.root().reference())) {
+                continue;
+            }
+            String runtimeClass = org.pipelineframework.processor.composition.LocalPipelineInvocationClassName
+                .canonicalName(template.basePackage(), binding.invocationLocation());
+            int index = 0;
+            while (index < steps.size()
+                && !normalizeStepToken(steps.get(index).step()).equals(normalizeStepToken(location.localStepId()))) {
+                index++;
+            }
+            String name = index < steps.size() ? steps.get(index).step() : location.localStepId();
+            var invocation = new ReplayTopologyStep(runtimeClass, name, location.localStepId(),
+                binding.cardinality().name().toLowerCase(java.util.Locale.ROOT).replace('_', '-'), index,
+                false, Optional.empty(), Optional.empty(), "primary",
+                Optional.of("pipeline:" + binding.target().logicalId()), false);
+            if (index < steps.size()) {
+                steps.set(index, invocation);
+            } else {
+                steps.add(invocation);
+            }
+        }
+        return List.copyOf(steps);
     }
 
     private List<ReplayTopologyTransition> buildPrimaryTransitions(
@@ -273,6 +312,23 @@ public class PipelineTelemetryMetadataGenerator {
             }
         }
 
+        if (ctx.getResolvedPipelineDefinitionGraph().isPresent()
+            && ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig template) {
+            var graph = ctx.getResolvedPipelineDefinitionGraph().orElseThrow();
+            for (var binding : graph.invocationBindings()) {
+                if (!binding.recursive()
+                    || !binding.invocationLocation().definitionLocalLocation().definition().equals(graph.root().reference())) {
+                    continue;
+                }
+                String runtimeClass = org.pipelineframework.processor.composition.LocalPipelineInvocationClassName
+                    .canonicalName(template.basePackage(), binding.invocationLocation());
+                resolvedSteps.stream().filter(step -> step.topologyStep().runtimeStepClass().equals(runtimeClass))
+                    .forEach(step -> step.acceptedContractTypes().forEach(type ->
+                        firstAcceptingStep(resolvedSteps, 0, type).ifPresent(target ->
+                            addTransition(transitions, transitionKeys, primaryTransition(step.topologyStep(), target.topologyStep())))));
+            }
+        }
+
         for (int index = 0; index < baseSteps.size() - 1; index++) {
             ReplayTopologyStep from = baseSteps.get(index);
             ReplayTopologyStep to = baseSteps.get(index + 1);
@@ -301,6 +357,9 @@ public class PipelineTelemetryMetadataGenerator {
         }
         if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig templateConfig)) {
             return Set.of(contractName);
+        }
+        if (templateConfig.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
+            return templateConfig.typeModel().concreteTypeNames(contractName);
         }
         return expandLeafContractTypes(templateConfig, contractName, new LinkedHashSet<>());
     }
@@ -750,10 +809,10 @@ public class PipelineTelemetryMetadataGenerator {
             cardinality(model, configStep),
             index,
             false,
-            null,
-            null,
+            Optional.empty(),
+            Optional.empty(),
             resolveBaseRenderRole(configStep, logicalStep),
-            resolveBaseActorKind(configStep),
+            Optional.ofNullable(resolveBaseActorKind(configStep)),
             model.deferredCompletionSelection().isPresent()
                 || (configStep != null && configStep.awaitConfig() != null));
     }
@@ -767,10 +826,10 @@ public class PipelineTelemetryMetadataGenerator {
             cardinality(configStep),
             index,
             false,
-            null,
-            null,
+            Optional.empty(),
+            Optional.empty(),
             resolveBaseRenderRole(configStep, logicalStep),
-            resolveBaseActorKind(configStep),
+            Optional.ofNullable(resolveBaseActorKind(configStep)),
             configStep.awaitConfig() != null);
     }
 
@@ -862,10 +921,10 @@ public class PipelineTelemetryMetadataGenerator {
                 "one-to-one",
                 nextIndex++,
                 true,
-                baseStep.step(),
-                null,
+                Optional.ofNullable(baseStep.step()),
+                Optional.empty(),
                 "broker",
-                "kafka",
+                Optional.ofNullable("kafka"),
                 false);
             steps.add(brokerStep);
             String providerBaseName = uniqueSyntheticActorName(
@@ -879,10 +938,10 @@ public class PipelineTelemetryMetadataGenerator {
                 "one-to-one",
                 nextIndex++,
                 true,
-                baseStep.step(),
-                null,
+                Optional.ofNullable(baseStep.step()),
+                Optional.empty(),
                 "external-provider",
-                "provider",
+                Optional.ofNullable("provider"),
                 false);
             steps.add(providerStep);
             transitions.add(new ReplayTopologyTransition(
@@ -961,8 +1020,7 @@ public class PipelineTelemetryMetadataGenerator {
         List<String> persistentParents = steps.stream()
             .filter(ReplayTopologyStep::sideEffect)
             .filter(step -> "persistence-plugin".equals(step.renderRole()))
-            .map(ReplayTopologyStep::parentStep)
-            .filter(Objects::nonNull)
+            .flatMap(step -> step.parentStep().stream())
             .distinct()
             .toList();
         if (persistentParents.isEmpty() || baseSteps.isEmpty()) {
@@ -976,10 +1034,10 @@ public class PipelineTelemetryMetadataGenerator {
             "one-to-one",
             nextIndex++,
             true,
-            null,
-            null,
+            Optional.empty(),
+            Optional.empty(),
             "store",
-            "database",
+            Optional.ofNullable("database"),
             false);
         steps.add(storeStep);
         Map<String, ReplayTopologyStep> baseByStep = new LinkedHashMap<>();
@@ -1357,10 +1415,10 @@ public class PipelineTelemetryMetadataGenerator {
         String cardinality,
         int index,
         boolean sideEffect,
-        String parentStep,
-        String pluginKind,
+        Optional<String> parentStep,
+        Optional<String> pluginKind,
         String renderRole,
-        String actorKind,
+        Optional<String> actorKind,
         boolean deferredCompletion) {
     }
 

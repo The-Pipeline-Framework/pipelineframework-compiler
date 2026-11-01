@@ -39,6 +39,45 @@ public final class PipelineTemplateSchemaExporter {
   "description": "Generator-facing pipeline template configuration schema exported by framework/deployment.",
   "type": "object",
   "$defs": {
+    "definitionRecurrence": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "description": "Canonical concrete continuing outcomes; one authored consumer per concrete input remains required.",
+      "items": { "$ref": "#/$defs/logicalContractReference" }
+    },
+    "pipelineInvocationTemplateStep": {
+      "type": "object",
+      "required": ["name", "pipeline", "cardinality", "input", "output"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "kind": { "const": "pipeline" },
+        "pipeline": { "type": "string", "minLength": 1 },
+        "cardinality": { "enum": ["ONE_TO_ONE", "ONE_TO_MANY", "MANY_TO_ONE", "MANY_TO_MANY"] }
+      },
+      "additionalProperties": true
+    },
+    "v3DefinitionStep": {
+      "allOf": [
+        { "oneOf": [
+          { "$ref": "#/$defs/queryTemplateStep" },
+          { "$ref": "#/$defs/dynamicOperationTemplateStep" },
+          { "$ref": "#/$defs/commandTemplateStep" },
+          { "$ref": "#/$defs/v2TemplateStep" },
+          { "$ref": "#/$defs/delegatedOrInternalStep" },
+          { "$ref": "#/$defs/pipelineInvocationTemplateStep" }
+        ] },
+        { "$ref": "#/$defs/v3TemplateStep" }
+      ]
+    },
+    "pipelineDefinition": {
+      "type": "object", "required": ["input", "output", "steps"],
+      "properties": {
+        "input": { "$ref": "#/$defs/logicalContractReference" },
+        "output": { "$ref": "#/$defs/logicalContractReference" },
+        "recur": { "$ref": "#/$defs/definitionRecurrence" },
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/v3DefinitionStep" } }
+      },
+      "additionalProperties": false
+    },
     "javaClassName": {
       "type": "string",
       "pattern": "^[a-zA-Z_$][a-zA-Z\\\\d_$]*(\\\\.[a-zA-Z_$][a-zA-Z\\\\d_$]*)*\\\\.[A-Z][a-zA-Z\\\\d_$]*$"
@@ -2146,12 +2185,7 @@ public final class PipelineTemplateSchemaExporter {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "await": {
-          "allOf": [
-            { "$ref": "#/$defs/awaitConfig" },
-            { "required": ["callback"] }
-          ]
-        },
+        "await": { "$ref": "#/$defs/awaitConfig" },
         "id": {
           "type": "string",
           "minLength": 1
@@ -2664,6 +2698,7 @@ public final class PipelineTemplateSchemaExporter {
       "type": "object",
       "required": ["input", "output"],
       "properties": {
+        "recur": false,
         "input": { "$ref": "#/$defs/logicalContractReference" },
         "output": { "$ref": "#/$defs/logicalContractReference" },
         "accepts": { "type": "array", "items": { "$ref": "#/$defs/logicalContractReference" } },
@@ -2696,7 +2731,7 @@ public final class PipelineTemplateSchemaExporter {
         }
       },
       "then": {
-        "properties": { "blockBindings": false }
+        "properties": { "blockBindings": false, "recur": false, "pipelines": false }
       }
     },
     {
@@ -2737,32 +2772,35 @@ public final class PipelineTemplateSchemaExporter {
         }
       },
       "else": {
-        "not": {
-          "anyOf": [
-            {
-              "required": [
-                "types"
-              ]
-            },
-            {
-              "required": [
-                "messages"
-              ]
-            }
-          ]
-        },
-        "properties": {
-          "steps": {
-            "type": "array",
-            "items": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/legacyTemplateStep"
-                },
-                {
-                  "$ref": "#/$defs/delegatedOrInternalStep"
-                }
-              ]
+        "if": { "not": { "properties": { "version": { "const": 3 } }, "required": ["version"] } },
+        "then": {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "types"
+                ]
+              },
+              {
+                "required": [
+                  "messages"
+                ]
+              }
+            ]
+          },
+          "properties": {
+            "steps": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/legacyTemplateStep"
+                  },
+                  {
+                    "$ref": "#/$defs/delegatedOrInternalStep"
+                  }
+                ]
+              }
             }
           }
         }
@@ -2777,20 +2815,7 @@ public final class PipelineTemplateSchemaExporter {
         "properties": {
           "steps": {
             "type": "array",
-            "items": {
-              "allOf": [
-                {
-                  "oneOf": [
-                    { "$ref": "#/$defs/queryTemplateStep" },
-                    { "$ref": "#/$defs/dynamicOperationTemplateStep" },
-                    { "$ref": "#/$defs/commandTemplateStep" },
-                    { "$ref": "#/$defs/v2TemplateStep" },
-                    { "$ref": "#/$defs/delegatedOrInternalStep" }
-                  ]
-                },
-                { "$ref": "#/$defs/v3TemplateStep" }
-              ]
-            }
+            "items": { "$ref": "#/$defs/v3DefinitionStep" }
           }
         }
       },
@@ -2843,6 +2868,19 @@ public final class PipelineTemplateSchemaExporter {
             "additionalProperties": { "$ref": "#/$defs/v2MessageDefinition" }
           }
         }
+      }
+    },
+    {
+      "if": { "required": ["recur"] },
+      "then": {
+        "required": ["version"], "properties": { "version": { "const": 3 } },
+        "anyOf": [
+          { "required": ["contract"], "properties": { "contract": { "required": ["input", "output"] } } },
+          { "required": ["input", "output"], "properties": {
+            "input": { "$ref": "#/$defs/logicalContractReference" },
+            "output": { "$ref": "#/$defs/logicalContractReference" }
+          } }
+        ]
       }
     }
   ],
@@ -2928,6 +2966,8 @@ public final class PipelineTemplateSchemaExporter {
         "$ref": "#/$defs/v2MessageDefinition"
       }
     },
+    "recur": { "$ref": "#/$defs/definitionRecurrence" },
+    "pipelines": { "type": "object", "additionalProperties": { "$ref": "#/$defs/pipelineDefinition" } },
     "steps": {
       "type": "array",
       "description": "List of pipeline steps."

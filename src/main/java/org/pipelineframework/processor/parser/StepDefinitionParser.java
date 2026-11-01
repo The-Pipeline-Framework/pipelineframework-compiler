@@ -550,11 +550,11 @@ public class StepDefinitionParser {
                 return null;
             }
             deferredCompletion = Optional.of(parsed);
-            if ((executionShape == StepExecutionShape.COMMAND) != parsed.callback().isPresent()
+            if ((parsed.callback().isPresent() && executionShape != StepExecutionShape.COMMAND)
                 || (executionShape == StepExecutionShape.COMMAND && (requireExactOperationTypes || version != 3
                     || !(stepData.get("operation") instanceof String) || !(stepData.get("using") instanceof String)))) {
                 report(Diagnostic.Kind.ERROR, "Step '" + name
-                    + "': await requires INTERNAL + transport or application-local native COMMAND + callback (version 3)");
+                    + "': await requires INTERNAL + transport or application-local native COMMAND + transport/callback (version 3)");
                 throw new StepSkippedException();
             }
         }
@@ -1404,7 +1404,7 @@ public class StepDefinitionParser {
             ConnectorProviderId.of(selected.provider()), selected.providerVersion(), selected.operation(),
             ConnectorOperationKind.COMMAND, selected.operationVersion());
         try {
-            if (completion.isEmpty()) {
+            if (completion.flatMap(DeferredCompletionDefinition::callback).isEmpty()) {
                 if (!operation.callbacks().isEmpty()) {
                     throw new IllegalArgumentException("callback-capable Command requires await.callback");
                 }

@@ -106,7 +106,8 @@ public final class LocalPipelineInvocationRenderer {
                 .addAnnotation(RuntimeSymbols.INJECT).build());
             childFields.add(recursiveChild ? field + ".get()" : field);
         }
-        var targetPlan = ctx.getLocalDefinitionBranchingPlans().get(binding.target());
+        var targetPlan = "$root".equals(binding.target().logicalId()) ? ctx.getBranchingPlan()
+            : ctx.getLocalDefinitionBranchingPlans().get(binding.target());
         if (targetPlan == null) {
             throw new IllegalStateException("No branch plan for linked pipeline definition '"
                 + binding.target().logicalId() + "'.");
@@ -149,8 +150,8 @@ public final class LocalPipelineInvocationRenderer {
             }
             return type;
         }
-        List<PipelineStepModel> available = ctx.getLocalDefinitionStepModels()
-            .getOrDefault(parent.target().logicalId(), List.of());
+        List<PipelineStepModel> available = "$root".equals(parent.target().logicalId()) ? ctx.getStepModels()
+            : ctx.getLocalDefinitionStepModels().getOrDefault(parent.target().logicalId(), List.of());
         PipelineStepModel model = available.stream()
             .filter(candidate -> matchesAuthoredStep(candidate, child.localStepId()))
             .findFirst().orElseThrow(() -> new IllegalStateException("No generated child step model for '"

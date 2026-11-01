@@ -274,8 +274,7 @@ public final class PipelineBranchingMetadataGenerator {
     ) {
         PipelineTransport transport = java.util.Objects.requireNonNullElse(
             ctx.getTransportMode(), PipelineTransport.GRPC);
-        String operationRuntimeClass = model.servicePackage() + ".pipeline."
-            + stripTrailingService(model.generatedName()) + transport.clientStepSuffix();
+        String operationRuntimeClass = ClientStepClassNames.operationClassName(model, transport);
         steps.add(new StepMetadata(
             definitionId,
             plan.terminalStepIndex(),

@@ -74,6 +74,33 @@ class PipelineDiscoveryPhaseTest {
     }
 
     @Test
+    void discoveryRejectsAuthoredCollisionsBeforeParsingOrLowering() throws Exception {
+        Path yaml = tempDir.resolve("pipeline.yaml");
+        Files.writeString(yaml, """
+            version: 3
+            appName: Ambiguous routing
+            basePackage: com.example
+            transport: LOCAL
+            contract: { input: A, output: Result }
+            types:
+              A: { fields: [[value, string]] }
+              B: { fields: [[value, string]] }
+              Result: { fields: [[value, string]] }
+            steps:
+              - { name: First, service: com.example.First, input: A, output: B, cardinality: ONE_TO_ONE }
+              - { name: Middle, service: com.example.Middle, input: B, output: A, cardinality: ONE_TO_ONE }
+              - { name: Later, service: com.example.Later, input: A, output: Result, cardinality: ONE_TO_ONE }
+            """);
+        when(processingEnv.getOptions()).thenReturn(Map.of("pipeline.config", yaml.toString()));
+        var context = new PipelineCompilationContext(processingEnv,
+            org.pipelineframework.processor.Jsr269SourceInventoryTestSupport.snapshot(roundEnv));
+        var failure = assertThrows(IllegalArgumentException.class, () -> new PipelineDiscoveryPhase().execute(context));
+        assertTrue(failure.getMessage().contains("'A'"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("First"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("Later"), failure.getMessage());
+    }
+
+    @Test
     void discoveryStoresRecurrentContinuationInTemplateAndParsedCatalogue() throws Exception {
         Path yaml = tempDir.resolve("pipeline.yaml");
         Files.writeString(yaml, """
