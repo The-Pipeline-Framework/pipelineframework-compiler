@@ -593,6 +593,11 @@ public record PipelineStepModel(
         return observationProjection.map(ObservationProjection::carrierType).orElse(outputMapping.domainType());
     }
 
+    /** Renderer bindings distinguish observer adapters while their plugin implementation can be shared. */
+    public String artifactBindingName() {
+        return sideEffect && deploymentRole == DeploymentRole.ORCHESTRATOR_CLIENT ? generatedName : serviceName;
+    }
+
     /** Pipeline-visible output after any deferred completion decorator has projected its result. */
     public TypeName pipelineOutputType() {
         return deferredCompletionSelection.map(DeferredCompletionSelection::finalOutputType)

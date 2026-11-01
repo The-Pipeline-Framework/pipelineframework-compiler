@@ -2012,9 +2012,11 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
     static List<PipelineStepModel> deduplicateByDefinitionServiceAndRole(List<PipelineStepModel> stepModels) {
         Map<String, PipelineStepModel> uniqueByServiceName = new LinkedHashMap<>();
         for (PipelineStepModel model : stepModels) {
-            String key = model.definition().logicalId() + "::" + model.serviceName()
+            String identity = model.artifactBindingName();
+            String key = model.definition().logicalId() + "::" + identity
                 + "::" + String.valueOf(model.deploymentRole());
-            // Keep first occurrence so concrete @PipelineStep models take precedence over template fallbacks.
+            // Observer clients are occurrences; plugin-server beans may share a typed implementation.
+            // Keep first functional occurrence so concrete models take precedence over template fallbacks.
             uniqueByServiceName.putIfAbsent(key, model);
         }
         return new ArrayList<>(uniqueByServiceName.values());

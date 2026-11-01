@@ -188,7 +188,7 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
         for (int stepIndex = 0; stepIndex < ctx.getStepModels().size(); stepIndex++) {
             PipelineStepModel model = ctx.getStepModels().get(stepIndex);
             // Check if this is a delegation step
-            Object externalAdapterBindingObj = bindingsMap.get(model.serviceName() + "_external_adapter");
+            Object externalAdapterBindingObj = bindingsMap.get(model.artifactBindingName() + "_external_adapter");
             ExternalAdapterBinding externalAdapterBinding = null;
             if (externalAdapterBindingObj instanceof ExternalAdapterBinding) {
                 externalAdapterBinding = (ExternalAdapterBinding) externalAdapterBindingObj;
@@ -223,9 +223,9 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
             }
 
             // Get the bindings for this model (for non-delegation steps)
-            String grpcBindingKey = model.serviceName() + "_grpc";
-            String restBindingKey = model.serviceName() + "_rest";
-            String localBindingKey = model.serviceName() + "_local";
+            String grpcBindingKey = model.artifactBindingName() + "_grpc";
+            String restBindingKey = model.artifactBindingName() + "_rest";
+            String localBindingKey = model.artifactBindingName() + "_local";
 
             Object grpcBindingObj = bindingsMap.get(grpcBindingKey);
             Object restBindingObj = bindingsMap.get(restBindingKey);

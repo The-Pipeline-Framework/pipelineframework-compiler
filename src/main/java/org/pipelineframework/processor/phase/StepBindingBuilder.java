@@ -60,7 +60,7 @@ class StepBindingBuilder {
                 restBinding = REST_RESOLVER.resolve(model, processingEnv);
             }
 
-            String modelKey = model.serviceName();
+            String modelKey = model.artifactBindingName();
             
             // Check for duplicate keys before inserting to prevent silent overwrites
             if (grpcBinding != null) {
