@@ -202,7 +202,8 @@ public class SideEffectBeanService {
 
     private TypeName resolveObservedType(PipelineCompilationContext ctx, PipelineStepModel model,
             DeploymentRole role, GrpcBinding grpcBinding) {
-        TypeName observedType = model.pipelineOutputType() != null ? model.pipelineOutputType() : model.inboundDomainType();
+        TypeName observedType = model.observationProjection().isPresent() ? model.outputMapping().domainType()
+            : model.pipelineOutputType() != null ? model.pipelineOutputType() : model.inboundDomainType();
         if (observedType == null) {
             return ClassName.OBJECT;
         }

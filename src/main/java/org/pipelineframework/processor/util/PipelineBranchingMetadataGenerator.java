@@ -186,8 +186,7 @@ public final class PipelineBranchingMetadataGenerator {
             if (!emittedRuntimeClasses.add(runtimeStepClass)) {
                 continue;
             }
-            String acceptedContract = model.inputMapping() != null
-                    && model.inputMapping().domainType() instanceof ClassName className
+            String acceptedContract = model.inboundDomainType() instanceof ClassName className
                 ? className.simpleName()
                 : inputRuntimeClass;
             steps.add(new StepMetadata(
@@ -526,7 +525,7 @@ public final class PipelineBranchingMetadataGenerator {
     }
 
     private Optional<String> runtimeInputType(PipelineStepModel model, PipelineCompilationContext ctx, boolean transportMappedRuntime) {
-        TypeName inputType = model.inputMapping() == null ? null : model.inputMapping().domainType();
+        TypeName inputType = model.inboundDomainType();
         if (!(inputType instanceof ClassName className)) {
             return inputType == null ? Optional.empty() : Optional.of(inputType.toString());
         }

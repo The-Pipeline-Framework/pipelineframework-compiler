@@ -359,7 +359,8 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                     java.time.Duration.parse(completion.timeout()), completion.idempotencyKeyFields(),
                     completion.correlationStrategy(), completion.transportType(), completion.transportConfig(),
                     resolved.completionPayloadType(), completion.completion()
-                        .map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector)));
+                        .map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))
+                    .withBranchSelection(resolved.branchSelection()));
             }
         }
 
@@ -677,7 +678,8 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                 definitionValue.transportType(),
                 definitionValue.transportConfig(),
                 completionBinding.orElseThrow().completionPayloadType(),
-                definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))));
+                definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))
+                .withBranchSelection(completionBinding.orElseThrow().branchSelection())));
         return builder.build();
     }
 
@@ -822,7 +824,8 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                 definitionValue.transportType(),
                 definitionValue.transportConfig(),
                 completionBinding.orElseThrow().completionPayloadType(),
-                definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))));
+                definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))
+                .withBranchSelection(completionBinding.orElseThrow().branchSelection())));
         return builder.build();
     }
 

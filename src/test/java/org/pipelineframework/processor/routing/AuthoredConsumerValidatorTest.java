@@ -94,7 +94,10 @@ class AuthoredConsumerValidatorTest {
         var config = new PipelineTemplateConfigLoader().load(Path.of(resource.toURI()));
         assertDoesNotThrow(() -> new AuthoredConsumerValidator().validate(config));
         assertEquals(java.util.List.of("TurnState"), config.recur());
-        assertEquals(11, config.steps().size());
+        assertEquals(9, config.steps().size());
+        assertEquals(java.util.Set.of("TurnState", "AnsweredReview", "Result"),
+            config.typeModel().concreteTypeNames("TurnCompletion"));
+        assertTrue(config.steps().stream().noneMatch(step -> step.inputTypeName().equals(step.outputTypeName())));
     }
 
     private void validate(String steps, String definitions) throws Exception {

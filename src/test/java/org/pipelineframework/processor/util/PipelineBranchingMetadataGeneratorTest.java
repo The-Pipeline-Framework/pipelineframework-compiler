@@ -351,6 +351,34 @@ class PipelineBranchingMetadataGeneratorTest {
     }
 
     @Test
+    void projectedObserverAcceptsTheUnionCarrierWithoutUnwrappingIt() throws IOException {
+        Path output = tempDir.resolve("projected-observation");
+        var env = mock(ProcessingEnvironment.class);
+        when(env.getOptions()).thenReturn(Map.of());
+        when(env.getFiler()).thenReturn(new PathResourceFiler(output));
+        var ctx = new PipelineCompilationContext(env, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        ctx.setTransportMode(PipelineTransport.LOCAL);
+        ctx.setOrchestratorGenerated(true);
+        var parent = stepModel("Evaluate", "com.example", "Input", "Before");
+        var observer = stepModel("ObservePersistenceReviewSideEffect", "com.example", "Review", "Review").toBuilder()
+            .sideEffect(true).aspectPosition(AspectPosition.AFTER_STEP)
+            .observationProjection(Optional.of(new org.pipelineframework.processor.ir.ObservationProjection(
+                ClassName.get("com.example.common.domain", "Before"),
+                ClassName.get("com.example.common.domain", "Before", "ReviewRequired"), "value", parent.serviceName())))
+            .build();
+        ctx.setStepModels(List.of(parent, observer));
+        ctx.setBranchingPlan(new PipelineBranchingPlan(true, 0, List.of(
+            new PipelineBranchingPlan.BranchStep(0, "Evaluate", "Input", "Before", List.of("Input"), List.of("Before"),
+                List.of(ClassName.get("com.example.common.domain", "Input")), true))));
+        new PipelineBranchingMetadataGenerator(env).writeBranchingMetadata(ctx);
+        var metadata = new Gson().fromJson(Files.readString(output.resolve("META-INF/pipeline/branching.json")), JsonObject.class);
+        var aspect = metadata.getAsJsonArray("steps").get(1).getAsJsonObject();
+        assertEquals("com.example.common.domain.Before", aspect.get("inputRuntimeClass").getAsString());
+        assertEquals("com.example.common.domain.Before", aspect.getAsJsonArray("acceptedRuntimeClasses").get(0).getAsString());
+        assertEquals("Before", aspect.getAsJsonArray("acceptedContracts").get(0).getAsString());
+    }
+
+    @Test
     void writesApplicabilityMetadataForConcreteAspectObservers() throws IOException {
         Path classOutput = tempDir.resolve("class-output-aspects");
 

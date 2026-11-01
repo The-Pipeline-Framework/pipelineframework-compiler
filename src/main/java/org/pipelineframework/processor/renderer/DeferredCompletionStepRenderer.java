@@ -42,6 +42,9 @@ public class DeferredCompletionStepRenderer {
     public void render(PipelineStepModel model, GenerationContext ctx, GrpcBinding grpcBinding) throws IOException {
         DeferredCompletionSelection completion = model.deferredCompletionSelection().orElseThrow(() ->
             new IllegalArgumentException("Deferred completion target requires a resolved completion selection"));
+        if (completion.branchSelection().isPresent() && ctx.transportMode() != PipelineTransport.LOCAL) {
+            throw new IllegalArgumentException("Selected Await requires LOCAL transport");
+        }
         String baseName = stripService(model.generatedName());
         String className = baseName + "DeferredCompletionStep";
         String pipelinePackage = model.servicePackage() + NamingPolicy.PIPELINE_PACKAGE_SUFFIX;
@@ -53,7 +56,10 @@ public class DeferredCompletionStepRenderer {
             ? completion.finalOutputType()
             : finalTransportType;
         ensureRestUnionCompletion(completion, ctx);
-        CompletionBoundary completionBoundary = completionBoundary(completion, ctx, finalOutputType);
+        CompletionBoundary completionBoundary = completion.branchSelection().isPresent()
+            ? new CompletionBoundary(completion.completionPayloadType()
+                .orElse(completion.branchSelection().orElseThrow().completionType()), Optional.empty())
+            : completionBoundary(completion, ctx, finalOutputType);
 
         FieldSpec support = FieldSpec.builder(
                 ClassName.get("org.pipelineframework.awaitable", "AwaitCompletionSupport"), "completionSupport")
@@ -103,24 +109,50 @@ public class DeferredCompletionStepRenderer {
                 .returns(ParameterizedTypeName.get(ClassName.get(Class.class), WildcardTypeName.subtypeOf(Object.class)))
                 .addStatement("return $T.class", finalOutputType)
                 .build())
-            .addMethod(MethodSpec.methodBuilder("applyOneToOne")
-                .addAnnotation(Override.class)
-                .addModifiers(Modifier.PUBLIC)
-                .returns(ParameterizedTypeName.get(RuntimeSymbols.UNI, finalOutputType))
-                .addParameter(operationOutputType, "operationOutput")
-                .addStatement("return completionSupport.<$T, $T>awaitOneToOne(completion, operationOutput)",
-                    operationOutputType, finalOutputType)
-                .build())
-            .addMethod(MethodSpec.methodBuilder("applyAwaitPerItem")
-                .addAnnotation(Override.class)
-                .addModifiers(Modifier.PUBLIC)
-                .returns(ParameterizedTypeName.get(RuntimeSymbols.MULTI, finalOutputType))
-                .addParameter(ParameterizedTypeName.get(RuntimeSymbols.MULTI, operationOutputType), "input")
-                .addStatement("return completionSupport.<$T, $T>awaitOneToOneStream(completion, input)",
-                    operationOutputType, finalOutputType)
-                .build());
+            .addMethod(applyOneToOne(completion, operationOutputType, finalOutputType))
+            .addMethod(applyAwaitPerItem(completion, operationOutputType, finalOutputType));
 
         JavaFile.builder(pipelinePackage, type.build()).build().writeTo(ctx.outputDir());
+    }
+
+    private MethodSpec applyOneToOne(DeferredCompletionSelection completion, TypeName inputType, TypeName outputType) {
+        var method = MethodSpec.methodBuilder("applyOneToOne").addAnnotation(Override.class)
+            .addModifiers(Modifier.PUBLIC).returns(ParameterizedTypeName.get(RuntimeSymbols.UNI, outputType))
+            .addParameter(inputType, "operationOutput");
+        if (completion.branchSelection().isEmpty()) {
+            return method.addStatement("return completionSupport.<$T, $T>awaitOneToOne(completion, operationOutput)",
+                inputType, outputType).build();
+        }
+        var branch = completion.branchSelection().orElseThrow();
+        for (var bypass : branch.bypasses()) {
+            CodeBlock result = bypass.outputWrapper().isPresent()
+                ? CodeBlock.of("new $T(value.$L())", bypass.outputWrapper().orElseThrow(), bypass.input().accessor())
+                : CodeBlock.of("value.$L()", bypass.input().accessor());
+            method.beginControlFlow("if (operationOutput instanceof $T value)", bypass.input().type())
+                .addStatement("return $T.createFrom().item($L)", RuntimeSymbols.UNI, result).endControlFlow();
+        }
+        method.beginControlFlow("if (operationOutput instanceof $T value)", branch.selectedInput().type());
+        CodeBlock awaited = CodeBlock.of("completionSupport.<$T, $T>awaitOneToOne(completion, value.$L())",
+            branch.requestType(), branch.completionType(), branch.selectedInput().accessor());
+        if (branch.completionWrapper().isPresent()) {
+            method.addStatement("return $L.map(reply -> new $T(reply))", awaited, branch.completionWrapper().orElseThrow());
+        } else {
+            method.addStatement("return $L", awaited);
+        }
+        return method.endControlFlow().addStatement("return $T.createFrom().failure(new $T($S))",
+            RuntimeSymbols.UNI, IllegalArgumentException.class,
+            "Operation result does not match a declared Await branch").build();
+    }
+
+    private MethodSpec applyAwaitPerItem(DeferredCompletionSelection completion, TypeName inputType, TypeName outputType) {
+        var method = MethodSpec.methodBuilder("applyAwaitPerItem").addAnnotation(Override.class)
+            .addModifiers(Modifier.PUBLIC).returns(ParameterizedTypeName.get(RuntimeSymbols.MULTI, outputType))
+            .addParameter(ParameterizedTypeName.get(RuntimeSymbols.MULTI, inputType), "input");
+        return completion.branchSelection().isEmpty()
+            ? method.addStatement("return completionSupport.<$T, $T>awaitOneToOneStream(completion, input)",
+                inputType, outputType).build()
+            : method.addStatement("return $T.createFrom().failure(new $T($S))", RuntimeSymbols.MULTI,
+                UnsupportedOperationException.class, "Selected Await requires a scalar invocation").build();
     }
 
     private MethodSpec registerDescriptor(
@@ -132,12 +164,21 @@ public class DeferredCompletionStepRenderer {
         TypeName finalOutputType,
         PipelineTransport transport
     ) {
-        CodeBlock inputToTransport = operationBoundary.outputConvertsAtBoundary()
+        var selected = completion.branchSelection();
+        if (selected.isPresent() && transport != PipelineTransport.LOCAL) {
+            throw new IllegalArgumentException("Selected Await requires LOCAL transport");
+        }
+        TypeName descriptorInput = selected.<TypeName>map(value -> value.requestType()).orElse(operationOutputType);
+        TypeName descriptorOutput = selected.<TypeName>map(value -> value.completionType()).orElse(finalOutputType);
+        TypeName transportInput = selected.isPresent() ? descriptorInput : operationBoundary.transportOutputType();
+        TypeName transportOutput = selected.isPresent()
+            ? completion.completionPayloadType().orElse(descriptorOutput) : completionBoundary.transportType();
+        CodeBlock inputToTransport = selected.isEmpty() && operationBoundary.outputConvertsAtBoundary()
             ? CodeBlock.of(transport == PipelineTransport.REST
                 ? "value -> new $T().toExternal(($T) value)" : "value -> $T.toProto(($T) value)",
                 operationBoundary.outputAdapterOrThrow(), operationOutputType)
             : CodeBlock.of("$T.identity()", Function.class);
-        CodeBlock outputFromTransport = completionBoundary.adapter().isPresent()
+        CodeBlock outputFromTransport = selected.isEmpty() && completionBoundary.adapter().isPresent()
             ? CodeBlock.of(transport == PipelineTransport.REST
                 ? "value -> new $T().fromExternal(($T) value)" : "value -> $T.fromProto(($T) value)",
                 completionBoundary.adapter().orElseThrow(), completionBoundary.transportType())
@@ -147,12 +188,12 @@ public class DeferredCompletionStepRenderer {
                 "new $T($S, $S, $S, $S, $T.parse($S), $S, $S, $L, $L, $S, $S, $L, $L, $S, "
                     + "($T<Object, Object, Object>) ($T<?, ?, ?>) new $T(), true)",
                 ClassName.get("org.pipelineframework.awaitable", "AwaitCompletionDescriptor"),
-                model.serviceName(), operationOutputType.toString(), finalOutputType.toString(), "ONE_TO_ONE",
+                model.serviceName(), descriptorInput.toString(), descriptorOutput.toString(), "ONE_TO_ONE",
                 Duration.class, completion.timeout().toString(), completion.correlationStrategy(),
                 completion.transportType(), JavaPoetLiteral.value(completion.transportConfig()),
                 JavaPoetLiteral.value(completion.idempotencyKeyFields()),
-                operationBoundary.transportOutputType().toString(),
-                completionBoundary.transportType().toString(), inputToTransport, outputFromTransport,
+                transportInput.toString(),
+                transportOutput.toString(), inputToTransport, outputFromTransport,
                 completion.completionProjector().orElseThrow().canonicalName(),
                 ClassName.get("org.pipelineframework.awaitable", "AwaitCompletionProjector"),
                 ClassName.get("org.pipelineframework.awaitable", "AwaitCompletionProjector"),
@@ -160,12 +201,12 @@ public class DeferredCompletionStepRenderer {
             : CodeBlock.of(
                 "new $T($S, $S, $S, $S, $T.parse($S), $S, $S, $L, $L, $S, $S, $L, $L)",
                 ClassName.get("org.pipelineframework.awaitable", "AwaitCompletionDescriptor"),
-                model.serviceName(), operationOutputType.toString(), finalOutputType.toString(), "ONE_TO_ONE",
+                model.serviceName(), descriptorInput.toString(), descriptorOutput.toString(), "ONE_TO_ONE",
                 Duration.class, completion.timeout().toString(), completion.correlationStrategy(),
                 completion.transportType(), JavaPoetLiteral.value(completion.transportConfig()),
                 JavaPoetLiteral.value(completion.idempotencyKeyFields()),
-                operationBoundary.transportOutputType().toString(),
-                completionBoundary.transportType().toString(), inputToTransport, outputFromTransport);
+                transportInput.toString(),
+                transportOutput.toString(), inputToTransport, outputFromTransport);
         return MethodSpec.methodBuilder("registerCompletion")
             .addAnnotation(ClassName.get("jakarta.annotation", "PostConstruct"))
             .addModifiers(Modifier.PUBLIC)

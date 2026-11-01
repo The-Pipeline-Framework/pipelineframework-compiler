@@ -37,6 +37,7 @@ import org.pipelineframework.processor.composition.PipelineReference;
  * @param serviceApiKind Distinguishes reactive-authored from blocking-authored internal services.
  * @param reactiveReturnKind Identifies the reactive return library used by unary reactive services.
  * @param definition Identifies the root or named pipeline definition that owns this model.
+ * @param observationProjection Identifies a typed observer owner and its optional union extraction.
  */
 public record PipelineStepModel(
         String serviceName,
@@ -65,15 +66,49 @@ public record PipelineStepModel(
         Optional<ConnectorOperationSelection> connectorOperationSelection,
         Optional<DynamicOperationSelection> dynamicOperationSelection,
         Optional<DeferredCompletionSelection> deferredCompletionSelection,
-        boolean pagedSource
+        boolean pagedSource,
+        Optional<ObservationProjection> observationProjection
 ) {
+    /** Compatibility constructor for steps without a selected observation projection. */
+    public PipelineStepModel(
+        String serviceName,
+        String generatedName,
+        String servicePackage,
+        ClassName serviceClassName,
+        TypeMapping inputMapping,
+        TypeMapping outputMapping,
+        StreamingShape streamingShape,
+        Set<GenerationTarget> enabledTargets,
+        ExecutionMode executionMode,
+        DeploymentRole deploymentRole,
+        boolean sideEffect,
+        ClassName cacheKeyGenerator,
+        OrderingRequirement orderingRequirement,
+        ThreadSafety threadSafety,
+        ClassName delegateService,
+        Optional<String> delegateMethodName,
+        ClassName externalMapper,
+        MapperFallbackMode mapperFallbackMode,
+        PipelineTemplateStepExecution remoteExecution,
+        ServiceApiKind serviceApiKind,
+        ReactiveReturnKind reactiveReturnKind,
+        Optional<AspectPosition> aspectPosition,
+        PipelineReference definition,
+        Optional<ConnectorOperationSelection> connectorOperationSelection,
+        Optional<DynamicOperationSelection> dynamicOperationSelection,
+        Optional<DeferredCompletionSelection> deferredCompletionSelection,
+        boolean pagedSource
+    ) {
+        this(serviceName, generatedName, servicePackage, serviceClassName, inputMapping, outputMapping, streamingShape, enabledTargets, executionMode, deploymentRole, sideEffect, cacheKeyGenerator, orderingRequirement, threadSafety, delegateService, delegateMethodName, externalMapper, mapperFallbackMode, remoteExecution, serviceApiKind, reactiveReturnKind, aspectPosition, definition, connectorOperationSelection, dynamicOperationSelection, deferredCompletionSelection, pagedSource, Optional.empty());
+    }
+
     /** Returns this immutable semantic model with a provider-generated canonical facade as its service implementation. */
     public PipelineStepModel withServiceClassName(ClassName replacement) {
         return new PipelineStepModel(serviceName, generatedName, servicePackage, replacement, inputMapping, outputMapping,
             streamingShape, enabledTargets, executionMode, deploymentRole, sideEffect, cacheKeyGenerator,
             orderingRequirement, threadSafety, delegateService, delegateMethodName, externalMapper, mapperFallbackMode,
             remoteExecution, serviceApiKind, reactiveReturnKind, aspectPosition, definition, connectorOperationSelection,
-            dynamicOperationSelection, deferredCompletionSelection, pagedSource);
+            dynamicOperationSelection, deferredCompletionSelection, pagedSource, observationProjection);
     }
 
     /** Returns this model with the implementation contract exposed by a provider-generated facade. */
@@ -88,7 +123,7 @@ public record PipelineStepModel(
             facadeStreamingShape, enabledTargets, executionMode, deploymentRole, sideEffect, cacheKeyGenerator,
             orderingRequirement, threadSafety, delegateService, delegateMethodName, externalMapper, mapperFallbackMode,
             remoteExecution, facadeApiKind, facadeReturnKind, aspectPosition, definition, connectorOperationSelection,
-            dynamicOperationSelection, deferredCompletionSelection, pagedSource);
+            dynamicOperationSelection, deferredCompletionSelection, pagedSource, observationProjection);
     }
 
     /**
@@ -311,6 +346,10 @@ public record PipelineStepModel(
     }
 
     public PipelineStepModel {
+        java.util.Objects.requireNonNull(observationProjection, "observationProjection");
+        if (observationProjection.isPresent() && (!sideEffect || streamingShape != StreamingShape.UNARY_UNARY)) {
+            throw new IllegalArgumentException("Selected observation requires a unary side-effect step");
+        }
         // Validate non-null invariants
         if (serviceName == null)
             throw new IllegalArgumentException("serviceName cannot be null");
@@ -542,7 +581,7 @@ public record PipelineStepModel(
      * @return the domain `TypeName` used as the service's input
      */
     public TypeName inboundDomainType() {
-        return inputMapping.domainType();
+        return observationProjection.map(ObservationProjection::carrierType).orElse(inputMapping.domainType());
     }
 
     /**
@@ -551,7 +590,7 @@ public record PipelineStepModel(
      * @return a TypeName representing the outbound domain type
      */
     public TypeName outboundDomainType() {
-        return outputMapping.domainType();
+        return observationProjection.map(ObservationProjection::carrierType).orElse(outputMapping.domainType());
     }
 
     /** Pipeline-visible output after any deferred completion decorator has projected its result. */
@@ -606,6 +645,7 @@ public record PipelineStepModel(
         private Optional<DynamicOperationSelection> dynamicOperationSelection = Optional.empty();
         private Optional<DeferredCompletionSelection> deferredCompletionSelection = Optional.empty();
         private boolean pagedSource;
+        private Optional<ObservationProjection> observationProjection = Optional.empty();
 
         /**
          * Sets the service name.
@@ -909,6 +949,11 @@ public record PipelineStepModel(
                 java.util.Objects.requireNonNull(selection, "deferredCompletionSelection cannot be null")));
         }
 
+        public Builder observationProjection(Optional<ObservationProjection> value) {
+            this.observationProjection = java.util.Objects.requireNonNull(value, "observationProjection");
+            return this;
+        }
+
         public Builder pagedSource(boolean value) {
             this.pagedSource = value;
             return this;
@@ -966,7 +1011,7 @@ public record PipelineStepModel(
                 connectorOperationSelection,
                 dynamicOperationSelection,
                 deferredCompletionSelection,
-                pagedSource);
+                pagedSource, observationProjection);
         }
     }
     
@@ -1004,8 +1049,7 @@ public record PipelineStepModel(
             connectorOperationSelection,
             dynamicOperationSelection,
             deferredCompletionSelection,
-            pagedSource
-        );
+            pagedSource, observationProjection);
     }
 
     /**
@@ -1048,6 +1092,7 @@ public record PipelineStepModel(
             .connectorOperationSelection(connectorOperationSelection)
             .dynamicOperationSelection(dynamicOperationSelection)
             .deferredCompletionSelection(deferredCompletionSelection)
-            .pagedSource(pagedSource);
+            .pagedSource(pagedSource)
+            .observationProjection(observationProjection);
     }
 }

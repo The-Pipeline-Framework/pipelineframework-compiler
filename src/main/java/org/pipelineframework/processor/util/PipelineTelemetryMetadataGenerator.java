@@ -1283,6 +1283,16 @@ public class PipelineTelemetryMetadataGenerator {
         if (plugin == null || orderedBase == null || orderedBase.isEmpty()) {
             return null;
         }
+        if (plugin.observationProjection().isPresent()) {
+            String owner = plugin.observationProjection().orElseThrow().ownerServiceName();
+            var matches = orderedBase.stream().filter(base -> base.definition().equals(plugin.definition()))
+                .filter(base -> base.serviceName().equals(owner)).toList();
+            if (matches.size() != 1) {
+                throw new IllegalStateException("Cannot resolve unique observer owner '" + owner + "' in definition '"
+                    + plugin.definition().logicalId() + "'");
+            }
+            return matches.getFirst();
+        }
         String typeName = mappingType(plugin.inputMapping());
         if (typeName == null) {
             return null;

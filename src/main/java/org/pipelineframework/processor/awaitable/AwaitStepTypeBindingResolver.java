@@ -59,6 +59,10 @@ public final class AwaitStepTypeBindingResolver {
             new IllegalArgumentException("Step '" + step.name() + "' has no deferred completion"));
         if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
             || config.dialect() != PipelineTemplateDialect.V3) {
+            if (!completion.accepts().isEmpty()) {
+                error(ctx, "Step '" + step.name() + "' selected Await requires canonical v3 contracts");
+                return Optional.empty();
+            }
             return explicitBinding(step, completion);
         }
 
@@ -110,6 +114,9 @@ public final class AwaitStepTypeBindingResolver {
             return Optional.empty();
         }
 
+        Optional<org.pipelineframework.processor.ir.AwaitBranchSelection> branch = completion.accepts().isEmpty()
+            ? Optional.empty() : new AwaitBranchSelectionResolver().resolve(ctx, config, step);
+        if (!completion.accepts().isEmpty() && branch.isEmpty()) return Optional.empty();
         Optional<TypeName> payloadType = completion.completion()
             .flatMap(projected -> javaTypes.resolve(projected.type()))
             .map(TypeName.class::cast);
@@ -122,7 +129,7 @@ public final class AwaitStepTypeBindingResolver {
             ? Optional.ofNullable(step.inputType()).or(() -> config.steps().stream()
                 .filter(candidate -> candidate != null && step.name().equals(candidate.name()))
                 .findFirst().flatMap(candidate -> javaTypes.resolve(candidate.inputTypeName())))
-            : operationOutput;
+            : branch.map(org.pipelineframework.processor.ir.AwaitBranchSelection::requestType).or(() -> operationOutput);
         if (projectorContext.isEmpty()) {
             error(ctx, "Step '" + step.name() + "' could not resolve the canonical completion context type.");
             return Optional.empty();
@@ -143,7 +150,7 @@ public final class AwaitStepTypeBindingResolver {
             completion.callback().isPresent() && completion.completion().isPresent()
                 && genericInterfaces.resolve(ctx.getProcessingEnv().getElementUtils().getTypeElement(
                     completion.completion().orElseThrow().projector().canonicalName()), COMMAND_PROJECTOR,
-                    ctx.getProcessingEnv()).isPresent()));
+                    ctx.getProcessingEnv()).isPresent(), branch));
     }
 
     private Optional<AwaitStepTypeBinding> explicitBinding(

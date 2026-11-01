@@ -10,6 +10,7 @@ The compiler regression loads the canonical types and validates every authored c
 The application owns the executable fixture suite, including generated adapters, two correlated
 human reviews in one root, private persisted history, concurrency, and terminal results.
 
-Review and result publication are real native Commands backed by the TPF persistence shell.
-Review publication carries post-operation Await. The root declares `recur: [TurnState]`;
-there are no identity review/return services or nominal loop wrappers.
+The policy operation selects its Review outcome for Await. Persistence aspects observe Review
+and Result where meaningful operations produce them. The completed output union contains the
+existing TurnState, AnsweredReview, and Result leaves. The root declares `recur: [TurnState]`;
+there are no application persistence Commands, identity services, or new concrete phase types.

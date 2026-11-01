@@ -187,6 +187,25 @@ class PipelineTelemetryMetadataGeneratorTest {
     }
 
     @Test
+    void resolvesAProjectedObserverByItsAuthoredOwnerRatherThanPayloadType() throws IOException {
+        var ctx = buildContext();
+        ctx.setTransportMode(PipelineTransport.LOCAL);
+        ctx.setPipelineTemplateConfig(templateConfig("selected-observation", "LOCAL"));
+        writeApplicationProperties("com.example.Input", "com.example.Before");
+        var first = localStep("FirstService", "com.example", type("Input"), type("Before"));
+        var second = localStep("SecondService", "com.example", type("OtherInput"), type("Before"));
+        var observer = localStep("ObservePersistenceReviewSideEffectService", "com.example", type("Review"), type("Review"))
+            .toBuilder().sideEffect(true).aspectPosition(AspectPosition.AFTER_STEP)
+            .observationProjection(Optional.of(new ObservationProjection(type("Before"),
+                ClassName.get("com.example", "Before", "ReviewRequired"), "value", first.serviceName())))
+            .build();
+        ctx.setStepModels(List.of(first, observer, second));
+        new PipelineTelemetryMetadataGenerator(ctx.getProcessingEnv()).writeTelemetryMetadata(ctx);
+        assertEquals("First", findStep(readReplayTopologyJson(), "ObservePersistenceReviewSideEffect")
+            .get("parentStep").getAsString());
+    }
+
+    @Test
     void prefersOutputTypeWhenResolvingPluginParents() throws IOException {
         PipelineCompilationContext ctx = buildContext();
         writeApplicationProperties("com.example.Item", "com.example.Item");
