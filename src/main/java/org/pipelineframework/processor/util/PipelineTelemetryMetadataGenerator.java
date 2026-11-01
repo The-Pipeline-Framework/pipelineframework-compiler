@@ -201,6 +201,14 @@ public class PipelineTelemetryMetadataGenerator {
             return baseSteps;
         }
         var graph = ctx.getResolvedPipelineDefinitionGraph().orElseThrow();
+        var namesByToken = new java.util.HashMap<String, String>();
+        for (var step : graph.root().steps()) {
+            String previous = namesByToken.putIfAbsent(normalizeStepToken(step.localStepId()), step.localStepId());
+            if (previous != null && !previous.equals(step.localStepId())) {
+                throw new IllegalArgumentException("Root step names '" + previous + "' and '" + step.localStepId()
+                    + "' normalize to the same replay name; use distinct step names.");
+            }
+        }
         var steps = new ArrayList<>(baseSteps);
         for (var binding : graph.invocationBindings()) {
             var location = binding.invocationLocation().definitionLocalLocation();

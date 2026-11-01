@@ -68,13 +68,19 @@ public final class PipelineTemplateSchemaExporter {
         { "$ref": "#/$defs/v3TemplateStep" }
       ]
     },
+    "nestedDefinitionStep": {
+      "allOf": [
+        { "$ref": "#/$defs/v3DefinitionStep" },
+        { "not": { "required": ["await"] } }
+      ]
+    },
     "pipelineDefinition": {
       "type": "object", "required": ["input", "output", "steps"],
       "properties": {
         "input": { "$ref": "#/$defs/logicalContractReference" },
         "output": { "$ref": "#/$defs/logicalContractReference" },
         "recur": { "$ref": "#/$defs/definitionRecurrence" },
-        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/v3DefinitionStep" } }
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/nestedDefinitionStep" } }
       },
       "additionalProperties": false
     },

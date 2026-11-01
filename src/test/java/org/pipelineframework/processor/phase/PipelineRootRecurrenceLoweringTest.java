@@ -5,7 +5,8 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import com.squareup.javapoet.ClassName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.io.TempDir;
 import org.pipelineframework.config.template.PipelineTemplateConfigLoader;
 import org.pipelineframework.processor.Jsr269SourceInventory;
@@ -20,8 +21,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class PipelineRootRecurrenceLoweringTest {
     @TempDir Path tempDir;
 
-    @Test
-    void linksAndRendersRootRecurrenceWithoutAnAuthoredSecondConsumer() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"Run initialization", "Ad-vance", "AdvanceService"})
+    void linksAndRendersRootRecurrenceWithoutAnAuthoredSecondConsumer(String callsiteName) throws Exception {
         Path file = tempDir.resolve("root.yaml");
         Files.writeString(file, """
             version: 3
@@ -61,7 +63,7 @@ class PipelineRootRecurrenceLoweringTest {
                 input: Entry
                 accepts: [TurnState]
                 output: Outcome
-            """);
+            """.replace("Run initialization", callsiteName));
         var authored = new PipelineTemplateConfigLoader().load(file);
         new org.pipelineframework.processor.routing.AuthoredConsumerValidator().validate(authored);
         var parsed = new StepDefinitionParser().parseDefinitionCatalog(file);
@@ -70,6 +72,8 @@ class PipelineRootRecurrenceLoweringTest {
         assertEquals(3, lowered.config().steps().size());
         assertEquals("$root", lowered.parsed().rootSteps().getLast().pipelineReference().orElseThrow());
         var env = org.mockito.Mockito.mock(javax.annotation.processing.ProcessingEnvironment.class);
+        org.mockito.Mockito.when(env.getMessager()).thenReturn(
+            org.mockito.Mockito.mock(javax.annotation.processing.Messager.class));
         org.mockito.Mockito.when(env.getOptions()).thenReturn(java.util.Map.of("pipeline.config", file.toString()));
         var filer = org.mockito.Mockito.mock(javax.annotation.processing.Filer.class);
         org.mockito.Mockito.when(env.getFiler()).thenReturn(filer);
@@ -92,7 +96,15 @@ class PipelineRootRecurrenceLoweringTest {
         ctx.setPipelineTemplateConfig(lowered.config());
         ctx.setParsedPipelineDefinitionCatalog(lowered.parsed());
         ctx.setStepDefinitions(lowered.parsed().rootSteps());
-        ctx.setBranchingPlan(new PipelineBranchRoutingPlanner().plan(ctx).orElseThrow());
+        var plan = new PipelineBranchRoutingPlanner().plan(ctx);
+        if (callsiteName.equals("Ad-vance")) {
+            assertTrue(plan.isEmpty(), "Normalized duplicate names must fail before replay generation");
+            org.mockito.Mockito.verify(env.getMessager()).printMessage(
+                org.mockito.ArgumentMatchers.eq(javax.tools.Diagnostic.Kind.ERROR),
+                org.mockito.ArgumentMatchers.contains("require unique step names"));
+            return;
+        }
+        ctx.setBranchingPlan(plan.orElseThrow());
         new PipelineCompositionLinkingPhase().link(ctx);
         var graph = ctx.getResolvedPipelineDefinitionGraph().orElseThrow();
         assertEquals(2, graph.invocationBindings().size());
@@ -111,7 +123,14 @@ class PipelineRootRecurrenceLoweringTest {
             .inputMapping(TypeMapping.withoutMapper(ClassName.get("com.example.domain", "Initial")))
             .outputMapping(TypeMapping.withoutMapper(ClassName.get("com.example.domain", "TurnState"))).build();
         ctx.setLocalDefinitionStepModels(java.util.Map.of("initialize", List.of(initialize)));
-        new org.pipelineframework.processor.util.PipelineTelemetryMetadataGenerator(env).writeTelemetryMetadata(ctx);
+        var metadata = new org.pipelineframework.processor.util.PipelineTelemetryMetadataGenerator(env);
+        if (callsiteName.equals("AdvanceService")) {
+            var failure = assertThrows(IllegalArgumentException.class, () -> metadata.writeTelemetryMetadata(ctx));
+            assertTrue(failure.getMessage().contains("AdvanceService"));
+            assertTrue(failure.getMessage().contains("Advance"));
+            return;
+        }
+        metadata.writeTelemetryMetadata(ctx);
         var topology = com.google.gson.JsonParser.parseString(
             resources.get("META-INF/pipeline/replay-topology.json").toString()).getAsJsonObject();
         var recursiveClass = org.pipelineframework.processor.composition.LocalPipelineInvocationClassName
