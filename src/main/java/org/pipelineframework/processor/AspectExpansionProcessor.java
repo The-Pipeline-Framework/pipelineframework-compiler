@@ -18,7 +18,14 @@ public class AspectExpansionProcessor {
     /**
      * Default constructor for AspectExpansionProcessor.
      */
+    private final Optional<AspectObservationResolver> observationResolver;
+
     public AspectExpansionProcessor() {
+        this.observationResolver = Optional.empty();
+    }
+
+    public AspectExpansionProcessor(PipelineCompilationContext ctx) {
+        this.observationResolver = Optional.of(new AspectObservationResolver(ctx));
     }
     
     /**
@@ -78,29 +85,42 @@ public class AspectExpansionProcessor {
                 .collect(Collectors.toList());
 
             for (PipelineAspectModel aspect : beforeAspects) {
-                ResolvedStep synthetic = createSyntheticStep(originalStep, aspect, AspectPosition.BEFORE_STEP);
-                validateSharedSyntheticDomain(synthetic, syntheticDomains);
-                String key = originalModel.definition().logicalId() + ":"
-                    + synthetic.model().serviceName() + ":" + aspect.name() + ":before";
-                if (generatedKeys.add(key)) {
-                    expandedSteps.add(synthetic);
+                for (var observation : observations(originalModel, aspect)) {
+                    ResolvedStep synthetic = createSyntheticStep(originalStep, aspect, AspectPosition.BEFORE_STEP, observation);
+                    validateSharedSyntheticDomain(synthetic, syntheticDomains);
+                    String key = originalModel.definition().logicalId() + ":"
+                        + synthetic.model().generatedName() + ":" + aspect.name() + ":before";
+                    if (generatedKeys.add(key)) {
+                        expandedSteps.add(synthetic);
+                    }
                 }
             }
 
             expandedSteps.add(originalStep);
 
             for (PipelineAspectModel aspect : afterAspects) {
-                ResolvedStep synthetic = createSyntheticStep(originalStep, aspect, AspectPosition.AFTER_STEP);
-                validateSharedSyntheticDomain(synthetic, syntheticDomains);
-                String key = originalModel.definition().logicalId() + ":"
-                    + synthetic.model().serviceName() + ":" + aspect.name() + ":after";
-                if (generatedKeys.add(key)) {
-                    expandedSteps.add(synthetic);
+                for (var observation : observations(originalModel, aspect)) {
+                    ResolvedStep synthetic = createSyntheticStep(originalStep, aspect, AspectPosition.AFTER_STEP, observation);
+                    validateSharedSyntheticDomain(synthetic, syntheticDomains);
+                    String key = originalModel.definition().logicalId() + ":"
+                        + synthetic.model().generatedName() + ":" + aspect.name() + ":after";
+                    if (generatedKeys.add(key)) {
+                        expandedSteps.add(synthetic);
+                    }
                 }
             }
         }
         
         return expandedSteps;
+    }
+
+    private List<AspectObservationResolver.Observation> observations(PipelineStepModel model, PipelineAspectModel aspect) {
+        if (aspect.config().containsKey("targetTypes")) {
+            return observationResolver.orElseThrow(() -> new IllegalArgumentException(
+                "Aspect '" + aspect.name() + "': targetTypes requires canonical compilation context")).resolve(model, aspect);
+        }
+        TypeMapping mapping = aspect.position() == AspectPosition.BEFORE_STEP ? model.inputMapping() : model.outputMapping();
+        return List.of(new AspectObservationResolver.Observation(mapping, Optional.empty()));
     }
 
     private record SyntheticImplementation(TypeName domainType, ClassName pluginClass) { }
@@ -126,12 +146,22 @@ public class AspectExpansionProcessor {
     private ResolvedStep createSyntheticStep(
             ResolvedStep originalStep,
             PipelineAspectModel aspect,
-            AspectPosition position) {
+            AspectPosition position,
+            AspectObservationResolver.Observation observation) {
 
         PipelineStepModel originalModel = originalStep.model();
-        String messageName = resolveMessageName(originalStep, position);
+        boolean selected = aspect.config().containsKey("targetTypes");
+        String messageName = selected ? simpleTypeName(observation.mapping().domainType())
+            : resolveMessageName(originalStep, position);
         String serviceName = "Observe" + toPascalCase(aspect.name()) + messageName + "SideEffectService";
         String syntheticName = toPascalCase(aspect.name()) + messageName + "SideEffect";
+        if (selected) {
+            TypeMapping carrier = position == AspectPosition.BEFORE_STEP ? originalModel.inputMapping() : originalModel.outputMapping();
+            String identity = originalModel.serviceName() + "|" + carrier.domainType() + "|" + position;
+            String suffix = UUID.nameUUIDFromBytes(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                .toString().replace("-", "").substring(0, 12);
+            syntheticName += "For" + toPascalCase(originalModel.generatedName()) + suffix;
+        }
         
         // Resolve the plugin service package from the aspect's plugin implementation
         String pluginServiceClass = (String) aspect.config().get("pluginImplementationClass");
@@ -144,9 +174,7 @@ public class AspectExpansionProcessor {
 
         Set<GenerationTarget> recomputedTargets = resolveSyntheticTargets(aspect, originalModel);
 
-        TypeMapping mapping = position == AspectPosition.BEFORE_STEP
-            ? originalModel.inputMapping()
-            : originalModel.outputMapping();
+        TypeMapping mapping = observation.mapping();
         if (mapping.domainType() == null) {
             throw new IllegalArgumentException(
                 "Aspect '" + aspect.name() + "' requires a " +
@@ -168,6 +196,7 @@ public class AspectExpansionProcessor {
                 .deploymentRole(DeploymentRole.PLUGIN_SERVER)
                 .sideEffect(true)
                 .aspectPosition(position)
+                .observationProjection(observation.projection())
                 .cacheKeyGenerator(originalModel.cacheKeyGenerator())
                 .definition(originalModel.definition())
                 .build();

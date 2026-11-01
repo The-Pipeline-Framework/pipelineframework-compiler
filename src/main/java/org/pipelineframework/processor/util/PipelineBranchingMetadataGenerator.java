@@ -186,8 +186,7 @@ public final class PipelineBranchingMetadataGenerator {
             if (!emittedRuntimeClasses.add(runtimeStepClass)) {
                 continue;
             }
-            String acceptedContract = model.inputMapping() != null
-                    && model.inputMapping().domainType() instanceof ClassName className
+            String acceptedContract = model.inboundDomainType() instanceof ClassName className
                 ? className.simpleName()
                 : inputRuntimeClass;
             steps.add(new StepMetadata(
@@ -274,8 +273,7 @@ public final class PipelineBranchingMetadataGenerator {
     ) {
         PipelineTransport transport = java.util.Objects.requireNonNullElse(
             ctx.getTransportMode(), PipelineTransport.GRPC);
-        String operationRuntimeClass = model.servicePackage() + ".pipeline."
-            + stripTrailingService(model.generatedName()) + transport.clientStepSuffix();
+        String operationRuntimeClass = ClientStepClassNames.operationClassName(model, transport);
         steps.add(new StepMetadata(
             definitionId,
             plan.terminalStepIndex(),
@@ -527,7 +525,7 @@ public final class PipelineBranchingMetadataGenerator {
     }
 
     private Optional<String> runtimeInputType(PipelineStepModel model, PipelineCompilationContext ctx, boolean transportMappedRuntime) {
-        TypeName inputType = model.inputMapping() == null ? null : model.inputMapping().domainType();
+        TypeName inputType = model.inboundDomainType();
         if (!(inputType instanceof ClassName className)) {
             return inputType == null ? Optional.empty() : Optional.of(inputType.toString());
         }

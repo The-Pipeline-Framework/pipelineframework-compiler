@@ -196,6 +196,69 @@ class PipelineContractMetadataGeneratorTest {
     }
 
     @Test
+    void selectedAwaitExportsTheCanonicalCompletionLeaf() throws IOException {
+        Path yaml = tempDir.resolve("selected.yaml");
+        Files.writeString(yaml, """
+            version: 3
+            appName: Selected approval
+            basePackage: proof
+            transport: LOCAL
+            contract: { input: Input, output: After }
+            types:
+              Input: { fields: [[value, string]] }
+              Review: { fields: [[value, string]] }
+              Reply: { fields: [[value, string]] }
+              Result: { fields: [[value, string]] }
+              Before: { variants: { reviewRequired: Review, finished: Result } }
+              After: { variants: { answered: Reply, finished: Result } }
+            steps:
+              - name: Evaluate
+                service: proof.EvaluateService
+                cardinality: ONE_TO_ONE
+                input: Input
+                output: After
+                await:
+                  operationOutput: { type: Before }
+                  accepts: [Review]
+                  output: Reply
+                  timeout: PT5M
+                  correlation: { strategy: interactionId }
+                  transport: { type: interaction-api }
+            """);
+        Path output = tempDir.resolve("selected-contract");
+        var env = processingEnv(output, Map.of("pipeline.config", yaml.toString()));
+        var ctx = new PipelineCompilationContext(env, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        ctx.setModuleName("orchestrator-svc");
+        ctx.setPlatformMode(PlatformMode.COMPUTE);
+        ctx.setTransportMode(PipelineTransport.LOCAL);
+        var before = ClassName.get("proof.domain", "Before");
+        var review = ClassName.get("proof.domain", "Review");
+        var reply = ClassName.get("proof.domain", "Reply");
+        var branch = new org.pipelineframework.processor.ir.AwaitBranchSelection("Review", review, "Reply", reply,
+            new org.pipelineframework.processor.ir.AwaitBranchSelection.CaseAccess(before.nestedClass("ReviewRequired"), "value"),
+            Optional.of(ClassName.get("proof.domain", "After", "Answered")), List.of(
+                new org.pipelineframework.processor.ir.AwaitBranchSelection.Bypass(
+                    new org.pipelineframework.processor.ir.AwaitBranchSelection.CaseAccess(before.nestedClass("Finished"), "value"),
+                    Optional.of(ClassName.get("proof.domain", "After", "Finished")))));
+        var completion = new DeferredCompletionSelection(ClassName.get("proof.domain", "After"), "After", Optional.empty(),
+            java.time.Duration.ofMinutes(5), List.of(), "interactionId", "interaction-api", Map.of(), Optional.empty(), Optional.empty())
+            .withBranchSelection(Optional.of(branch));
+        var model = deferredStep(Map.of()).toBuilder().serviceName("EvaluateService").generatedName("EvaluateService")
+            .servicePackage("proof").serviceClassName(ClassName.get("proof", "EvaluateService"))
+            .inputMapping(org.pipelineframework.processor.ir.TypeMapping.canonical(ClassName.get("proof.domain", "Input"), "Input"))
+            .outputMapping(org.pipelineframework.processor.ir.TypeMapping.canonical(before, "Before"))
+            .deferredCompletionSelection(completion).build();
+        ctx.setStepModels(List.of(model));
+        new PipelineContractMetadataGenerator(env).writePipelineContract(ctx);
+        var descriptors = readContract(output).getAsJsonArray("steps");
+        var awaited = descriptors.get(0).getAsJsonObject().getAsJsonObject("deferredCompletion");
+        assertEquals("proof.domain.Reply", awaited.get("completionPayloadTypeId").getAsString());
+        assertEquals("Review", awaited.getAsJsonObject("branchSelection").getAsJsonArray("accepts").get(0).getAsString());
+        assertEquals("Reply", awaited.getAsJsonObject("branchSelection").get("output").getAsString());
+        assertEquals("proof.domain.After", descriptors.get(0).getAsJsonObject().get("outputTypeId").getAsString());
+    }
+
+    @Test
     void deferredCompletionFingerprintIgnoresTransportConfigInsertionOrder() throws IOException {
         Path pipelineYaml = writePipelineYaml();
         Map<String, Object> firstConfig = new LinkedHashMap<>();

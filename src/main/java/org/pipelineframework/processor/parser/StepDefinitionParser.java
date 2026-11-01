@@ -550,11 +550,11 @@ public class StepDefinitionParser {
                 return null;
             }
             deferredCompletion = Optional.of(parsed);
-            if ((executionShape == StepExecutionShape.COMMAND) != parsed.callback().isPresent()
+            if ((parsed.callback().isPresent() && executionShape != StepExecutionShape.COMMAND)
                 || (executionShape == StepExecutionShape.COMMAND && (requireExactOperationTypes || version != 3
                     || !(stepData.get("operation") instanceof String) || !(stepData.get("using") instanceof String)))) {
                 report(Diagnostic.Kind.ERROR, "Step '" + name
-                    + "': await requires INTERNAL + transport or application-local native COMMAND + callback (version 3)");
+                    + "': await requires INTERNAL + transport or application-local native COMMAND + transport/callback (version 3)");
                 throw new StepSkippedException();
             }
         }
@@ -1404,7 +1404,7 @@ public class StepDefinitionParser {
             ConnectorProviderId.of(selected.provider()), selected.providerVersion(), selected.operation(),
             ConnectorOperationKind.COMMAND, selected.operationVersion());
         try {
-            if (completion.isEmpty()) {
+            if (completion.flatMap(DeferredCompletionDefinition::callback).isEmpty()) {
                 if (!operation.callbacks().isEmpty()) {
                     throw new IllegalArgumentException("callback-capable Command requires await.callback");
                 }
@@ -2119,7 +2119,7 @@ public class StepDefinitionParser {
             return null;
         }
         Set<String> supportedKeys = Set.of(
-            "operationOutput", "timeout", "idempotency", "correlation", "transport", "callback", "completion");
+            "operationOutput", "timeout", "idempotency", "correlation", "transport", "callback", "completion", "accepts", "output");
         Set<String> unknownKeys = new LinkedHashSet<>();
         for (Object key : awaitMap.keySet()) {
             if (!(key instanceof String text) || !supportedKeys.contains(text)) {
@@ -2285,6 +2285,23 @@ public class StepDefinitionParser {
                 completionProjector));
         }
 
+        List<String> acceptedTypes = parseStringList(awaitMap.get("accepts"), stepName, "await.accepts");
+        if (acceptedTypes == null || (awaitMap.containsKey("accepts") && acceptedTypes.isEmpty())) {
+            report(Diagnostic.Kind.ERROR, "Step '" + stepName + "': await.accepts must select a canonical output variant");
+            throw new StepSkippedException();
+        }
+        Optional<String> selectedOutputType = Optional.empty();
+        if (awaitMap.containsKey("output")) {
+            if (!(awaitMap.get("output") instanceof String outputType) || outputType.isBlank()) {
+                report(Diagnostic.Kind.ERROR, "Step '" + stepName + "': await.output must name a canonical type");
+                throw new StepSkippedException();
+            }
+            selectedOutputType = Optional.of(outputType.trim());
+        }
+        if (callbackMode && !acceptedTypes.isEmpty()) {
+            report(Diagnostic.Kind.ERROR, "Step '" + stepName + "': await.accepts requires post-operation transport completion");
+            throw new StepSkippedException();
+        }
         Map<String, Object> normalizedTransport = new LinkedHashMap<>(normalizeMap(transportMap));
         if (containsNullValue(normalizedTransport)) {
             String message = "Skipping step '" + stepName
@@ -2319,9 +2336,9 @@ public class StepDefinitionParser {
             timeout,
             idempotencyKeyFields,
             strategy,
-            transportType,
-            normalizedTransport,
-            completion);
+            new DeferredCompletionDefinition.PostOperationTransportDefinition(transportType, normalizedTransport),
+            completion,
+            acceptedTypes, selectedOutputType);
     }
 
     private boolean hasWebhookUrl(Map<?, ?> transportMap) {

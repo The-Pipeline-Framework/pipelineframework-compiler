@@ -45,9 +45,9 @@ public class CommandClientStepRenderer {
         PipelineConfigHints configHints = resolveConfigHints(ctx);
         PipelineTransport transportMode = configHints.transportMode();
         TypeName domainInputType = model.inboundDomainType();
-        TypeName domainOutputType = model.deferredCompletionSelection()
+        TypeName domainOutputType = model.deferredCompletionSelection().filter(completion -> completion.callback().isPresent())
             .map(completion -> completion.finalOutputType()).orElseGet(model::outboundDomainType);
-        PipelineStepModel transportModel = model.deferredCompletionSelection().isPresent()
+        PipelineStepModel transportModel = model.deferredCompletionSelection().filter(completion -> completion.callback().isPresent()).isPresent()
             ? model.toBuilder().outputMapping(org.pipelineframework.processor.ir.TypeMapping.withoutMapper(domainOutputType)).build()
             : model;
         CanonicalTransportBindingPair normalizedTransport = CanonicalTransportBindingResolver.resolveAndEnsure(
@@ -117,7 +117,7 @@ public class CommandClientStepRenderer {
         if (connectorSelection.isEmpty()) {
             typeBuilder.addField(descriptorFactory);
         }
-        if (model.deferredCompletionSelection().isPresent()) {
+        if (model.deferredCompletionSelection().filter(completion -> completion.callback().isPresent()).isPresent()) {
             addCallbackCompletion(typeBuilder, model);
         }
         if (inputMapper != null) {
@@ -173,7 +173,7 @@ public class CommandClientStepRenderer {
                 selection, domainInputType.toString(), model.outboundDomainType().toString(), commandIdGeneratorName))
             .orElseGet(() -> CodeBlock.of("descriptorFactory.descriptor($S, null, $S, $S, $S)",
                 model.serviceName(), domainInputType.toString(), domainOutputType.toString(), commandIdGeneratorName));
-        if (model.deferredCompletionSelection().isPresent()) {
+        if (model.deferredCompletionSelection().filter(completion -> completion.callback().isPresent()).isPresent()) {
             if (transportMode == PipelineTransport.LOCAL || (transportMode == PipelineTransport.REST && normalizedInput)) {
                 body.addStatement("$T commandInput = input", domainInputType);
             } else {

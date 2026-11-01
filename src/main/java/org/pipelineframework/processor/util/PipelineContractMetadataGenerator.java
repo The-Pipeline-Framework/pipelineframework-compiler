@@ -569,6 +569,12 @@ public class PipelineContractMetadataGenerator {
         value.put("timeout", completion.timeout().toString());
         value.put("idempotencyKeyFields", completion.idempotencyKeyFields());
         value.put("correlationStrategy", completion.correlationStrategy());
+        completion.branchSelection().ifPresent(branch -> {
+            value.put("branchSelection", Map.of("accepts", List.of(branch.requestCanonicalType()),
+                "output", branch.completionCanonicalType(), "requestTypeId", typeId(branch.requestType()),
+                "completionTypeId", typeId(branch.completionType())));
+            value.put("completionPayloadTypeId", typeId(branch.completionType()));
+        });
         completion.callback().ifPresent(callback -> {
             value.put("mode", completion.mode().name());
             if (completion.acknowledgementAwareCompletion()) {

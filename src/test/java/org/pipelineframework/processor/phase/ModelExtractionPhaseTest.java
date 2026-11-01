@@ -208,6 +208,17 @@ class ModelExtractionPhaseTest {
     }
 
     @Test
+    void keepsDistinctObserverClientsWhileSharingTheirPluginImplementation() {
+        var first = modelOwnedBy("$root").toBuilder().serviceName("ObserveResultService")
+            .generatedName("ObserveResultForFirst").sideEffect(true).build();
+        var second = first.toBuilder().generatedName("ObserveResultForSecond").build();
+        var firstBean = first.withDeploymentRole(org.pipelineframework.processor.ir.DeploymentRole.PLUGIN_SERVER);
+        var secondBean = second.withDeploymentRole(org.pipelineframework.processor.ir.DeploymentRole.PLUGIN_SERVER);
+        assertEquals(List.of(first, second, firstBean),
+            ModelExtractionPhase.deduplicateByDefinitionServiceAndRole(List.of(first, second, firstBean, secondBean, first)));
+    }
+
+    @Test
     void importedOperationsWithIdenticalStepNamesReceiveDistinctGeneratedAndRuntimeIdentities() throws Exception {
         Path metadata = tempDir.resolve("META-INF/pipeline/connector-providers.json");
         Files.createDirectories(metadata.getParent());

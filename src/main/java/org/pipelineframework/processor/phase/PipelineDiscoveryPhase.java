@@ -42,7 +42,7 @@ import org.pipelineframework.connector.ConnectorProviderManifestLoader;
 
 /**
  * Discovers and loads pipeline configuration, aspects, and semantic models.
- * This phase focuses solely on discovery without performing validation or code generation.
+ * Validates authored canonical consumers before lowering framework lifecycle steps.
  */
 public class PipelineDiscoveryPhase implements PipelineCompilationPhase {
     private static final PipelineStepConfigLoader.StepConfig DEFAULT_STEP_CONFIG =
@@ -179,6 +179,9 @@ public class PipelineDiscoveryPhase implements PipelineCompilationPhase {
 
                 templateConfig = loadPipelineTemplateConfig(effectiveConfigPath, options, diagnostics);
                 ctx.setPipelineTemplateConfig(templateConfig);
+                if (templateConfig != null) {
+                    new org.pipelineframework.processor.routing.AuthoredConsumerValidator().validate(templateConfig);
+                }
 
                 ParsedPipelineDefinitionCatalog parsedDefinitions = parseStepDefinitions(
                     effectiveConfigPath, diagnostics, imported.definitions().stream()

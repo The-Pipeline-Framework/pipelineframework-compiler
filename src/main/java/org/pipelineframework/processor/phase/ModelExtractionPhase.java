@@ -329,7 +329,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
         TypeName inputType = normalizeLegacyDomainType(stepDef.inputType(), null, templateBasePackage, ctx);
         TypeName outputType = normalizeLegacyDomainType(stepDef.outputType(), null, templateBasePackage, ctx);
 
-        Optional<DeferredCompletionSelection> callbackCompletion = Optional.empty();
+        Optional<DeferredCompletionSelection> commandCompletion = Optional.empty();
         if (stepDef.deferredCompletion().isPresent()) {
             var completion = stepDef.deferredCompletion().orElseThrow();
             var binding = awaitTypeBindings.resolve(ctx, stepDef);
@@ -338,20 +338,30 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             }
             var resolved = binding.orElseThrow();
             outputType = resolved.operationOutputType();
-            var callback = completion.callback().orElseThrow();
-            var operation = stepDef.connectorOperationSelection().orElseThrow();
-            callbackCompletion = Optional.of(new DeferredCompletionSelection(resolved.finalOutputType(),
-                resolved.finalOutputCanonicalType(), resolved.completionPayloadCanonicalType(),
-                java.time.Duration.parse(completion.timeout()), List.of(), completion.correlationStrategy(), "", Map.of(),
-                resolved.completionPayloadType(), completion.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector),
-                Optional.of(new DeferredCompletionSelection.ResolvedConnectorCallback(
-                    org.pipelineframework.connector.ConnectorProviderManifestLoader.load(
-                        org.pipelineframework.connector.ConnectorProviderManifestLoader.metadataClassLoader(getClass()))
-                        .requireOperation(operation.operation().providerId(), operation.providerMajorVersion(),
-                            operation.operation().operationId(), operation.operation().kind(), operation.operation().majorVersion())
-                        .callbacks().stream().filter(candidate -> candidate.id().equals(callback.name())).findFirst().orElseThrow(),
-                    operation, callback.endpointResolverClass(), callback.authenticatorClass())),
-                resolved.acknowledgementAwareCompletion()));
+            if (completion.callback().isPresent()) {
+                var callback = completion.callback().orElseThrow();
+                var operation = stepDef.connectorOperationSelection().orElseThrow();
+                commandCompletion = Optional.of(new DeferredCompletionSelection(resolved.finalOutputType(),
+                    resolved.finalOutputCanonicalType(), resolved.completionPayloadCanonicalType(),
+                    java.time.Duration.parse(completion.timeout()), List.of(), completion.correlationStrategy(), "", Map.of(),
+                    resolved.completionPayloadType(), completion.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector),
+                    Optional.of(new DeferredCompletionSelection.ResolvedConnectorCallback(
+                        org.pipelineframework.connector.ConnectorProviderManifestLoader.load(
+                            org.pipelineframework.connector.ConnectorProviderManifestLoader.metadataClassLoader(getClass()))
+                            .requireOperation(operation.operation().providerId(), operation.providerMajorVersion(),
+                                operation.operation().operationId(), operation.operation().kind(), operation.operation().majorVersion())
+                            .callbacks().stream().filter(candidate -> candidate.id().equals(callback.name())).findFirst().orElseThrow(),
+                        operation, callback.endpointResolverClass(), callback.authenticatorClass())),
+                    resolved.acknowledgementAwareCompletion()));
+            } else {
+                commandCompletion = Optional.of(new DeferredCompletionSelection(resolved.finalOutputType(),
+                    resolved.finalOutputCanonicalType(), resolved.completionPayloadCanonicalType(),
+                    java.time.Duration.parse(completion.timeout()), completion.idempotencyKeyFields(),
+                    completion.correlationStrategy(), completion.transportType(), completion.transportConfig(),
+                    resolved.completionPayloadType(), completion.completion()
+                        .map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))
+                    .withBranchSelection(resolved.branchSelection()));
+            }
         }
 
         String serviceName = operationServiceName(ctx, definition, stepDef.name());
@@ -361,11 +371,13 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             .generatedName(serviceName)
             .servicePackage(servicePackage)
             .serviceClassName(ClassName.get("org.pipelineframework.command", "CommandStepDescriptor"))
-            .deferredCompletionSelection(callbackCompletion)
+            .deferredCompletionSelection(commandCompletion)
             .inputMapping(TypeMapping.withoutMapper(inputType))
             .outputMapping(TypeMapping.withoutMapper(outputType))
             .streamingShape(StreamingShape.UNARY_UNARY)
-            .enabledTargets(java.util.Set.of(GenerationTarget.COMMAND_CLIENT_STEP))
+            .enabledTargets(commandCompletion.filter(value -> value.callback().isEmpty()).isPresent()
+                ? java.util.Set.of(GenerationTarget.COMMAND_CLIENT_STEP, GenerationTarget.DEFERRED_COMPLETION_STEP)
+                : java.util.Set.of(GenerationTarget.COMMAND_CLIENT_STEP))
             .executionMode(ExecutionMode.DEFAULT)
             .deploymentRole(DeploymentRole.ORCHESTRATOR_CLIENT)
             .sideEffect(false)
@@ -666,7 +678,8 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                 definitionValue.transportType(),
                 definitionValue.transportConfig(),
                 completionBinding.orElseThrow().completionPayloadType(),
-                definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))));
+                definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))
+                .withBranchSelection(completionBinding.orElseThrow().branchSelection())));
         return builder.build();
     }
 
@@ -811,7 +824,8 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                 definitionValue.transportType(),
                 definitionValue.transportConfig(),
                 completionBinding.orElseThrow().completionPayloadType(),
-                definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))));
+                definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))
+                .withBranchSelection(completionBinding.orElseThrow().branchSelection())));
         return builder.build();
     }
 
@@ -1998,9 +2012,11 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
     static List<PipelineStepModel> deduplicateByDefinitionServiceAndRole(List<PipelineStepModel> stepModels) {
         Map<String, PipelineStepModel> uniqueByServiceName = new LinkedHashMap<>();
         for (PipelineStepModel model : stepModels) {
-            String key = model.definition().logicalId() + "::" + model.serviceName()
+            String identity = model.artifactBindingName();
+            String key = model.definition().logicalId() + "::" + identity
                 + "::" + String.valueOf(model.deploymentRole());
-            // Keep first occurrence so concrete @PipelineStep models take precedence over template fallbacks.
+            // Observer clients are occurrences; plugin-server beans may share a typed implementation.
+            // Keep first functional occurrence so concrete models take precedence over template fallbacks.
             uniqueByServiceName.putIfAbsent(key, model);
         }
         return new ArrayList<>(uniqueByServiceName.values());

@@ -37,7 +37,7 @@ class StepBindingConstructionService {
     Map<String, Object> buildBindings(PipelineCompilationContext ctx, DescriptorProtos.FileDescriptorSet descriptorSet) {
         Map<String, Object> bindingsMap = new HashMap<>();
         for (PipelineStepModel model : ctx.getStepModels()) {
-            String modelKey = model.serviceName();
+            String modelKey = model.artifactBindingName();
 
             if (model.delegateService() != null && !isSpringLocalDelegatedStep(ctx, model)) {
                 warnIfDelegatedStepHasServerTargets(ctx, model);
