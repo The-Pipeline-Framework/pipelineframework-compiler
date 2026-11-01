@@ -130,18 +130,10 @@ public final class LocalPipelineInvocationRenderer {
     private ClassName childType(PipelineCompilationContext ctx, PipelineInvocationBinding parent,
             PipelineDefinitionStep child, Map<CompiledPipelineLocation, ClassName> invocationTypes) {
         if (child.pipelineReference().isPresent()) {
-            if (parent.recursive() && child.pipelineReference().filter(parent.target()::equals).isPresent()) {
-                CompiledPipelineLocation location = new CompiledPipelineLocation(
-                    parent.invocationLocation().invocationPath(),
-                    new DefinitionLocalLocation(parent.target(), child.localStepId()));
-                ClassName type = invocationTypes.get(location);
-                if (type == null) {
-                    throw new IllegalStateException("No generated recursive invocation type for " + location.display());
-                }
-                return type;
-            }
             List<DefinitionLocalLocation> path = new ArrayList<>(parent.invocationLocation().invocationPath());
-            path.add(parent.invocationLocation().definitionLocalLocation());
+            if (!parent.recursive()) {
+                path.add(parent.invocationLocation().definitionLocalLocation());
+            }
             CompiledPipelineLocation location = new CompiledPipelineLocation(path,
                 new DefinitionLocalLocation(parent.target(), child.localStepId()));
             ClassName type = invocationTypes.get(location);
