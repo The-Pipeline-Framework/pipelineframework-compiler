@@ -74,7 +74,7 @@ class AuthoredConsumerValidatorTest {
                 output: Result
                 steps: [{ name: Second consumer, service: example.Second, cardinality: ONE_TO_ONE, input: A, output: Result }]
             """));
-        var failure = assertThrows(IllegalArgumentException.class, () -> validate(root, """
+        assertDoesNotThrow(() -> validate(root, """
             pipelines:
               inner:
                 input: A
@@ -83,8 +83,6 @@ class AuthoredConsumerValidatorTest {
                   - { name: Initial query, service: example.First, cardinality: ONE_TO_ONE, input: A, output: A }
                   - { name: Authored recursion, pipeline: inner, cardinality: ONE_TO_ONE, input: A, output: Result }
             """));
-        assertDiagnostic(failure, "A", "Initial query", "Authored recursion");
-        assertTrue(failure.getMessage().contains("inner"));
     }
 
     @Test
@@ -93,11 +91,34 @@ class AuthoredConsumerValidatorTest {
         assertNotNull(resource);
         var config = new PipelineTemplateConfigLoader().load(Path.of(resource.toURI()));
         assertDoesNotThrow(() -> new AuthoredConsumerValidator().validate(config));
-        assertEquals(java.util.List.of("TurnState"), config.recur());
-        assertEquals(9, config.steps().size());
+        assertEquals("personal-agent", config.steps().getFirst().pipelineReference().orElseThrow());
+        var agent = config.pipelines().get("personal-agent");
+        assertEquals("personal-agent", agent.steps().getLast().pipelineReference().orElseThrow());
+        assertEquals(java.util.List.of("TurnState"), agent.steps().getLast().accepts());
         assertEquals(java.util.Set.of("TurnState", "AnsweredReview", "Result"),
             config.typeModel().concreteTypeNames("TurnCompletion"));
         assertTrue(config.steps().stream().noneMatch(step -> step.inputTypeName().equals(step.outputTypeName())));
+    }
+
+    @Test
+    void checksContinuationSelectorsSeparatelyFromOrdinaryCalls() throws Exception {
+        assertDoesNotThrow(() -> validate("""
+              - { name: Process A, cardinality: ONE_TO_ONE, input: A, output: Group }
+              - { name: Continue A, pipeline: self, cardinality: ONE_TO_ONE, input: Group, accepts: [A], output: Result }
+              - { name: Continue B, pipeline: self, cardinality: ONE_TO_ONE, input: Group, accepts: [B], output: Result }
+            """, ""));
+        var overlap = assertThrows(IllegalArgumentException.class, () -> validate("""
+              - { name: Process, cardinality: ONE_TO_ONE, input: A, output: Group }
+              - { name: First continuation, pipeline: self, cardinality: ONE_TO_ONE, input: Group, accepts: [Alias], output: Result }
+              - { name: Second continuation, pipeline: self, cardinality: ONE_TO_ONE, input: Group, accepts: [Group], output: Result }
+            """, ""));
+        assertDiagnostic(overlap, "A", "First continuation", "Second continuation");
+        assertTrue(overlap.getMessage().contains("self-call continuations"));
+        var ordinary = assertThrows(IllegalArgumentException.class, () -> validate("""
+              - { name: Process, cardinality: ONE_TO_ONE, input: A, output: Group }
+              - { name: Other pipeline, pipeline: other, cardinality: ONE_TO_ONE, input: Group, accepts: [A], output: Result }
+            """, ""));
+        assertDiagnostic(ordinary, "A", "Process", "Other pipeline");
     }
 
     private void validate(String steps, String definitions) throws Exception {

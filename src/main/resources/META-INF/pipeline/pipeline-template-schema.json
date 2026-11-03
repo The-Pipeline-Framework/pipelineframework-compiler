@@ -5,18 +5,13 @@
   "description": "Generator-facing pipeline template configuration schema exported by framework/deployment.",
   "type": "object",
   "$defs": {
-    "definitionRecurrence": {
-      "type": "array", "minItems": 1, "uniqueItems": true,
-      "description": "Canonical concrete continuing outcomes; one authored consumer per concrete input remains required.",
-      "items": { "$ref": "#/$defs/logicalContractReference" }
-    },
     "pipelineInvocationTemplateStep": {
       "type": "object",
       "required": ["name", "pipeline", "cardinality", "input", "output"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "kind": { "const": "pipeline" },
-        "pipeline": { "type": "string", "minLength": 1 },
+        "pipeline": { "type": "string", "minLength": 1, "description": "Named pipeline reference, or self for the enclosing root or nested definition." },
         "cardinality": { "enum": ["ONE_TO_ONE", "ONE_TO_MANY", "MANY_TO_ONE", "MANY_TO_MANY"] }
       },
       "additionalProperties": true
@@ -34,19 +29,12 @@
         { "$ref": "#/$defs/v3TemplateStep" }
       ]
     },
-    "nestedDefinitionStep": {
-      "allOf": [
-        { "$ref": "#/$defs/v3DefinitionStep" },
-        { "not": { "required": ["await"] } }
-      ]
-    },
     "pipelineDefinition": {
       "type": "object", "required": ["input", "output", "steps"],
       "properties": {
         "input": { "$ref": "#/$defs/logicalContractReference" },
         "output": { "$ref": "#/$defs/logicalContractReference" },
-        "recur": { "$ref": "#/$defs/definitionRecurrence" },
-        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/nestedDefinitionStep" } }
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/v3DefinitionStep" } }
       },
       "additionalProperties": false
     },
@@ -2846,19 +2834,6 @@
           }
         }
       }
-    },
-    {
-      "if": { "required": ["recur"] },
-      "then": {
-        "required": ["version"], "properties": { "version": { "const": 3 } },
-        "anyOf": [
-          { "required": ["contract"], "properties": { "contract": { "required": ["input", "output"] } } },
-          { "required": ["input", "output"], "properties": {
-            "input": { "$ref": "#/$defs/logicalContractReference" },
-            "output": { "$ref": "#/$defs/logicalContractReference" }
-          } }
-        ]
-      }
     }
   ],
   "properties": {
@@ -2943,8 +2918,8 @@
         "$ref": "#/$defs/v2MessageDefinition"
       }
     },
-    "recur": { "$ref": "#/$defs/definitionRecurrence" },
-    "pipelines": { "type": "object", "additionalProperties": { "$ref": "#/$defs/pipelineDefinition" } },
+    "recur": false,
+    "pipelines": { "type": "object", "propertyNames": { "not": { "enum": ["self", "$root"] } }, "additionalProperties": { "$ref": "#/$defs/pipelineDefinition" } },
     "steps": {
       "type": "array",
       "description": "List of pipeline steps."

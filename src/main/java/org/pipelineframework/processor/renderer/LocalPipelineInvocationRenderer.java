@@ -112,6 +112,16 @@ public final class LocalPipelineInvocationRenderer {
             throw new IllegalStateException("No branch plan for linked pipeline definition '"
                 + binding.target().logicalId() + "'.");
         }
+        if (binding.cardinality() == CardinalitySemantics.ONE_TO_ONE) {
+            type.addSuperinterface(INVOCATION_STEPS.nestedClass("LinkedInvocation"));
+            type.addMethod(MethodSpec.methodBuilder("linkedDefinition")
+                .addAnnotation(Override.class).addModifiers(Modifier.PUBLIC)
+                .returns(INVOCATION_STEPS.nestedClass("LinkedDefinition"))
+                .addStatement("return new $T($S, $S, $L, $L, java.util.List.of($L))",
+                    INVOCATION_STEPS.nestedClass("LinkedDefinition"), binding.target().logicalId(),
+                    binding.invocationLocation().definitionLocalLocation().localStepId(), binding.recursive(),
+                    targetPlan.terminalStepIndex(), String.join(", ", childFields)).build());
+        }
         type.addMethod(invocationMethod(
             binding.cardinality(), input, output, binding.target().logicalId(), targetPlan.terminalStepIndex(),
             binding.recursive(), binding.invocationLocation().definitionLocalLocation().localStepId(), childFields));
@@ -215,8 +225,8 @@ public final class LocalPipelineInvocationRenderer {
         return switch (cardinality) {
             case ONE_TO_ONE -> MethodSpec.methodBuilder("applyOneToOne").addAnnotation(Override.class).addModifiers(Modifier.PUBLIC)
                 .returns(ParameterizedTypeName.get(RuntimeSymbols.UNI, output)).addParameter(input, "input")
-                .addStatement("return $T.<$T, $T>oneToOne(runner, $S, $L, $L).applyOneToOne(input)",
-                    INVOCATION_STEPS, input, output, definitionId, definitionTerminalStepIndex, list).build();
+                .addStatement("return $T.<$T, $T>oneToOne(runner, $S, $S, $L, $L).applyOneToOne(input)",
+                    INVOCATION_STEPS, input, output, definitionId, callsiteId, definitionTerminalStepIndex, list).build();
             case ONE_TO_MANY -> MethodSpec.methodBuilder("applyOneToMany").addAnnotation(Override.class).addModifiers(Modifier.PUBLIC)
                 .returns(ParameterizedTypeName.get(RuntimeSymbols.MULTI, output)).addParameter(input, "input")
                 .addStatement("return $T.<$T, $T>oneToMany(runner, $S, $L, $L).applyOneToMany(input)",

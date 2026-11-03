@@ -20,17 +20,20 @@ public final class AuthoredConsumerValidator {
 
     private void validateDefinition(String id, List<PipelineTemplateStep> steps, PipelineTemplateTypeModel types) {
         var consumers = new LinkedHashMap<String, String>();
+        var continuations = new LinkedHashMap<String, String>();
         for (var step : steps) {
             var accepted = step.accepts().isEmpty() ? List.of(step.inputTypeName()) : step.accepts();
             var concrete = new java.util.TreeSet<String>();
             for (String type : accepted) {
                 concrete.addAll(types.concreteTypeNames(type));
             }
+            boolean reentry = step.pipelineReference().filter(reference -> reference.equals(id) || reference.equals("self")).isPresent();
+            var owners = reentry ? continuations : consumers;
             for (String type : concrete) {
-                String previous = consumers.putIfAbsent(type, step.name());
+                String previous = owners.putIfAbsent(type, step.name());
                 if (previous != null) {
                     throw new IllegalArgumentException("Pipeline definition '" + id + "' assigns concrete input type '"
-                        + type + "' to two authored steps: '" + previous + "' and '" + step.name() + "'.");
+                        + type + "' to two " + (reentry ? "self-call continuations" : "authored steps") + ": '" + previous + "' and '" + step.name() + "'.");
                 }
             }
         }

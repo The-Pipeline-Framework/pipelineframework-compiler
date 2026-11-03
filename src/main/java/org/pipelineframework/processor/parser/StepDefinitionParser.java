@@ -225,7 +225,7 @@ public class StepDefinitionParser {
         Map<String, ParsedConnectorBinding> connectorBindings = parseConnectorBindings(templateData);
 
         List<StepDefinition> rootSteps = parseStepList(
-            templateData.get("steps"), basePackage, version, v3JavaTypes, queryDefinitions, connectorBindings, false, false);
+            templateData.get("steps"), basePackage, version, v3JavaTypes, queryDefinitions, connectorBindings, false, "$root");
         if (rootSteps.isEmpty() && !(templateData.get("steps") instanceof List)) {
             LOG.debugf("No 'steps' array found in pipeline template");
         }
@@ -248,7 +248,7 @@ public class StepDefinitionParser {
                 if (definitions.putIfAbsent(id, parseStepList(
                         definition.get("steps"), basePackage, version, v3JavaTypes,
                         queryDefinitions, connectorBindings,
-                        definitionsRequiringExactOperationTypes.contains(id), true)) != null) {
+                        definitionsRequiringExactOperationTypes.contains(id), id)) != null) {
                     throw new IOException("Duplicate pipeline definition ID '" + id + "'");
                 }
             }
@@ -296,7 +296,7 @@ public class StepDefinitionParser {
             Map<String, QueryDefinition> queryDefinitions,
             Map<String, ParsedConnectorBinding> connectorBindings,
             boolean requireExactOperationTypes,
-            boolean nestedDefinition) {
+            String definitionId) {
         if (!(stepsObj instanceof List<?> stepsList)) {
             return List.of();
         }
@@ -312,7 +312,7 @@ public class StepDefinitionParser {
             try {
                 stepDef = parseStepDefinition(
                     stepData, basePackage, version, v3JavaTypes, queryDefinitions, connectorBindings,
-                    requireExactOperationTypes, nestedDefinition);
+                    requireExactOperationTypes, definitionId);
             } catch (StepSkippedException ignored) {
                 continue;
             }
@@ -344,7 +344,7 @@ public class StepDefinitionParser {
             Map<String, QueryDefinition> queryDefinitions,
             Map<String, ParsedConnectorBinding> connectorBindings,
             boolean requireExactOperationTypes,
-            boolean nestedDefinition) {
+            String definitionId) {
         String name = getStringValue(stepData, "name");
         if (isBlank(name)) {
             LOG.warnf("Skipping step with null or blank name: %s", stepData);
@@ -380,6 +380,9 @@ public class StepDefinitionParser {
         }
         boolean pipelineDeclared = stepData.containsKey("pipeline");
         String pipelineReference = getStringValue(stepData, "pipeline");
+        if ("self".equals(pipelineReference)) {
+            pipelineReference = definitionId;
+        }
         if (pipelineDeclared && isBlank(pipelineReference)) {
             String message = "Skipping step '" + name + "': pipeline reference must not be blank";
             LOG.warn(message);
@@ -516,13 +519,6 @@ public class StepDefinitionParser {
 
         Optional<DeferredCompletionDefinition> deferredCompletion = Optional.empty();
         if (stepData.containsKey("await")) {
-            if (nestedDefinition) {
-                String message = "Skipping step '" + name
-                    + "': nested pipeline definitions do not support await: yet";
-                LOG.warn(message);
-                report(Diagnostic.Kind.ERROR, message);
-                return null;
-            }
             if (executionShape != StepExecutionShape.INTERNAL
                 && executionShape != StepExecutionShape.COMMAND) {
                 String message = "Skipping step '" + name

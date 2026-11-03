@@ -31,7 +31,6 @@ class PipelineRootRecurrenceLoweringTest {
             basePackage: com.example
             transport: LOCAL
             contract: { input: Entry, output: Result }
-            recur: [TurnState]
             types:
               TurnState: { fields: [[turn, int32]] }
               Result: { fields: [[message, string]] }
@@ -63,14 +62,20 @@ class PipelineRootRecurrenceLoweringTest {
                 input: Entry
                 accepts: [TurnState]
                 output: Outcome
+              - name: Continue
+                pipeline: self
+                cardinality: ONE_TO_ONE
+                input: Outcome
+                accepts: [TurnState]
+                output: Result
+                java: { input: com.example.domain.TurnState, output: com.example.domain.Result }
             """.replace("Run initialization", callsiteName));
         var authored = new PipelineTemplateConfigLoader().load(file);
         new org.pipelineframework.processor.routing.AuthoredConsumerValidator().validate(authored);
         var parsed = new StepDefinitionParser().parseDefinitionCatalog(file);
-        var lowered = new PipelineRecurrenceLowering().lower(authored, parsed);
-        assertEquals(2, authored.steps().size());
-        assertEquals(3, lowered.config().steps().size());
-        assertEquals("$root", lowered.parsed().rootSteps().getLast().pipelineReference().orElseThrow());
+        assertEquals(3, authored.steps().size());
+        assertEquals(3, authored.steps().size());
+        assertEquals("$root", parsed.rootSteps().getLast().pipelineReference().orElseThrow());
         var env = org.mockito.Mockito.mock(javax.annotation.processing.ProcessingEnvironment.class);
         org.mockito.Mockito.when(env.getMessager()).thenReturn(
             org.mockito.Mockito.mock(javax.annotation.processing.Messager.class));
@@ -93,9 +98,9 @@ class PipelineRootRecurrenceLoweringTest {
         var ctx = new PipelineCompilationContext(env, Jsr269SourceInventory.empty());
         ctx.setModuleDir(tempDir);
         ctx.setTransportMode(PipelineTransport.LOCAL);
-        ctx.setPipelineTemplateConfig(lowered.config());
-        ctx.setParsedPipelineDefinitionCatalog(lowered.parsed());
-        ctx.setStepDefinitions(lowered.parsed().rootSteps());
+        ctx.setPipelineTemplateConfig(authored);
+        ctx.setParsedPipelineDefinitionCatalog(parsed);
+        ctx.setStepDefinitions(parsed.rootSteps());
         var plan = new PipelineBranchRoutingPlanner().plan(ctx);
         if (callsiteName.equals("Ad-vance")) {
             assertTrue(plan.isEmpty(), "Normalized duplicate names must fail before replay generation");

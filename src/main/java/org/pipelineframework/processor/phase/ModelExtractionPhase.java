@@ -104,11 +104,23 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                     .filter(step -> step.kind() != StepKind.PIPELINE)
                     .toList();
                 PipelineReference definition = new PipelineReference(entry.getKey());
-                List<PipelineStepModel> models = extractStepModelsFromYaml(
-                    ctx, definition, directSteps, ctxWarningLogger);
-                models = addProviderBoundaryModels(ctx, definition, directSteps, models,
-                    ctxWarningLogger);
-                localDefinitionModels.put(entry.getKey(), List.copyOf(models));
+                Object previousConfig = ctx.getPipelineTemplateConfig();
+                try {
+                    if (previousConfig instanceof PipelineTemplateConfig root) {
+                        var fragment = root.pipelines().get(entry.getKey());
+                        ctx.setPipelineTemplateConfig(new PipelineTemplateConfig(root.version(), root.appName(),
+                            root.basePackage(), root.transport(), root.platform(), root.messages(), root.unions(),
+                            root.sources(), root.publish(), fragment.steps(), root.aspects(), root.input(), root.output(),
+                            root.materialization(), fragment.inputContract(), fragment.outputContract(), root.typeModel(),
+                            root.pipelines(), root.httpPayloads()));
+                    }
+                    List<PipelineStepModel> models = extractStepModelsFromYaml(
+                        ctx, definition, directSteps, ctxWarningLogger);
+                    models = addProviderBoundaryModels(ctx, definition, directSteps, models, ctxWarningLogger);
+                    localDefinitionModels.put(entry.getKey(), List.copyOf(models));
+                } finally {
+                    ctx.setPipelineTemplateConfig(previousConfig);
+                }
             }
             ctx.setLocalDefinitionStepModels(Collections.unmodifiableMap(new LinkedHashMap<>(localDefinitionModels)));
             // Some template-driven YAMLs declare logical steps without resolvable execution classes

@@ -140,7 +140,9 @@ public final class PipelineDefinitionLinker {
     }
 
     private void validateInvocationContract(PipelineDefinitionStep invocation, PipelineDefinition target) {
-        if (!invocationCompatibility.inputCompatible(invocation.inputContractId(), target.inputContractId())) {
+        List<String> accepted = invocation.acceptedContractIds().isEmpty()
+            ? List.of(invocation.inputContractId()) : invocation.acceptedContractIds();
+        if (accepted.stream().anyMatch(input -> !invocationCompatibility.inputCompatible(input, target.inputContractId()))) {
             throw new IllegalArgumentException(
                 "Pipeline reference " + target.reference().logicalId() + " input contract does not match callsite "
                     + invocation.localStepId());

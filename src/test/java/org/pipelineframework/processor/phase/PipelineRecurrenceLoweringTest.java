@@ -37,7 +37,6 @@ class PipelineRecurrenceLoweringTest {
               agent:
                 input: TurnState
                 output: AgentEnd
-                recur: [TurnState]
                 steps:
                   - name: Decide next turn
                     service: com.example.Advance
@@ -45,6 +44,13 @@ class PipelineRecurrenceLoweringTest {
                     input: TurnState
                     output: TurnOutcome
                     java: { input: com.example.domain.TurnState, output: com.example.domain.TurnOutcome }
+                  - name: Continue
+                    pipeline: self
+                    cardinality: ONE_TO_ONE
+                    input: TurnOutcome
+                    accepts: [TurnState]
+                    output: AgentEnd
+                    java: { input: com.example.domain.TurnState, output: com.example.domain.AgentEnd }
             steps:
               - name: Run agent
                 pipeline: agent
@@ -55,22 +61,21 @@ class PipelineRecurrenceLoweringTest {
             """);
         var authored = new PipelineTemplateConfigLoader().load(file);
         var parsed = new StepDefinitionParser().parseDefinitionCatalog(file);
-        var lowered = new PipelineRecurrenceLowering().lower(authored, parsed);
-        assertEquals(1, authored.pipelines().get("agent").steps().size());
-        assertEquals(2, lowered.config().pipelines().get("agent").steps().size());
-        assertEquals(List.of("TurnState"), lowered.parsed().localDefinitions().get("agent").getLast().accepts());
-        assertEquals("agent", lowered.parsed().localDefinitions().get("agent").getLast()
+        assertEquals(2, authored.pipelines().get("agent").steps().size());
+        assertEquals(2, authored.pipelines().get("agent").steps().size());
+        assertEquals(List.of("TurnState"), parsed.localDefinitions().get("agent").getLast().accepts());
+        assertEquals("agent", parsed.localDefinitions().get("agent").getLast()
             .pipelineReference().orElseThrow());
         var ctx = new PipelineCompilationContext(null, Jsr269SourceInventory.empty());
         ctx.setTransportMode(PipelineTransport.LOCAL);
-        ctx.setPipelineTemplateConfig(lowered.config());
-        ctx.setParsedPipelineDefinitionCatalog(lowered.parsed());
-        ctx.setStepDefinitions(lowered.parsed().rootSteps());
+        ctx.setPipelineTemplateConfig(authored);
+        ctx.setParsedPipelineDefinitionCatalog(parsed);
+        ctx.setStepDefinitions(parsed.rootSteps());
         ctx.setBranchingPlan(new PipelineBranchRoutingPlanner().plan(ctx).orElseThrow());
         new PipelineCompositionLinkingPhase().link(ctx);
         var graph = ctx.getResolvedPipelineDefinitionGraph().orElseThrow();
         assertTrue(graph.invocationBindings().stream().anyMatch(binding -> binding.recursive()
-            && binding.invocationLocation().definitionLocalLocation().localStepId().equals("$recur")));
+            && binding.invocationLocation().definitionLocalLocation().localStepId().equals("Continue")));
         var plan = ctx.getLocalDefinitionBranchingPlans().values().iterator().next();
         assertEquals(-1, plan.terminalStepIndex());
         assertEquals(List.of("TurnState"), plan.steps().getLast().acceptedContractTypes());
@@ -101,10 +106,9 @@ class PipelineRecurrenceLoweringTest {
                     }
                 }).toList();
             assertTrue(code.stream().anyMatch(source -> source.contains("recursiveOneToOne")
-                && source.contains("$recur") && source.contains("Provider<")),
+                && source.contains("Continue") && source.contains("Provider<")),
                 "The compiler must use the bounded recursive adapter and lazy self-reference");
         }
-        assertThrows(IllegalArgumentException.class, () -> new PipelineRecurrenceLowering()
-            .lower(lowered.config(), lowered.parsed()), "Lowering twice must not append another continuation");
+
     }
 }

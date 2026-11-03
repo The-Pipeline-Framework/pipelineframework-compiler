@@ -117,7 +117,6 @@ class PipelineDiscoveryPhaseTest {
               agent:
                 input: TurnState
                 output: Result
-                recur: [TurnState]
                 steps:
                   - name: Decide next turn
                     service: com.example.Advance
@@ -125,6 +124,13 @@ class PipelineDiscoveryPhaseTest {
                     input: TurnState
                     output: TurnOutcome
                     java: { input: com.example.domain.TurnState, output: com.example.domain.TurnOutcome }
+                  - name: Continue
+                    pipeline: self
+                    cardinality: ONE_TO_ONE
+                    input: TurnOutcome
+                    accepts: [TurnState]
+                    output: Result
+                    java: { input: com.example.domain.TurnState, output: com.example.domain.Result }
             steps:
               - name: Run agent
                 pipeline: agent
@@ -141,10 +147,9 @@ class PipelineDiscoveryPhaseTest {
 
         var template = assertInstanceOf(org.pipelineframework.config.template.PipelineTemplateConfig.class,
             context.getPipelineTemplateConfig());
-        assertEquals("$recur", template.pipelines().get("agent").steps().getLast().name());
-        assertEquals(java.util.List.of("TurnState"), template.pipelines().get("agent").recur());
+        assertEquals("Continue", template.pipelines().get("agent").steps().getLast().name());
         assertEquals(java.util.List.of("TurnState"), template.pipelines().get("agent").steps().getLast().accepts());
-        assertEquals("$recur", context.getParsedPipelineDefinitionCatalog().localDefinitions().get("agent")
+        assertEquals("Continue", context.getParsedPipelineDefinitionCatalog().localDefinitions().get("agent")
             .getLast().name());
         assertEquals(java.util.List.of("TurnState"), context.getParsedPipelineDefinitionCatalog().localDefinitions()
             .get("agent").getLast().accepts());
