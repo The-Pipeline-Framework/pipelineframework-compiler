@@ -87,11 +87,25 @@ class AwaitBranchSelectionResolverTest {
         assertTrue(result.diagnostics().toString().contains("requires a unary pipeline definition"));
     }
 
+    @Test
+    void selectedProjectorProducesTheCompletedLeafBeforeTheCompilerWrapsIt() throws Exception {
+        var valid = compile("{ again: State, answered: Reply, finished: Result }", "Review", false, Optional.of("Reply"));
+        assertTrue(valid.success(), valid.diagnostics().toString());
+        var invalid = compile("{ again: State, answered: Reply, finished: Result }", "Review", false, Optional.of("After"));
+        assertFalse(invalid.success());
+        assertTrue(invalid.diagnostics().toString().contains("projector"), invalid.diagnostics().toString());
+    }
+
     private Result compile(String finalVariants, String accepted) throws Exception {
         return compile(finalVariants, accepted, false);
     }
 
     private Result compile(String finalVariants, String accepted, boolean upstreamFanOut) throws Exception {
+        return compile(finalVariants, accepted, upstreamFanOut, Optional.empty());
+    }
+
+    private Result compile(String finalVariants, String accepted, boolean upstreamFanOut,
+        Optional<String> projectorOutput) throws Exception {
         String upstream = upstreamFanOut ? """
               - name: Expand
                 service: proof.Types.ExpandService
@@ -134,6 +148,10 @@ class AwaitBranchSelectionResolverTest {
                   correlation: { strategy: interactionId }
                   transport: { type: interaction-api }
             """.formatted(upstreamFanOut ? "Admission" : "Input", finalVariants, upstream, accepted));
+        if (projectorOutput.isPresent()) {
+            Files.writeString(file, Files.readString(file).replace("output: Reply\n", "output: Reply\n"
+                + "      completion: { type: Reply, projector: proof.Types.Projector }\n"));
+        }
         var config = new PipelineTemplateConfigLoader().load(file);
         var step = new StepDefinitionParser().parseDefinitionCatalog(file).rootSteps().getLast();
         var processor = new Capture(config, step);
@@ -163,11 +181,20 @@ class AwaitBranchSelectionResolverTest {
               }
             }
             """;
+        if (projectorOutput.isPresent()) {
+            String result = projectorOutput.orElseThrow();
+            String projected = result.equals("Reply") ? "payload" : "new After.Answered(payload)";
+            source = source.replace("public record Result(String value) {}", "public record Result(String value) {}\n"
+                + "public static class Projector implements org.pipelineframework.awaitable.AwaitCompletionProjector<Review, Reply, "
+                + result + "> { public Projector() {} public " + result
+                + " project(Review request, Reply payload, org.pipelineframework.awaitable.AwaitCompletionMetadata metadata) { return " + projected + "; } }");
+        }
+        String compilationSource = source;
         var compiler = javax.tools.ToolProvider.getSystemJavaCompiler();
         var diagnostics = new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();
         var unit = new javax.tools.SimpleJavaFileObject(java.net.URI.create("string:///proof/Types.java"),
             javax.tools.JavaFileObject.Kind.SOURCE) {
-            @Override public CharSequence getCharContent(boolean ignoreEncodingErrors) { return source; }
+            @Override public CharSequence getCharContent(boolean ignoreEncodingErrors) { return compilationSource; }
         };
         try (var manager = compiler.getStandardFileManager(diagnostics, java.util.Locale.ROOT,
             java.nio.charset.StandardCharsets.UTF_8)) {

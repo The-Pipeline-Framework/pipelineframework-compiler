@@ -52,6 +52,14 @@ public final class AspectObservationResolver {
                 observations.add(new Observation(selected, Optional.of(new ObservationProjection(payload, Optional.empty(), model.serviceName()))));
             } else if (!unionNames.isEmpty()
                 && config.typeModel().concreteTypeNames(unionNames.getFirst()).contains(target)) {
+                var union = (PipelineTemplateTypeDefinition.UnionType) config.typeModel().definitions()
+                    .get(unionNames.getFirst());
+                boolean direct = union.variants().values().stream().anyMatch(variant ->
+                    config.typeModel().resolveAliases(variant.payload()).name().equals(target));
+                if (!direct) {
+                    throw new IllegalArgumentException("Aspect '" + aspect.name() + "': targetTypes leaf '" + target
+                        + "' is nested inside union '" + union.name() + "'; observations require direct union payloads");
+                }
                 if (!(mapping.domainType() instanceof ClassName carrier)) {
                     throw new IllegalArgumentException("Selected observation requires a named union Java binding");
                 }

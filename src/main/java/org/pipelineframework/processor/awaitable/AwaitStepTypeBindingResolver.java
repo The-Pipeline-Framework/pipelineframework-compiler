@@ -137,7 +137,8 @@ public final class AwaitStepTypeBindingResolver {
         if (completion.completion().isPresent()
             && !validateProjector(ctx, step.name(), completion.completion().orElseThrow(),
                 projectorContext.orElseThrow(), operationOutput.orElseThrow(), completion.callback().isPresent(),
-                payloadType.orElseThrow(), finalOutput.orElseThrow())) {
+                payloadType.orElseThrow(), branch.map(org.pipelineframework.processor.ir.AwaitBranchSelection::completionType)
+                    .or(() -> finalOutput).orElseThrow())) {
             return Optional.empty();
         }
         return Optional.of(new AwaitStepTypeBinding(
