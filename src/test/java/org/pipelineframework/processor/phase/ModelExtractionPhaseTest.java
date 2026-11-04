@@ -537,11 +537,14 @@ class ModelExtractionPhaseTest {
                 "interaction-api",
                 Map.of(),
                 java.util.Optional.empty()));
-        when(completionResolver.resolveCanonicalBoundary(context, stepDefinition))
+        var rootDefinition = new org.pipelineframework.processor.composition.PipelineReference("$root");
+        when(completionResolver.resolveCanonicalBoundary(context, rootDefinition, stepDefinition))
             .thenReturn(java.util.Optional.of(completionTypes));
 
         PipelineStepModel model = phase.createCrossModuleInternalModel(stepDefinition, context);
 
+        org.mockito.Mockito.verify(completionResolver)
+            .resolveCanonicalBoundary(context, rootDefinition, stepDefinition);
         assertNotNull(model);
         assertEquals(completionTypes.operationOutputType(), model.outboundDomainType());
         assertEquals(completionTypes.finalOutputType(),
