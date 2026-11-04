@@ -15,7 +15,6 @@ import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
 import com.squareup.javapoet.TypeSpec;
 import org.pipelineframework.config.CardinalitySemantics;
-import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.composition.CompiledPipelineLocation;
 import org.pipelineframework.processor.composition.DefinitionLocalLocation;
@@ -25,7 +24,6 @@ import org.pipelineframework.processor.composition.PipelineInvocationBinding;
 import org.pipelineframework.processor.composition.PipelineReference;
 import org.pipelineframework.processor.composition.LocalPipelineInvocationClassName;
 import org.pipelineframework.processor.composition.ResolvedPipelineDefinitionGraph;
-import org.pipelineframework.processor.ir.GenerationTarget;
 import org.pipelineframework.processor.ir.PipelineStepModel;
 import org.pipelineframework.processor.ir.StepDefinition;
 import org.pipelineframework.processor.phase.NamingPolicy;
@@ -41,8 +39,9 @@ public final class LocalPipelineInvocationRenderer {
     private static final ClassName PROVIDER = ClassName.get("jakarta.inject", "Provider");
 
     public void render(PipelineCompilationContext ctx, Path outputDir) throws IOException {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         var resolvedGraph = ctx.getResolvedPipelineDefinitionGraph();
-        if (resolvedGraph.isEmpty() || !(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig template)) {
+        if (resolvedGraph.isEmpty() || pipelineTemplate == null) {
             return;
         }
         ResolvedPipelineDefinitionGraph graph = resolvedGraph.orElseThrow();
@@ -52,7 +51,7 @@ public final class LocalPipelineInvocationRenderer {
         }
         Map<CompiledPipelineLocation, ClassName> invocationTypes = new LinkedHashMap<>();
         for (PipelineInvocationBinding binding : bindings.values()) {
-            invocationTypes.put(binding.invocationLocation(), ClassName.get(template.basePackage() + ".pipeline",
+            invocationTypes.put(binding.invocationLocation(), ClassName.get(pipelineTemplate.basePackage() + ".pipeline",
                 LocalPipelineInvocationClassName.simpleName(binding.invocationLocation())));
         }
         for (PipelineInvocationBinding binding : bindings.values()) {

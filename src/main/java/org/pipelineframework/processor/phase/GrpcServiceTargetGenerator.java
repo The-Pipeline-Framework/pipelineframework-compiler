@@ -7,7 +7,6 @@ import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.config.template.PipelineTemplateDialect;
 import org.pipelineframework.processor.ir.DeploymentRole;
 import org.pipelineframework.processor.ir.GenerationTarget;
-import org.pipelineframework.processor.renderer.GenerationContext;
 import org.pipelineframework.processor.renderer.GrpcServiceAdapterRenderer;
 
 /**
@@ -90,9 +89,7 @@ public class GrpcServiceTargetGenerator implements TargetGenerator {
         }
 
         DeploymentRole role = model.deploymentRole();
-        PipelineTemplateConfig template = request.ctx().getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            ? config
-            : null;
+        PipelineTemplateConfig template = request.ctx().getPipelineTemplateConfig();
         renderer.render(request.grpcBinding(), org.pipelineframework.processor.renderer.Jsr269GenerationContext.create(
             ctx.getProcessingEnv(),
             pathResolver.resolveRoleOutputDir(ctx, role),

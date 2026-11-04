@@ -8,7 +8,6 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.google.protobuf.DescriptorProtos;
-import org.pipelineframework.annotation.PipelineOrchestrator;
 import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.PipelineCompilationPhase;
@@ -98,7 +97,7 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
         
         // Process orchestrator models if present
         if (!ctx.getOrchestratorModels().isEmpty()) {
-            PipelineTemplateConfig config = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig cfg ? cfg : null;
+            PipelineTemplateConfig config = ctx.getPipelineTemplateConfig();
             OrchestratorBinding orchestratorBinding = OrchestratorBindingBuilder.buildOrchestratorBinding(
                 config,
                 ctx.getSourceInventory().pipelineOrchestratorElements(),
@@ -180,7 +179,7 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
      * @return `true` if gRPC bindings are required, `false` otherwise
      */
     private boolean needsGrpcBindings(PipelineCompilationContext ctx) {
-        PipelineTemplateConfig config = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig cfg ? cfg : null;
+        PipelineTemplateConfig config = ctx.getPipelineTemplateConfig();
         return grpcRequirementEvaluator.needsGrpcBindings(
             ctx.getStepModels(),
             ctx.getOrchestratorModels(),

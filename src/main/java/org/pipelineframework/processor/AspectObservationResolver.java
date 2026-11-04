@@ -6,7 +6,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeSet;
 import com.squareup.javapoet.ClassName;
-import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.config.template.PipelineTemplateDialect;
 import org.pipelineframework.config.template.PipelineTemplateTypeDefinition;
 import org.pipelineframework.processor.ir.*;
@@ -22,20 +21,16 @@ public final class AspectObservationResolver {
     }
 
     public List<Observation> resolve(PipelineStepModel model, PipelineAspectModel aspect) {
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
-            || config.dialect() != PipelineTemplateDialect.V3 || !ctx.isTransportModeLocal()) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate == null
+            || pipelineTemplate.dialect() != PipelineTemplateDialect.V3 || !ctx.isTransportModeLocal()) {
             throw new IllegalArgumentException("Aspect '" + aspect.name() + "': targetTypes requires canonical v3 LOCAL pipelines");
         }
-        Object configured = aspect.config().get("targetTypes");
-        if (!(configured instanceof List<?> values) || values.isEmpty()
-            || values.stream().anyMatch(value -> !(value instanceof String name) || name.isBlank())) {
-            throw new IllegalArgumentException("Aspect '" + aspect.name() + "': targetTypes must be a nonempty list of canonical types");
-        }
         var targets = new TreeSet<String>();
-        values.forEach(value -> targets.addAll(config.typeModel().concreteTypeNames((String) value)));
+        aspect.targetTypes().forEach(value -> targets.addAll(pipelineTemplate.typeModel().concreteTypeNames(value)));
         var mapping = aspect.position() == AspectPosition.BEFORE_STEP ? model.inputMapping() : model.outputMapping();
-        var javaTypes = new V3JavaTypeResolver(config);
-        var unionNames = config.typeModel().definitions().entrySet().stream()
+        var javaTypes = new V3JavaTypeResolver(pipelineTemplate);
+        var unionNames = pipelineTemplate.typeModel().definitions().entrySet().stream()
             .filter(entry -> entry.getValue() instanceof PipelineTemplateTypeDefinition.UnionType)
             .filter(entry -> javaTypes.resolve(entry.getKey()).filter(mapping.domainType()::equals).isPresent())
             .map(java.util.Map.Entry::getKey).toList();
@@ -51,11 +46,11 @@ public final class AspectObservationResolver {
             if (payload.equals(mapping.domainType())) {
                 observations.add(new Observation(selected, Optional.of(new ObservationProjection(payload, Optional.empty(), model.serviceName()))));
             } else if (!unionNames.isEmpty()
-                && config.typeModel().concreteTypeNames(unionNames.getFirst()).contains(target)) {
-                var union = (PipelineTemplateTypeDefinition.UnionType) config.typeModel().definitions()
+                && pipelineTemplate.typeModel().concreteTypeNames(unionNames.getFirst()).contains(target)) {
+                var union = (PipelineTemplateTypeDefinition.UnionType) pipelineTemplate.typeModel().definitions()
                     .get(unionNames.getFirst());
                 boolean direct = union.variants().values().stream().anyMatch(variant ->
-                    config.typeModel().resolveAliases(variant.payload()).name().equals(target));
+                    pipelineTemplate.typeModel().resolveAliases(variant.payload()).name().equals(target));
                 if (!direct) {
                     throw new IllegalArgumentException("Aspect '" + aspect.name() + "': targetTypes leaf '" + target
                         + "' is nested inside union '" + union.name() + "'; observations require direct union payloads");

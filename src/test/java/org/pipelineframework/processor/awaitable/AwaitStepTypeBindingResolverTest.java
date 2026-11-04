@@ -21,7 +21,6 @@ import java.util.Map;
 import java.util.Optional;
 import javax.annotation.processing.Messager;
 import javax.annotation.processing.ProcessingEnvironment;
-import javax.annotation.processing.RoundEnvironment;
 
 import com.squareup.javapoet.ClassName;
 import org.junit.jupiter.api.Test;
@@ -76,6 +75,44 @@ class AwaitStepTypeBindingResolverTest {
         assertTrue(binding.isPresent());
         assertEquals("com.example.await.domain.PendingDecision", binding.orElseThrow().operationOutputType().toString());
         assertEquals("com.example.await.domain.Result", binding.orElseThrow().finalOutputType().toString());
+    }
+
+    @Test
+    void resolvesSameNamedAwaitInItsDefinitionWithoutReplacingRootConfiguration() {
+        var processing = mock(ProcessingEnvironment.class);
+        when(processing.getMessager()).thenReturn(mock(Messager.class));
+        var types = new PipelineTemplateTypeModel(Map.of(
+            "PendingDecision", new PipelineTemplateTypeDefinition.RecordType("PendingDecision", List.of()),
+            "Result", new PipelineTemplateTypeDefinition.RecordType("Result", List.of())));
+        var rootStep = mock(PipelineTemplateStep.class);
+        when(rootStep.name()).thenReturn("Clarify");
+        when(rootStep.outputTypeName()).thenReturn("PendingDecision");
+        var childStep = mock(PipelineTemplateStep.class);
+        when(childStep.name()).thenReturn("Clarify");
+        when(childStep.outputTypeName()).thenReturn("Result");
+        var child = new org.pipelineframework.config.template.PipelineTemplateDefinition(
+            "PendingDecision", "Result", List.of(childStep));
+        var config = mock(PipelineTemplateConfig.class);
+        when(config.dialect()).thenReturn(PipelineTemplateDialect.V3);
+        when(config.basePackage()).thenReturn("com.example.await");
+        when(config.typeModel()).thenReturn(types);
+        when(config.steps()).thenReturn(List.of(rootStep));
+        when(config.pipelines()).thenReturn(Map.of("personal-agent", child));
+        var step = mock(StepDefinition.class);
+        when(step.name()).thenReturn("Clarify");
+        when(step.deferredCompletion()).thenReturn(Optional.of(new DeferredCompletionDefinition(
+            "PendingDecision", Optional.empty(), "PT5M", List.of(), "interactionId",
+            "interaction-api", Map.of(), Optional.empty())));
+        var context = new PipelineCompilationContext(processing,
+            org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        context.setPipelineTemplateConfig(config);
+        var resolver = new AwaitStepTypeBindingResolver();
+        var nested = resolver.resolve(context,
+            new org.pipelineframework.processor.composition.PipelineReference("personal-agent"), step).orElseThrow();
+        var root = resolver.resolve(context, step).orElseThrow();
+        assertEquals("com.example.await.domain.Result", nested.finalOutputType().toString());
+        assertEquals("com.example.await.domain.PendingDecision", root.finalOutputType().toString());
+        org.junit.jupiter.api.Assertions.assertSame(config, context.getPipelineTemplateConfig());
     }
 
     @Test

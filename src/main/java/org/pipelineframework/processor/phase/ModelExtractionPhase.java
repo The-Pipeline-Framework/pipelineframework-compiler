@@ -12,7 +12,6 @@ import javax.lang.model.util.Types;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.TypeName;
 import org.pipelineframework.annotation.PipelineStep;
-import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.parallelism.OrderingRequirement;
 import org.pipelineframework.parallelism.ThreadSafety;
 import org.pipelineframework.processor.PipelineCompilationContext;
@@ -35,13 +34,14 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
 
     private static boolean isPagedSource(
         PipelineCompilationContext ctx, PipelineReference definition, String stepName) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (!ROOT.equals(definition)
-            || !(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
-            || config.dialect() != org.pipelineframework.config.template.PipelineTemplateDialect.V3
-            || config.steps() == null) {
+            || pipelineTemplate == null
+            || pipelineTemplate.dialect() != org.pipelineframework.config.template.PipelineTemplateDialect.V3
+            || pipelineTemplate.steps() == null) {
             return false;
         }
-        return config.steps().stream().anyMatch(step -> step != null
+        return pipelineTemplate.steps().stream().anyMatch(step -> step != null
             && stepName.equals(step.name()) && step.paging().isPresent());
     }
 
@@ -104,23 +104,10 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                     .filter(step -> step.kind() != StepKind.PIPELINE)
                     .toList();
                 PipelineReference definition = new PipelineReference(entry.getKey());
-                Object previousConfig = ctx.getPipelineTemplateConfig();
-                try {
-                    if (previousConfig instanceof PipelineTemplateConfig root) {
-                        var fragment = root.pipelines().get(entry.getKey());
-                        ctx.setPipelineTemplateConfig(new PipelineTemplateConfig(root.version(), root.appName(),
-                            root.basePackage(), root.transport(), root.platform(), root.messages(), root.unions(),
-                            root.sources(), root.publish(), fragment.steps(), root.aspects(), root.input(), root.output(),
-                            root.materialization(), fragment.inputContract(), fragment.outputContract(), root.typeModel(),
-                            root.pipelines(), root.httpPayloads()));
-                    }
-                    List<PipelineStepModel> models = extractStepModelsFromYaml(
-                        ctx, definition, directSteps, ctxWarningLogger);
-                    models = addProviderBoundaryModels(ctx, definition, directSteps, models, ctxWarningLogger);
-                    localDefinitionModels.put(entry.getKey(), List.copyOf(models));
-                } finally {
-                    ctx.setPipelineTemplateConfig(previousConfig);
-                }
+                List<PipelineStepModel> models = extractStepModelsFromYaml(
+                    ctx, definition, directSteps, ctxWarningLogger);
+                models = addProviderBoundaryModels(ctx, definition, directSteps, models, ctxWarningLogger);
+                localDefinitionModels.put(entry.getKey(), List.copyOf(models));
             }
             ctx.setLocalDefinitionStepModels(Collections.unmodifiableMap(new LinkedHashMap<>(localDefinitionModels)));
             // Some template-driven YAMLs declare logical steps without resolvable execution classes
@@ -320,6 +307,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             PipelineReference definition,
             org.pipelineframework.processor.ir.StepDefinition stepDef,
             Consumer<String> ctxWarningLogger) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (stepDef.inputType() == null || stepDef.outputType() == null) {
             ctx.getCompilerDiagnostics().error(
                 "Command step '" + stepDef.name() + "' must resolve both Java input and output bindings; "
@@ -335,8 +323,8 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             return null;
         }
 
-        String templateBasePackage = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            ? config.basePackage()
+        String templateBasePackage = pipelineTemplate != null
+            ? pipelineTemplate.basePackage()
             : null;
         TypeName inputType = normalizeLegacyDomainType(stepDef.inputType(), null, templateBasePackage, ctx);
         TypeName outputType = normalizeLegacyDomainType(stepDef.outputType(), null, templateBasePackage, ctx);
@@ -344,7 +332,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
         Optional<DeferredCompletionSelection> commandCompletion = Optional.empty();
         if (stepDef.deferredCompletion().isPresent()) {
             var completion = stepDef.deferredCompletion().orElseThrow();
-            var binding = awaitTypeBindings.resolve(ctx, stepDef);
+            var binding = awaitTypeBindings.resolve(ctx, definition, stepDef);
             if (binding.isEmpty()) {
                 throw new IllegalArgumentException("Command completion types could not be resolved for " + stepDef.name());
             }
@@ -404,6 +392,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             PipelineReference definition,
             org.pipelineframework.processor.ir.StepDefinition stepDef,
             Consumer<String> ctxWarningLogger) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (stepDef.inputType() == null || stepDef.outputType() == null) {
             ctx.getCompilerDiagnostics().error(
                 "Query step '" + stepDef.name() + "' must resolve both Java input and output bindings; "
@@ -420,8 +409,8 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             return null;
         }
 
-        String templateBasePackage = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            ? config.basePackage()
+        String templateBasePackage = pipelineTemplate != null
+            ? pipelineTemplate.basePackage()
             : null;
         TypeName inputType = normalizeLegacyDomainType(stepDef.inputType(), null, templateBasePackage, ctx);
         TypeName outputType = normalizeLegacyDomainType(stepDef.outputType(), null, templateBasePackage, ctx);
@@ -451,27 +440,28 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             PipelineReference definition,
             org.pipelineframework.processor.ir.StepDefinition stepDef,
             Consumer<String> ctxWarningLogger) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (stepDef.inputType() == null || stepDef.outputType() == null) {
             ctx.getCompilerDiagnostics().error(
                 "Dynamic operation step '" + stepDef.name() + "' must resolve both Java input and output bindings");
             return null;
         }
-        String templateBasePackage = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            ? config.basePackage() : null;
+        String templateBasePackage = pipelineTemplate != null
+            ? pipelineTemplate.basePackage() : null;
         TypeName inputType = normalizeLegacyDomainType(stepDef.inputType(), null, templateBasePackage, ctx);
         TypeName outputType = normalizeLegacyDomainType(stepDef.outputType(), null, templateBasePackage, ctx);
         String serviceName = operationServiceName(ctx, definition, stepDef.name());
         String runtimeStepId = isImportedDefinition(ctx, definition)
             ? definition.logicalId() + "#" + stepDef.name()
             : serviceName;
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig template)) {
+        if (pipelineTemplate == null) {
             throw new IllegalStateException(
                 "Dynamic operation step '" + stepDef.name() + "' requires a normalized v3 type model");
         }
         DynamicOperationSelection selection;
         try {
             selection = new DynamicOperationSelectionResolver().resolve(
-                ctx.getEffectivePipelineConfig(), template, definition, stepDef.name(),
+                ctx.getEffectivePipelineConfig(), pipelineTemplate, definition, stepDef.name(),
                 stepDef.dynamicOperationSource().orElseThrow(), runtimeStepId);
         } catch (IllegalArgumentException | IllegalStateException failure) {
             throw new IllegalStateException(
@@ -558,7 +548,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             .getTypeElement(stepDef.executionClass().canonicalName());
 
         if (serviceClass == null) {
-            PipelineStepModel syntheticModel = createCrossModuleInternalModel(stepDef, ctx);
+            PipelineStepModel syntheticModel = createCrossModuleInternalModel(stepDef, ctx, definition);
             if (syntheticModel != null) {
                 return syntheticModel;
             }
@@ -611,7 +601,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
         }
         Optional<org.pipelineframework.processor.awaitable.AwaitStepTypeBinding> completionBinding =
             stepDef.deferredCompletion().isPresent()
-                ? awaitTypeBindings.resolve(ctx, stepDef)
+                ? awaitTypeBindings.resolve(ctx, definition, stepDef)
                 : Optional.empty();
         if (stepDef.deferredCompletion().isPresent() && completionBinding.isEmpty()) {
             return null;
@@ -756,16 +746,23 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
     PipelineStepModel createCrossModuleInternalModel(
             org.pipelineframework.processor.ir.StepDefinition stepDef,
             PipelineCompilationContext ctx) {
+        return createCrossModuleInternalModel(stepDef, ctx, ROOT);
+    }
+
+    private PipelineStepModel createCrossModuleInternalModel(
+            org.pipelineframework.processor.ir.StepDefinition stepDef,
+            PipelineCompilationContext ctx, PipelineReference definition) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (stepDef.inputType() == null || stepDef.outputType() == null) {
             return null;
         }
-        String templateBasePackage = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            ? config.basePackage()
+        String templateBasePackage = pipelineTemplate != null
+            ? pipelineTemplate.basePackage()
             : null;
         TypeName inputType = normalizeLegacyDomainType(stepDef.inputType(), stepDef.executionClass(), templateBasePackage, ctx);
         Optional<org.pipelineframework.processor.awaitable.AwaitStepTypeBinding> completionBinding =
             stepDef.deferredCompletion().isPresent()
-                ? awaitTypeBindings.resolveCanonicalBoundary(ctx, stepDef)
+                ? awaitTypeBindings.resolveCanonicalBoundary(ctx, definition, stepDef)
                 : Optional.empty();
         if (stepDef.deferredCompletion().isPresent() && completionBinding.isEmpty()) {
             return null;

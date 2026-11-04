@@ -26,7 +26,6 @@ import org.pipelineframework.processor.ir.StreamingShape;
 import org.pipelineframework.processor.routing.PipelineBranchingPlan;
 import org.pipelineframework.processor.routing.PipelineBranchRoutingPlanner;
 import org.pipelineframework.config.CardinalitySemantics;
-import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.config.template.PipelineTemplateStep;
 
 /**
@@ -88,37 +87,38 @@ public class PipelineSemanticAnalysisPhase implements PipelineCompilationPhase {
     }
 
     void validatePaging(PipelineCompilationContext ctx) {
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
-            || config.steps() == null) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate == null
+            || pipelineTemplate.steps() == null) {
             return;
         }
-        List<PipelineTemplateStep> paged = config.steps().stream()
+        List<PipelineTemplateStep> paged = pipelineTemplate.steps().stream()
             .filter(Objects::nonNull)
             .filter(step -> step.paging().isPresent())
             .toList();
         if (paged.isEmpty()) {
             return;
         }
-        if (paged.size() != 1 || config.steps().getFirst() != paged.getFirst()) {
+        if (paged.size() != 1 || pipelineTemplate.steps().getFirst() != paged.getFirst()) {
             throw new IllegalStateException("paging may be declared only on the first source-producing step");
         }
         PipelineTemplateStep source = paged.getFirst();
         if (CardinalitySemantics.fromString(source.cardinality()) != CardinalitySemantics.ONE_TO_MANY) {
             throw new IllegalStateException("paging requires the first step to declare ONE_TO_MANY cardinality");
         }
-        for (int index = 1; index < config.steps().size(); index++) {
-            PipelineTemplateStep step = config.steps().get(index);
+        for (int index = 1; index < pipelineTemplate.steps().size(); index++) {
+            PipelineTemplateStep step = pipelineTemplate.steps().get(index);
             if (step != null
                 && CardinalitySemantics.fromString(step.cardinality()) == CardinalitySemantics.MANY_TO_ONE) {
                 throw new IllegalStateException(
                     "paging does not support an aggregate whose input spans page boundaries: " + step.name());
             }
         }
-        if (config.output() == null || config.output().object() == null) {
+        if (pipelineTemplate.output() == null || pipelineTemplate.output().object() == null) {
             throw new IllegalStateException(
                 "paging requires a streaming terminal object output; MATERIALIZED_MULTI is not supported");
         }
-        var target = config.publish().get(config.output().object().target());
+        var target = pipelineTemplate.publish().get(pipelineTemplate.output().object().target());
         if (target == null || !("filesystem".equalsIgnoreCase(target.provider())
             || "s3".equalsIgnoreCase(target.provider()))) {
             throw new IllegalStateException(
@@ -129,7 +129,7 @@ public class PipelineSemanticAnalysisPhase implements PipelineCompilationPhase {
         }
         requireAssignable(
             ctx,
-            config.output().object().mapper(),
+            pipelineTemplate.output().object().mapper(),
             "org.pipelineframework.objectpublish.PagedStreamingObjectPublishMapper",
             "paged object output mapper");
         List<PipelineStepModel> models = ctx.getStepModels();

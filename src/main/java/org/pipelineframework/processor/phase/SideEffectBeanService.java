@@ -16,7 +16,6 @@ import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
 import com.squareup.javapoet.TypeSpec;
 import org.jboss.logging.Logger;
-import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.config.template.PipelineTemplateDialect;
 import org.pipelineframework.processor.representation.PersistenceRepresentationMappingResolver;
 import org.pipelineframework.processor.PipelineCompilationContext;
@@ -120,13 +119,14 @@ public class SideEffectBeanService {
         PipelineStepModel model,
         TypeName observedType
     ) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (!PERSISTENCE_SERVICE_CLASS.equals(model.serviceClassName().canonicalName())
-            || !(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
-            || config.dialect() != PipelineTemplateDialect.V3
+            || pipelineTemplate == null
+            || pipelineTemplate.dialect() != PipelineTemplateDialect.V3
             || !(observedType instanceof ClassName domainType)) {
             return java.util.Optional.empty();
         }
-        return PersistenceRepresentationMappingResolver.resolve(config, domainType, ctx.getProcessingEnv())
+        return PersistenceRepresentationMappingResolver.resolve(pipelineTemplate, domainType, ctx.getProcessingEnv())
             .map(mapping -> new PersistenceRepresentationMapping(mapping.mapperType()));
     }
 
@@ -202,6 +202,7 @@ public class SideEffectBeanService {
 
     private TypeName resolveObservedType(PipelineCompilationContext ctx, PipelineStepModel model,
             DeploymentRole role, GrpcBinding grpcBinding) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         TypeName observedType = model.observationProjection().isPresent() ? model.outputMapping().domainType()
             : model.pipelineOutputType() != null ? model.pipelineOutputType() : model.inboundDomainType();
         if (observedType == null) {
@@ -211,13 +212,13 @@ public class SideEffectBeanService {
             return observedType;
         }
         if (role == DeploymentRole.REST_SERVER
-            && ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            && config.dialect() == PipelineTemplateDialect.V3
+            && pipelineTemplate != null
+            && pipelineTemplate.dialect() == PipelineTemplateDialect.V3
             && model.outputMapping() != null) {
             String canonicalName = model.outputMapping().canonicalTypeName()
                 .orElseGet(() -> observedType instanceof ClassName name ? name.simpleName() : "");
-            if (config.typeModel().contains(canonicalName)) {
-                return ClassName.get(config.basePackage() + ".dto", canonicalName + "Dto");
+            if (pipelineTemplate.typeModel().contains(canonicalName)) {
+                return ClassName.get(pipelineTemplate.basePackage() + ".dto", canonicalName + "Dto");
             }
         }
         if (role == DeploymentRole.REST_SERVER) {

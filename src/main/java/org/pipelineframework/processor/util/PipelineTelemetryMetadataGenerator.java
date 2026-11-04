@@ -196,8 +196,9 @@ public class PipelineTelemetryMetadataGenerator {
 
     private List<ReplayTopologyStep> withRootInvocations(
         PipelineCompilationContext ctx, List<ReplayTopologyStep> baseSteps) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (ctx.getResolvedPipelineDefinitionGraph().isEmpty()
-            || !(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig template)) {
+            || pipelineTemplate == null) {
             return baseSteps;
         }
         var graph = ctx.getResolvedPipelineDefinitionGraph().orElseThrow();
@@ -216,7 +217,7 @@ public class PipelineTelemetryMetadataGenerator {
                 continue;
             }
             String runtimeClass = org.pipelineframework.processor.composition.LocalPipelineInvocationClassName
-                .canonicalName(template.basePackage(), binding.invocationLocation());
+                .canonicalName(pipelineTemplate.basePackage(), binding.invocationLocation());
             int index = 0;
             while (index < steps.size()
                 && !normalizeStepToken(steps.get(index).step()).equals(normalizeStepToken(location.localStepId()))) {
@@ -265,6 +266,7 @@ public class PipelineTelemetryMetadataGenerator {
         PipelineCompilationContext ctx,
         List<ReplayTopologyStep> baseSteps
     ) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         PipelineBranchingPlan plan = ctx.getBranchingPlan();
         if (plan == null || plan.steps().isEmpty()) {
             return List.of();
@@ -321,7 +323,7 @@ public class PipelineTelemetryMetadataGenerator {
         }
 
         if (ctx.getResolvedPipelineDefinitionGraph().isPresent()
-            && ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig template) {
+            && pipelineTemplate != null) {
             var graph = ctx.getResolvedPipelineDefinitionGraph().orElseThrow();
             for (var binding : graph.invocationBindings()) {
                 if (!binding.recursive()
@@ -329,7 +331,7 @@ public class PipelineTelemetryMetadataGenerator {
                     continue;
                 }
                 String runtimeClass = org.pipelineframework.processor.composition.LocalPipelineInvocationClassName
-                    .canonicalName(template.basePackage(), binding.invocationLocation());
+                    .canonicalName(pipelineTemplate.basePackage(), binding.invocationLocation());
                 resolvedSteps.stream().filter(step -> step.topologyStep().runtimeStepClass().equals(runtimeClass))
                     .forEach(step -> step.acceptedContractTypes().forEach(type ->
                         firstAcceptingStep(resolvedSteps, 0, type).ifPresent(target ->
@@ -360,16 +362,17 @@ public class PipelineTelemetryMetadataGenerator {
     }
 
     private Set<String> expandLeafContractTypes(PipelineCompilationContext ctx, String contractName) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (contractName == null || contractName.isBlank()) {
             return Set.of();
         }
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig templateConfig)) {
+        if (pipelineTemplate == null) {
             return Set.of(contractName);
         }
-        if (templateConfig.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
-            return templateConfig.typeModel().concreteTypeNames(contractName);
+        if (pipelineTemplate.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
+            return pipelineTemplate.typeModel().concreteTypeNames(contractName);
         }
-        return expandLeafContractTypes(templateConfig, contractName, new LinkedHashSet<>());
+        return expandLeafContractTypes(pipelineTemplate, contractName, new LinkedHashSet<>());
     }
 
     private Set<String> expandLeafContractTypes(
@@ -671,6 +674,7 @@ public class PipelineTelemetryMetadataGenerator {
     }
 
     private String resolvePipelineName(PipelineCompilationContext ctx) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         try {
             Properties properties = loadApplicationProperties(ctx);
             String configured = properties.getProperty("pipeline.telemetry.pipeline-name");
@@ -680,9 +684,9 @@ public class PipelineTelemetryMetadataGenerator {
         } catch (IOException ignored) {
             // Fall back to structural inference.
         }
-        if (ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig templateConfig
-            && templateConfig.appName() != null && !templateConfig.appName().isBlank()) {
-            return templateConfig.appName().trim();
+        if (pipelineTemplate != null
+            && pipelineTemplate.appName() != null && !pipelineTemplate.appName().isBlank()) {
+            return pipelineTemplate.appName().trim();
         }
         Optional<Path> pipelineConfig = resolvePipelineConfigPath(ctx);
         if (pipelineConfig.isPresent()) {

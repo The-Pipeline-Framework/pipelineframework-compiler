@@ -14,7 +14,6 @@ import lombok.Setter;
 import org.pipelineframework.config.PlatformMode;
 import org.pipelineframework.processor.ir.GenerationTarget;
 import org.pipelineframework.processor.ir.CoordinationHost;
-import com.squareup.javapoet.ClassName;
 import org.pipelineframework.processor.ir.PipelineAspectModel;
 import org.pipelineframework.processor.ir.PipelineOrchestratorModel;
 import org.pipelineframework.processor.ir.PipelineStepModel;
@@ -59,7 +58,7 @@ public class PipelineCompilationContext {
     @Setter
     private List<PipelineOrchestratorModel> orchestratorModels;
     @Setter
-    private Object pipelineTemplateConfig; // Store as Object to avoid circular dependencies
+    private org.pipelineframework.config.template.PipelineTemplateConfig pipelineTemplateConfig;
     @Setter
     private List<StepDefinition> stepDefinitions;
     @Setter

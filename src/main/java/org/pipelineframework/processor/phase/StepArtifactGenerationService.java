@@ -18,9 +18,7 @@ import org.pipelineframework.processor.ir.GrpcBinding;
 import org.pipelineframework.processor.ir.LocalBinding;
 import org.pipelineframework.processor.ir.PipelineStepModel;
 import org.pipelineframework.processor.ir.RestBinding;
-import org.pipelineframework.processor.renderer.ClientStepRenderer;
 import org.pipelineframework.processor.renderer.BlockingReactiveBridgeRenderer;
-import org.pipelineframework.processor.renderer.GenerationContext;
 import org.pipelineframework.processor.renderer.GrpcServiceAdapterRenderer;
 import org.pipelineframework.processor.renderer.PipelineRenderer;
 import org.pipelineframework.processor.renderer.RemoteOperatorAdapterRenderer;
@@ -28,7 +26,6 @@ import org.pipelineframework.processor.renderer.AbstractFunctionHandlerRenderer;
 import org.pipelineframework.processor.renderer.DeferredCompletionStepRenderer;
 import org.pipelineframework.processor.renderer.CommandClientStepRenderer;
 import org.pipelineframework.processor.renderer.QueryClientStepRenderer;
-import org.pipelineframework.processor.renderer.RestResourceRenderer;
 import org.pipelineframework.processor.util.ResourceNameUtils;
 import org.pipelineframework.processor.util.RoleMetadataGenerator;
 
@@ -101,9 +98,7 @@ class StepArtifactGenerationService {
             DeferredCompletionStepRenderer awaitClientStepRenderer,
             CommandClientStepRenderer commandClientStepRenderer,
             QueryClientStepRenderer queryClientStepRenderer) throws IOException {
-        PipelineTemplateConfig template = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            ? config
-            : null;
+        PipelineTemplateConfig template = ctx.getPipelineTemplateConfig();
         boolean v3GeneratedDomainTypes = template != null && template.dialect() == PipelineTemplateDialect.V3;
         Optional<PipelineTemplateTypeModel> canonicalTypeModel = v3GeneratedDomainTypes
             ? Optional.of(template.typeModel()) : Optional.empty();

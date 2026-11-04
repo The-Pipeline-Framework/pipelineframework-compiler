@@ -27,10 +27,11 @@ final class PipelineCompositionLinkingPhase {
     private static final PipelineReference ROOT = new PipelineReference("$root");
 
     void link(PipelineCompilationContext ctx) {
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate == null) {
             return;
         }
-        boolean invocation = !config.pipelines().isEmpty() || containsPipelineReference(config.steps());
+        boolean invocation = !pipelineTemplate.pipelines().isEmpty() || containsPipelineReference(pipelineTemplate.steps());
         boolean implicitCompletion = ctx.getBranchingPlan() != null && ctx.getBranchingPlan().branchAware()
             && ctx.getBranchingPlan().terminalStepIndex() == -1;
         if (!invocation && !implicitCompletion) {
@@ -44,10 +45,10 @@ final class PipelineCompositionLinkingPhase {
         Map<PipelineReference, PipelineBranchingPlan> branchPlans = new LinkedHashMap<>();
         branchPlans.put(ROOT, ctx.getBranchingPlan() == null ? PipelineBranchingPlan.disabled() : ctx.getBranchingPlan());
         Map<PipelineReference, PipelineDefinition> definitions = new LinkedHashMap<>();
-        String rootInput = config.inputContract() == null ? config.steps().getFirst().inputTypeName() : config.inputContract();
-        definitions.put(ROOT, definition(ROOT, rootInput, config.outputContract(), config.steps(),
+        String rootInput = pipelineTemplate.inputContract() == null ? pipelineTemplate.steps().getFirst().inputTypeName() : pipelineTemplate.inputContract();
+        definitions.put(ROOT, definition(ROOT, rootInput, pipelineTemplate.outputContract(), pipelineTemplate.steps(),
             ctx.getStepDefinitions(), branchPlans.get(ROOT)));
-        for (var entry : config.pipelines().entrySet()) {
+        for (var entry : pipelineTemplate.pipelines().entrySet()) {
             PipelineReference reference = new PipelineReference(entry.getKey());
             PipelineTemplateDefinition fragment = entry.getValue();
             List<StepDefinition> parsedSteps = parsed.get(reference.logicalId());
@@ -55,8 +56,8 @@ final class PipelineCompositionLinkingPhase {
                 throw new IllegalArgumentException("Pipeline definition '" + reference.logicalId()
                     + "' was not parsed through the v3 step grammar.");
             }
-            PipelineTemplateConfig scoped = scoped(config, fragment);
-            Object previousConfig = ctx.getPipelineTemplateConfig();
+            PipelineTemplateConfig scoped = scoped(pipelineTemplate, fragment);
+            PipelineTemplateConfig previousConfig = pipelineTemplate;
             List<StepDefinition> previousSteps = ctx.getStepDefinitions();
             try {
                 ctx.setPipelineTemplateConfig(scoped);
@@ -73,7 +74,7 @@ final class PipelineCompositionLinkingPhase {
         }
         ResolvedPipelineDefinitionGraph graph = new PipelineDefinitionLinker(
             reference -> Optional.ofNullable(definitions.get(reference)),
-            new V3PipelineInvocationCompatibility(config.typeModel()),
+            new V3PipelineInvocationCompatibility(pipelineTemplate.typeModel()),
             new BranchPlanPipelineDefinitionValidator(branchPlans)).link(definitions.get(ROOT));
         ctx.setResolvedPipelineDefinitionGraph(graph);
         Map<PipelineReference, PipelineBranchingPlan> childPlans = new LinkedHashMap<>(branchPlans);

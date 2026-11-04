@@ -19,15 +19,16 @@ import org.pipelineframework.processor.routing.V3JavaTypeResolver;
 /** Validates the canonical branch transformation before generating an Await adapter. */
 final class AwaitBranchSelectionResolver {
     Optional<AwaitBranchSelection> resolve(PipelineCompilationContext ctx, PipelineTemplateConfig config,
+        java.util.List<org.pipelineframework.config.template.PipelineTemplateStep> definitionSteps,
         StepDefinition step) {
         try {
             var completion = step.deferredCompletion().orElseThrow();
             if (ctx.getTransportMode() != PipelineTransport.LOCAL || completion.callback().isPresent()) {
                 throw new IllegalArgumentException("selected Await requires LOCAL post-operation transport completion");
             }
-            var template = config.steps().stream().filter(value -> value.name().equals(step.name()))
+            var template = definitionSteps.stream().filter(value -> value.name().equals(step.name()))
                 .findFirst().orElseThrow();
-            if (config.steps().stream().anyMatch(value -> !"ONE_TO_ONE".equals(value.cardinality()))) {
+            if (definitionSteps.stream().anyMatch(value -> !"ONE_TO_ONE".equals(value.cardinality()))) {
                 throw new IllegalArgumentException("selected Await requires a unary pipeline definition");
             }
             var javaTypes = new V3JavaTypeResolver(config);

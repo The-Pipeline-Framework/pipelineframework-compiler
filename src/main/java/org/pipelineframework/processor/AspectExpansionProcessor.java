@@ -115,7 +115,7 @@ public class AspectExpansionProcessor {
     }
 
     private List<AspectObservationResolver.Observation> observations(PipelineStepModel model, PipelineAspectModel aspect) {
-        if (aspect.config().containsKey("targetTypes")) {
+        if (!aspect.targetTypes().isEmpty()) {
             return observationResolver.orElseThrow(() -> new IllegalArgumentException(
                 "Aspect '" + aspect.name() + "': targetTypes requires canonical compilation context")).resolve(model, aspect);
         }
@@ -150,7 +150,7 @@ public class AspectExpansionProcessor {
             AspectObservationResolver.Observation observation) {
 
         PipelineStepModel originalModel = originalStep.model();
-        boolean selected = aspect.config().containsKey("targetTypes");
+        boolean selected = !aspect.targetTypes().isEmpty();
         String messageName = selected ? simpleTypeName(observation.mapping().domainType())
             : resolveMessageName(originalStep, position);
         String serviceName = "Observe" + toPascalCase(aspect.name()) + messageName + "SideEffectService";
