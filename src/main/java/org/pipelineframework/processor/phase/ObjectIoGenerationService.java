@@ -43,7 +43,7 @@ final class ObjectIoGenerationService {
             return;
         }
         Optional<PipelineStepModel> terminalModel = stepResolver.terminalBusinessStepWithDeploymentRole(ctx);
-        var template = (org.pipelineframework.config.template.PipelineTemplateConfig) ctx.getPipelineTemplateConfig();
+        var template = ctx.getPipelineTemplateConfig();
         TypeName domainType = ClassName.bestGuess(template.output().object().type());
         DeploymentRole adapterRole = terminalModel
             .map(model -> resolveClientRole(model.deploymentRole()))
@@ -87,7 +87,7 @@ final class ObjectIoGenerationService {
             return;
         }
         Optional<PipelineStepModel> firstModel = stepResolver.firstBusinessStepWithDeploymentRole(ctx);
-        var template = (org.pipelineframework.config.template.PipelineTemplateConfig) ctx.getPipelineTemplateConfig();
+        var template = ctx.getPipelineTemplateConfig();
         TypeName domainType = ClassName.bestGuess(template.input().object().type());
         DeploymentRole adapterRole = firstModel
             .map(model -> resolveClientRole(model.deploymentRole()))
@@ -123,15 +123,16 @@ final class ObjectIoGenerationService {
         ClassName cacheKeyGenerator,
         DescriptorProtos.FileDescriptorSet descriptorSet
     ) {
-        if (!(ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig template)
-                || template.version() != 3 || template.input() == null || template.input().object() == null
-                || template.input().object().selection().isEmpty() || ctx.isPluginHost()) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate == null
+                || pipelineTemplate.version() != 3 || pipelineTemplate.input() == null || pipelineTemplate.input().object() == null
+                || pipelineTemplate.input().object().selection().isEmpty() || ctx.isPluginHost()) {
             return;
         }
-        var objectInput = template.input().object();
+        var objectInput = pipelineTemplate.input().object();
         String localTypeName = objectInput.typeName() == null
             ? ClassName.bestGuess(objectInput.type()).simpleName() : objectInput.typeName();
-        var record = template.typeModel().definition(localTypeName)
+        var record = pipelineTemplate.typeModel().definition(localTypeName)
             .filter(org.pipelineframework.config.template.PipelineTemplateTypeDefinition.RecordType.class::isInstance)
             .map(org.pipelineframework.config.template.PipelineTemplateTypeDefinition.RecordType.class::cast)
             .orElseThrow(() -> new IllegalStateException("Grouped Object Ingest type '" + localTypeName
@@ -147,11 +148,11 @@ final class ObjectIoGenerationService {
             cacheKeyGenerator,
             descriptorSet,
             ctx.getTransportMode(),
-            template.basePackage(),
+            pipelineTemplate.basePackage(),
             null,
             true);
         try {
-            ClassName generatedClass = renderer.render(template.basePackage(), ClassName.bestGuess(objectInput.type()),
+            ClassName generatedClass = renderer.render(pipelineTemplate.basePackage(), ClassName.bestGuess(objectInput.type()),
                 record, objectInput.selection().orElseThrow(), generationContext);
             roleMetadataGenerator.recordClassWithRole(generatedClass.canonicalName(), adapterRole.name());
         } catch (IOException | RuntimeException e) {

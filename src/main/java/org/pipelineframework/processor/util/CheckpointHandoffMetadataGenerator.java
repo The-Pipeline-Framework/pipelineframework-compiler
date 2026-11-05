@@ -31,27 +31,27 @@ public class CheckpointHandoffMetadataGenerator {
     }
 
     public void writeHandoffMetadata(PipelineCompilationContext ctx) throws IOException {
-        if (ctx == null || !(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig templateConfig)) {
+        if (ctx == null || ctx.getPipelineTemplateConfig() == null) {
             return;
         }
-        boolean hasInput = templateConfig.input() != null && templateConfig.input().subscription() != null;
-        boolean hasOutput = templateConfig.output() != null && templateConfig.output().checkpoint() != null;
+        boolean hasInput = ctx.getPipelineTemplateConfig().input() != null && ctx.getPipelineTemplateConfig().input().subscription() != null;
+        boolean hasOutput = ctx.getPipelineTemplateConfig().output() != null && ctx.getPipelineTemplateConfig().output().checkpoint() != null;
         if (!hasInput && !hasOutput) {
             return;
         }
-        List<PipelineTemplateStep> steps = templateConfig.steps() == null ? List.of() : templateConfig.steps();
+        List<PipelineTemplateStep> steps = ctx.getPipelineTemplateConfig().steps() == null ? List.of() : ctx.getPipelineTemplateConfig().steps();
         String ingressInputType = steps.isEmpty() ? null : steps.getFirst().inputTypeName();
         String checkpointOutputType = steps.isEmpty() ? null : steps.getLast().outputTypeName();
 
         HandoffMetadata metadata = new HandoffMetadata(
-            hasOutput ? templateConfig.output().checkpoint().publication() : null,
-            hasInput ? templateConfig.input().subscription().publication() : null,
+            hasOutput ? ctx.getPipelineTemplateConfig().output().checkpoint().publication() : null,
+            hasInput ? ctx.getPipelineTemplateConfig().input().subscription().publication() : null,
             checkpointOutputType,
             ingressInputType,
-            hasInput ? templateConfig.input().subscription().mapper() : null,
-            hasOutput ? templateConfig.output().checkpoint().idempotencyKeyFields() : List.of(),
+            hasInput ? ctx.getPipelineTemplateConfig().input().subscription().mapper() : null,
+            hasOutput ? ctx.getPipelineTemplateConfig().output().checkpoint().idempotencyKeyFields() : List.of(),
             hasInput ? List.of("HTTP_JSON", "HTTP_PROTO", "GRPC") : List.of(),
-            checkpointVariants(templateConfig, checkpointOutputType),
+            checkpointVariants(ctx.getPipelineTemplateConfig(), checkpointOutputType),
             true);
 
         javax.tools.FileObject resourceFile = processingEnv.getFiler()

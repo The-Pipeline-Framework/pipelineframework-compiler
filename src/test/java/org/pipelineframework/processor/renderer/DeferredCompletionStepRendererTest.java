@@ -103,6 +103,33 @@ class DeferredCompletionStepRendererTest {
     }
 
     @Test
+    void selectedBranchKeepsCanonicalCompletionAndContinuingOutcomeContracts() throws Exception {
+        var before = ClassName.get("com.example.approval.domain", "Before");
+        var after = ClassName.get("com.example.approval.domain", "After");
+        var review = ClassName.get("com.example.approval.domain", "Review");
+        var reply = ClassName.get("com.example.approval.domain", "Reply");
+        var branch = new org.pipelineframework.processor.ir.AwaitBranchSelection("Review", review, "Reply", reply,
+            new org.pipelineframework.processor.ir.AwaitBranchSelection.CaseAccess(before.nestedClass("ReviewRequired"), "value"),
+            Optional.of(after.nestedClass("Answered")), List.of(new org.pipelineframework.processor.ir.AwaitBranchSelection.Bypass(
+                new org.pipelineframework.processor.ir.AwaitBranchSelection.CaseAccess(before.nestedClass("Finished"), "value"),
+                Optional.of(after.nestedClass("Finished")))));
+        var model = model(StreamingShape.UNARY_UNARY).toBuilder()
+            .outputMapping(TypeMapping.withoutMapper(before))
+            .deferredCompletionSelection(new DeferredCompletionSelection(after, "After", Optional.empty(),
+                Duration.ofMinutes(5), List.of(), "interactionId", "interaction-api", Map.of(),
+                Optional.empty(), Optional.empty()).withBranchSelection(Optional.of(branch))).build();
+        new DeferredCompletionStepRenderer().render(model, context(PipelineTransport.LOCAL));
+        String source = Files.readString(tempDir.resolve(
+            "com/example/approval/pipeline/CreateApprovalDeferredCompletionStep.java"));
+        assertTrue(source.contains("StepOneToOne<Before, After>"), source);
+        assertTrue(source.contains("awaitOneToOne(completion, value.value())"), source);
+        assertTrue(source.contains("new After.Finished(value.value())"), source);
+        assertTrue(source.contains("map(reply -> new After.Answered(reply))"), source);
+        assertTrue(source.contains("\"com.example.approval.domain.Review\", \"com.example.approval.domain.Reply\""), source);
+        assertTrue(!source.contains("PipelineDomainProtoAdapters"), source);
+    }
+
+    @Test
     void exposesDeferredCompletionTarget() {
         assertEquals(GenerationTarget.DEFERRED_COMPLETION_STEP, new DeferredCompletionStepRenderer().target());
     }

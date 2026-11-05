@@ -267,8 +267,10 @@ class PipelineTemplateSchemaExporterTest {
             .filter(rule -> rule.has("then") && rule.getAsJsonObject("then").has("properties")
                 && rule.getAsJsonObject("then").getAsJsonObject("properties").has("steps"))
             .findFirst().orElseThrow();
-        JsonArray stepRules = versionThreeRule.getAsJsonObject("then").getAsJsonObject("properties")
-            .getAsJsonObject("steps").getAsJsonObject("items").getAsJsonArray("allOf");
+        assertEquals("#/$defs/v3DefinitionStep", versionThreeRule.getAsJsonObject("then")
+            .getAsJsonObject("properties").getAsJsonObject("steps").getAsJsonObject("items")
+            .get("$ref").getAsString());
+        JsonArray stepRules = definitions.getAsJsonObject("v3DefinitionStep").getAsJsonArray("allOf");
         assertEquals("#/$defs/v3TemplateStep", stepRules.get(1).getAsJsonObject().get("$ref").getAsString());
     }
 

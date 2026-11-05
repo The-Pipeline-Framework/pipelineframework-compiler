@@ -59,8 +59,8 @@ public final class ConnectorBindingMetadataGenerator {
             return;
         }
         PipelineYamlConfig effectiveConfig = config;
-        Optional<PipelineTemplateConfig> template = context.getPipelineTemplateConfig() instanceof PipelineTemplateConfig value
-            ? Optional.of(value)
+        Optional<PipelineTemplateConfig> template = context.getPipelineTemplateConfig() != null
+            ? Optional.of(context.getPipelineTemplateConfig())
             : Optional.empty();
         ConnectorProviderManifestCatalog catalog = ConnectorProviderManifestLoader.load(metadataClassLoader());
         List<BindingMetadata> bindings = config.connectors().values().stream()

@@ -79,8 +79,9 @@ public record StepDefinition(
         }
         deferredCompletion.ifPresent(completion -> {
             boolean callback = completion.callback().isPresent();
-            if ((callback && kind != StepKind.COMMAND) || (!callback && kind != StepKind.INTERNAL)) {
-                throw new IllegalArgumentException("deferred completion requires INTERNAL + transport or native COMMAND + callback");
+            if ((callback && kind != StepKind.COMMAND)
+                || (!callback && kind != StepKind.INTERNAL && kind != StepKind.COMMAND)) {
+                throw new IllegalArgumentException("deferred completion requires INTERNAL + transport or native COMMAND + transport/callback");
             }
         });
 

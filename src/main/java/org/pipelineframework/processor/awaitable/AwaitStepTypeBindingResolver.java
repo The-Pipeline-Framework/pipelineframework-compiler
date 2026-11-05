@@ -23,6 +23,7 @@ import javax.lang.model.type.TypeMirror;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.TypeName;
 import org.pipelineframework.config.template.PipelineTemplateConfig;
+import org.pipelineframework.processor.composition.PipelineReference;
 import org.pipelineframework.config.template.PipelineTemplateDialect;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.ir.DeferredCompletionDefinition;
@@ -39,7 +40,13 @@ public final class AwaitStepTypeBindingResolver {
         new ImplementedGenericInterfaceResolver();
 
     public Optional<AwaitStepTypeBinding> resolve(PipelineCompilationContext ctx, StepDefinition step) {
-        return resolve(ctx, step, false);
+        return resolve(ctx, new PipelineReference("$root"), step);
+    }
+
+    public Optional<AwaitStepTypeBinding> resolve(
+        PipelineCompilationContext ctx, PipelineReference definition, StepDefinition step
+    ) {
+        return resolve(ctx, definition, step, false);
     }
 
     /** Resolves the canonical operation boundary used by a module that does not own the service implementation. */
@@ -47,21 +54,38 @@ public final class AwaitStepTypeBindingResolver {
         PipelineCompilationContext ctx,
         StepDefinition step
     ) {
-        return resolve(ctx, step, true);
+        return resolveCanonicalBoundary(ctx, new PipelineReference("$root"), step);
+    }
+
+    public Optional<AwaitStepTypeBinding> resolveCanonicalBoundary(
+        PipelineCompilationContext ctx, PipelineReference definition, StepDefinition step
+    ) {
+        return resolve(ctx, definition, step, true);
     }
 
     private Optional<AwaitStepTypeBinding> resolve(
         PipelineCompilationContext ctx,
+        PipelineReference definition,
         StepDefinition step,
         boolean canonicalBoundary
     ) {
+        PipelineTemplateConfig config = ctx.getPipelineTemplateConfig();
         DeferredCompletionDefinition completion = step.deferredCompletion().orElseThrow(() ->
             new IllegalArgumentException("Step '" + step.name() + "' has no deferred completion"));
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
+        if (config == null
             || config.dialect() != PipelineTemplateDialect.V3) {
+            if (!completion.accepts().isEmpty()) {
+                error(ctx, "Step '" + step.name() + "' selected Await requires canonical v3 contracts");
+                return Optional.empty();
+            }
             return explicitBinding(step, completion);
         }
 
+        var definitionSteps = definition.logicalId().equals("$root") ? config.steps()
+            : Optional.ofNullable(config.pipelines().get(definition.logicalId()))
+                .orElseThrow(() -> new IllegalArgumentException(
+                    "Unknown Await definition '" + definition.logicalId() + "'"))
+                .steps();
         V3JavaTypeResolver javaTypes = new V3JavaTypeResolver(config);
         if (completion.callback().isPresent()) {
             var callback = completion.callback().orElseThrow();
@@ -83,7 +107,7 @@ public final class AwaitStepTypeBindingResolver {
             : completion.operationOutputJavaType().isPresent()
                 ? completion.operationOutputJavaType()
                 : providerOperationOutput.isPresent() ? providerOperationOutput : inferredOperationOutput;
-        Optional<ClassName> finalOutput = config.steps().stream()
+        Optional<ClassName> finalOutput = definitionSteps.stream()
             .filter(candidate -> candidate != null && step.name().equals(candidate.name()))
             .findFirst()
             .flatMap(candidate -> javaTypes.resolve(candidate.outputTypeName()));
@@ -110,6 +134,9 @@ public final class AwaitStepTypeBindingResolver {
             return Optional.empty();
         }
 
+        Optional<org.pipelineframework.processor.ir.AwaitBranchSelection> branch = completion.accepts().isEmpty()
+            ? Optional.empty() : new AwaitBranchSelectionResolver().resolve(ctx, config, definitionSteps, step);
+        if (!completion.accepts().isEmpty() && branch.isEmpty()) return Optional.empty();
         Optional<TypeName> payloadType = completion.completion()
             .flatMap(projected -> javaTypes.resolve(projected.type()))
             .map(TypeName.class::cast);
@@ -119,10 +146,10 @@ public final class AwaitStepTypeBindingResolver {
             return Optional.empty();
         }
         Optional<ClassName> projectorContext = completion.callback().isPresent()
-            ? Optional.ofNullable(step.inputType()).or(() -> config.steps().stream()
+            ? Optional.ofNullable(step.inputType()).or(() -> definitionSteps.stream()
                 .filter(candidate -> candidate != null && step.name().equals(candidate.name()))
                 .findFirst().flatMap(candidate -> javaTypes.resolve(candidate.inputTypeName())))
-            : operationOutput;
+            : branch.map(org.pipelineframework.processor.ir.AwaitBranchSelection::requestType).or(() -> operationOutput);
         if (projectorContext.isEmpty()) {
             error(ctx, "Step '" + step.name() + "' could not resolve the canonical completion context type.");
             return Optional.empty();
@@ -130,12 +157,13 @@ public final class AwaitStepTypeBindingResolver {
         if (completion.completion().isPresent()
             && !validateProjector(ctx, step.name(), completion.completion().orElseThrow(),
                 projectorContext.orElseThrow(), operationOutput.orElseThrow(), completion.callback().isPresent(),
-                payloadType.orElseThrow(), finalOutput.orElseThrow())) {
+                payloadType.orElseThrow(), branch.map(org.pipelineframework.processor.ir.AwaitBranchSelection::completionType)
+                    .or(() -> finalOutput).orElseThrow())) {
             return Optional.empty();
         }
         return Optional.of(new AwaitStepTypeBinding(
             operationOutput.orElseThrow(), finalOutput.orElseThrow(),
-            config.steps().stream()
+            definitionSteps.stream()
                 .filter(candidate -> candidate != null && step.name().equals(candidate.name()))
                 .findFirst().orElseThrow().outputTypeName(),
             completion.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::type),
@@ -143,7 +171,7 @@ public final class AwaitStepTypeBindingResolver {
             completion.callback().isPresent() && completion.completion().isPresent()
                 && genericInterfaces.resolve(ctx.getProcessingEnv().getElementUtils().getTypeElement(
                     completion.completion().orElseThrow().projector().canonicalName()), COMMAND_PROJECTOR,
-                    ctx.getProcessingEnv()).isPresent()));
+                    ctx.getProcessingEnv()).isPresent(), branch));
     }
 
     private Optional<AwaitStepTypeBinding> explicitBinding(

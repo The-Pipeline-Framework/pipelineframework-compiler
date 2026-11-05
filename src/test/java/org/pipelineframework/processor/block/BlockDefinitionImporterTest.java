@@ -31,6 +31,24 @@ class BlockDefinitionImporterTest {
         assertTrue(invalid.getMessage().contains("entry must not be null"));
     }
 
+    @Test void rejectsAReservedSelfDefinitionInAPackagedBlock() throws Exception {
+        Path dependency = dependency("reserved", "org.example", "reserved", "1.0.0", "self", block("self"));
+        Path application = application("""
+            version: 3
+            appName: Consumer
+            basePackage: org.example.consumer
+            transport: LOCAL
+            types:
+              LocalReceipt: { fields: [[value, string]] }
+            steps: []
+            """);
+        try (URLClassLoader loader = loader(dependency)) {
+            var failure = assertThrows(IllegalStateException.class,
+                () -> new BlockDefinitionImporter(loader).importInto(application));
+            assertTrue(failure.getMessage().contains("reserved definition name 'self'"), failure.getMessage());
+        }
+    }
+
     @Test void discoversDependencyMetadataAndLinksOrdinaryV3Definitions() throws Exception {
         Path dependency = dependency("first", "org.example.documents", "documents", "1.2.3",
             "document-text-extraction", """

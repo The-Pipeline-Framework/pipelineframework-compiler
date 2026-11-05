@@ -5,7 +5,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.PipelineCompilationPhase;
 import org.pipelineframework.processor.ir.PipelineStepModel;
@@ -39,7 +38,8 @@ public final class RepresentationProviderGenerationPhase implements PipelineComp
 
     @Override
     public void execute(PipelineCompilationContext ctx) throws Exception {
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config) || config.version() != 3
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate == null || pipelineTemplate.version() != 3
                 || ctx.getRepresentationProviderRegistry() == null) {
             return;
         }

@@ -14,7 +14,6 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.squareup.javapoet.TypeName;
 import org.pipelineframework.config.pipeline.*;
-import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.config.boundary.PipelineHttpPayloadBoundaryConfig;
 import org.pipelineframework.config.template.PipelineTemplateTypeDefinition;
 import org.pipelineframework.config.template.PipelineTemplateTypeModel;
@@ -22,7 +21,6 @@ import org.pipelineframework.config.template.PipelineTemplateTypeReference;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.composition.PipelineCompositionContractProjector;
 import org.pipelineframework.orchestrator.composition.PipelineCompositionDescriptor;
-import org.pipelineframework.processor.ir.DeploymentRole;
 import org.pipelineframework.processor.ir.GenerationTarget;
 import org.pipelineframework.processor.ir.PipelineStepModel;
 import org.pipelineframework.processor.ir.PipelineTransport;
@@ -77,8 +75,8 @@ public class PipelineContractMetadataGenerator {
             effectiveConfig, ctx.getModuleDir(),
             org.pipelineframework.connector.ConnectorProviderManifestLoader.metadataClassLoader(
                 PipelineContractMetadataGenerator.class), ctx.getResolvedOperationRepresentations());
-        boolean hasContributedTypes = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            && !config.typeModel().contributedTypeIdentities().isEmpty();
+        boolean hasContributedTypes = ctx.getPipelineTemplateConfig() != null
+            && !ctx.getPipelineTemplateConfig().typeModel().contributedTypeIdentities().isEmpty();
         List<Map<String, Object>> importedDefinitions = importedDefinitions(ctx);
         List<Map<String, Object>> httpPayloadBoundaries = httpPayloadBoundaries(ctx);
         int schemaVersion = composition.present() || hasContributedTypes || !importedDefinitions.isEmpty()
@@ -143,10 +141,11 @@ public class PipelineContractMetadataGenerator {
     }
 
     private List<Map<String, Object>> httpPayloadBoundaries(PipelineCompilationContext ctx) {
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate == null) {
             return List.of();
         }
-        return config.httpPayloads().values().stream()
+        return pipelineTemplate.httpPayloads().values().stream()
             .sorted(Comparator.comparing(PipelineHttpPayloadBoundaryConfig::name))
             .map(boundary -> {
                 Map<String, Object> value = new LinkedHashMap<>();
@@ -160,9 +159,9 @@ public class PipelineContractMetadataGenerator {
                 value.put("contentTypes", boundary.contentTypes());
                 value.put("maxBytes", boundary.maxBytes());
                 value.put("authorizationScope", boundary.authorizationScope());
-                value.put("transfer", config.platform() == org.pipelineframework.config.template.PipelinePlatform.FUNCTION
+                value.put("transfer", pipelineTemplate.platform() == org.pipelineframework.config.template.PipelinePlatform.FUNCTION
                     ? "DELEGATED_S3" : "DIRECT_STREAM");
-                if (config.platform() == org.pipelineframework.config.template.PipelinePlatform.FUNCTION) {
+                if (pipelineTemplate.platform() == org.pipelineframework.config.template.PipelinePlatform.FUNCTION) {
                     value.put("operations", boundary.direction() == PipelineHttpPayloadBoundaryConfig.Direction.UPLOAD
                         ? List.of("initiate", "part", "complete", "abort")
                         : List.of("download-capability"));
@@ -173,8 +172,9 @@ public class PipelineContractMetadataGenerator {
     }
 
     private boolean hasHttpPayloadBoundaries(PipelineCompilationContext ctx) {
-        return ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            && !config.httpPayloads().isEmpty();
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        return pipelineTemplate != null
+            && !pipelineTemplate.httpPayloads().isEmpty();
     }
 
     private List<Map<String, Object>> importedDefinitions(PipelineCompilationContext ctx) {
@@ -257,11 +257,12 @@ public class PipelineContractMetadataGenerator {
     }
 
     private Map<String, Object> canonicalTypes(PipelineCompilationContext ctx) {
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
-            || config.dialect() != org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate == null
+            || pipelineTemplate.dialect() != org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
             return Map.of();
         }
-        PipelineTemplateTypeModel model = config.typeModel();
+        PipelineTemplateTypeModel model = pipelineTemplate.typeModel();
         Map<String, Object> types = new java.util.TreeMap<>();
         for (Map.Entry<String, PipelineTemplateTypeDefinition> entry : model.definitions().entrySet()) {
             Map<String, Object> definition = definition(entry.getValue());
@@ -269,9 +270,9 @@ public class PipelineContractMetadataGenerator {
             Map<String, Object> binding = new LinkedHashMap<>();
             binding.put("definition", definition);
             binding.put("definitionFingerprint", fingerprint);
-            binding.put("runtimeClass", new V3JavaTypeResolver(config).resolve(entry.getKey())
+            binding.put("runtimeClass", new V3JavaTypeResolver(pipelineTemplate).resolve(entry.getKey())
                 .map(com.squareup.javapoet.ClassName::canonicalName)
-                .orElse(config.basePackage() + ".domain." + entry.getKey()));
+                .orElse(pipelineTemplate.basePackage() + ".domain." + entry.getKey()));
             model.contributedTypeIdentity(entry.getKey())
                 .ifPresent(identity -> binding.put("contributedIdentity", identity.qualifiedName()));
             types.put(entry.getKey(), immutableSortedMap(binding));
@@ -398,14 +399,15 @@ public class PipelineContractMetadataGenerator {
     }
 
     private String resolvePipelineId(PipelineCompilationContext ctx) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         PipelineYamlConfig config = loadPipelineConfig(ctx);
         if (config != null && config.basePackage() != null && !config.basePackage().isBlank()) {
             return config.basePackage();
         }
-        if (ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig templateConfig
-            && templateConfig.basePackage() != null
-            && !templateConfig.basePackage().isBlank()) {
-            return templateConfig.basePackage();
+        if (pipelineTemplate != null
+            && pipelineTemplate.basePackage() != null
+            && !pipelineTemplate.basePackage().isBlank()) {
+            return pipelineTemplate.basePackage();
         }
         if (ctx.getModuleName() != null && !ctx.getModuleName().isBlank()) {
             return ctx.getModuleName();
@@ -569,6 +571,12 @@ public class PipelineContractMetadataGenerator {
         value.put("timeout", completion.timeout().toString());
         value.put("idempotencyKeyFields", completion.idempotencyKeyFields());
         value.put("correlationStrategy", completion.correlationStrategy());
+        completion.branchSelection().ifPresent(branch -> {
+            value.put("branchSelection", Map.of("accepts", List.of(branch.requestCanonicalType()),
+                "output", branch.completionCanonicalType(), "requestTypeId", typeId(branch.requestType()),
+                "completionTypeId", typeId(branch.completionType())));
+            value.put("completionPayloadTypeId", typeId(branch.completionType()));
+        });
         completion.callback().ifPresent(callback -> {
             value.put("mode", completion.mode().name());
             if (completion.acknowledgementAwareCompletion()) {

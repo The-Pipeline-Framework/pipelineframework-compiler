@@ -10,7 +10,6 @@ import java.util.Set;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
-import javax.tools.Diagnostic;
 
 import com.squareup.javapoet.ClassName;
 import org.pipelineframework.config.template.PipelineTemplateConfig;
@@ -48,20 +47,21 @@ public final class RepresentationProviderPreparationPhase implements PipelineCom
 
     @Override
     public void execute(PipelineCompilationContext ctx) throws Exception {
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config) || config.version() != 3) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate == null || pipelineTemplate.version() != 3) {
             return;
         }
         RepresentationProviderRegistry providers = RepresentationProviderRegistry.discover(
             ctx.getRepresentationProviderClassLoader());
         ctx.setRepresentationProviderRegistry(providers);
-        reportDiagnostics(ctx, providers.validate(globalConfigurations(config)));
+        reportDiagnostics(ctx, providers.validate(globalConfigurations(pipelineTemplate)));
         for (StepDefinition step : ctx.getStepDefinitions()) {
-            resolveBoundary(ctx, config, providers, ROOT, step);
+            resolveBoundary(ctx, pipelineTemplate, providers, ROOT, step);
         }
         for (var entry : ctx.getParsedPipelineDefinitionCatalog().localDefinitions().entrySet()) {
             PipelineReference definition = new PipelineReference(entry.getKey());
             for (StepDefinition step : entry.getValue()) {
-                resolveBoundary(ctx, config, providers, definition, step);
+                resolveBoundary(ctx, pipelineTemplate, providers, definition, step);
             }
         }
     }

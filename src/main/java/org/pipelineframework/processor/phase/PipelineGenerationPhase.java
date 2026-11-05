@@ -22,7 +22,6 @@ import org.pipelineframework.processor.util.PipelineContractMetadataGenerator;
 import org.pipelineframework.processor.util.PipelineOrderMetadataGenerator;
 import org.pipelineframework.processor.util.PipelinePlatformMetadataGenerator;
 import org.pipelineframework.processor.util.PipelineTelemetryMetadataGenerator;
-import org.pipelineframework.processor.util.ResourceNameUtils;
 import org.pipelineframework.processor.util.RoleMetadataGenerator;
 
 /**
@@ -77,6 +76,7 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
          */
     @Override
     public void execute(PipelineCompilationContext ctx) throws Exception {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         generationPathResolver.resetGeneratedSourcesRoot(ctx);
 
         // Get the bindings map from the context
@@ -148,10 +148,10 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
             roleMetadataGenerator,
             cacheKeyGenerator,
             descriptorSet);
-        if (ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig template
-            && !template.httpPayloads().isEmpty()) {
+        if (pipelineTemplate != null
+            && !pipelineTemplate.httpPayloads().isEmpty()) {
             try {
-                new HttpPayloadBoundaryRenderer().render(template,
+                new HttpPayloadBoundaryRenderer().render(pipelineTemplate,
                     generationPathResolver.resolveRoleOutputDir(ctx, DeploymentRole.PIPELINE_SERVER))
                     .forEach(className -> roleMetadataGenerator.recordClassWithRole(
                         className, DeploymentRole.PIPELINE_SERVER.name()));
@@ -174,8 +174,8 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
                 ctx.getCompilerDiagnostics().warning(
                     "Failed to write platform metadata: " + e.getMessage());
             }
-            if (ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig template
-                && !template.httpPayloads().isEmpty()) {
+            if (pipelineTemplate != null
+                && !pipelineTemplate.httpPayloads().isEmpty()) {
                 new PipelineContractMetadataGenerator(ctx.getProcessingEnv()).writePipelineContract(ctx);
             }
             return;
@@ -188,7 +188,7 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
         for (int stepIndex = 0; stepIndex < ctx.getStepModels().size(); stepIndex++) {
             PipelineStepModel model = ctx.getStepModels().get(stepIndex);
             // Check if this is a delegation step
-            Object externalAdapterBindingObj = bindingsMap.get(model.serviceName() + "_external_adapter");
+            Object externalAdapterBindingObj = bindingsMap.get(model.artifactBindingName() + "_external_adapter");
             ExternalAdapterBinding externalAdapterBinding = null;
             if (externalAdapterBindingObj instanceof ExternalAdapterBinding) {
                 externalAdapterBinding = (ExternalAdapterBinding) externalAdapterBindingObj;
@@ -223,9 +223,9 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
             }
 
             // Get the bindings for this model (for non-delegation steps)
-            String grpcBindingKey = model.serviceName() + "_grpc";
-            String restBindingKey = model.serviceName() + "_rest";
-            String localBindingKey = model.serviceName() + "_local";
+            String grpcBindingKey = model.artifactBindingName() + "_grpc";
+            String restBindingKey = model.artifactBindingName() + "_rest";
+            String localBindingKey = model.artifactBindingName() + "_local";
 
             Object grpcBindingObj = bindingsMap.get(grpcBindingKey);
             Object restBindingObj = bindingsMap.get(restBindingKey);
@@ -282,18 +282,18 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
         }
 
         if (SpringRendererProfileSupport.generatesGrpcServer(ctx)) {
-            if (!(ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig template)) {
+            if (pipelineTemplate == null) {
                 throw new IllegalStateException("Spring GRPC requires a pipeline template");
             }
-            boolean v3 = template.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3;
+            boolean v3 = pipelineTemplate.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3;
             new SpringGrpcPipelineServiceRenderer().render(
                 ctx.getStepModels().getFirst(), ctx.getStepModels().getLast(),
                 Jsr269GenerationContext.create(ctx.getProcessingEnv(),
                     generationPathResolver.resolveRoleOutputDir(ctx, DeploymentRole.PIPELINE_SERVER),
                     DeploymentRole.PIPELINE_SERVER, enabledAspects, cacheKeyGenerator, descriptorSet,
-                    ctx.getTransportMode(), template.basePackage(), null, v3,
-                    v3 ? Optional.of(template.typeModel()) : Optional.empty()));
-            roleMetadataGenerator.recordClassWithRole(template.basePackage() + ".pipeline."
+                    ctx.getTransportMode(), pipelineTemplate.basePackage(), null, v3,
+                    v3 ? Optional.of(pipelineTemplate.typeModel()) : Optional.empty()));
+            roleMetadataGenerator.recordClassWithRole(pipelineTemplate.basePackage() + ".pipeline."
                 + SpringGrpcPipelineServiceRenderer.CLASS_NAME, DeploymentRole.PIPELINE_SERVER.name());
         }
 
@@ -332,15 +332,15 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
 
         if (!springProfile && ctx.isOrchestratorGenerated() && ctx.isTransportModeRest()
             && enabledAspects.contains("cache")
-            && ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig config
-            && config.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
+            && pipelineTemplate != null
+            && pipelineTemplate.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
             var role = DeploymentRole.ORCHESTRATOR_CLIENT;
-            boolean generated = new CanonicalRestCacheReaderRenderer().render(config, Jsr269GenerationContext.create(
+            boolean generated = new CanonicalRestCacheReaderRenderer().render(pipelineTemplate, Jsr269GenerationContext.create(
                 ctx.getProcessingEnv(), resolveRoleOutputDir(ctx, role), role, enabledAspects,
                 cacheKeyGenerator, descriptorSet, org.pipelineframework.processor.ir.PipelineTransport.REST,
-                config.basePackage(), null, true, java.util.Optional.of(config.typeModel())));
+                pipelineTemplate.basePackage(), null, true, java.util.Optional.of(pipelineTemplate.typeModel())));
             if (generated) {
-                roleMetadataGenerator.recordClassWithRole(config.basePackage() + ".transport.generated."
+                roleMetadataGenerator.recordClassWithRole(pipelineTemplate.basePackage() + ".transport.generated."
                     + CanonicalRestCacheReaderRenderer.CLASS_NAME, role.name());
             }
         }
@@ -428,9 +428,7 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
         try {
             DeploymentRole role = DeploymentRole.PIPELINE_SERVER;
             org.pipelineframework.config.template.PipelineTemplateConfig templateConfig =
-                ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig config
-                    ? config
-                    : null;
+                ctx.getPipelineTemplateConfig();
             boolean v3GeneratedDomainTypes = templateConfig != null
                 && templateConfig.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3;
             renderer.render(binding, Jsr269GenerationContext.create(
@@ -452,14 +450,15 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
         ClassName cacheKeyGenerator,
         DescriptorProtos.FileDescriptorSet descriptorSet
     ) {
-        if (!(ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig templateConfig)) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate == null) {
             return;
         }
         Object orchestratorBindingObj = ctx.getRendererBindings().get(ORCHESTRATOR_BINDING_KEY);
         if (!(orchestratorBindingObj instanceof OrchestratorBinding orchestratorBinding)) {
             return;
         }
-        if (templateConfig.output() != null && templateConfig.output().checkpoint() != null) {
+        if (pipelineTemplate.output() != null && pipelineTemplate.output().checkpoint() != null) {
             GenerationContext publicationContext = org.pipelineframework.processor.renderer.Jsr269GenerationContext.create(
                 ctx.getProcessingEnv(),
                 generationPathResolver.resolveRoleOutputDir(ctx, DeploymentRole.PIPELINE_SERVER),
@@ -472,21 +471,21 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
                     ? null
                     : ctx.getStepModels().getLast().pipelineOutputType();
                 ClassName generatedClass = checkpointPublicationDescriptorRenderer.render(
-                    templateConfig.basePackage(),
-                    templateConfig.output().checkpoint(),
+                    pipelineTemplate.basePackage(),
+                    pipelineTemplate.output().checkpoint(),
                     publicationPayloadType,
                     publicationContext);
                 roleMetadataGenerator.recordClassWithRole(generatedClass, DeploymentRole.PIPELINE_SERVER.name());
             } catch (IOException | RuntimeException e) {
                 String message = "Failed to generate checkpoint publication descriptor in base package '"
-                    + templateConfig.basePackage()
+                    + pipelineTemplate.basePackage()
                     + "': "
                     + e.getMessage();
                 ctx.getCompilerDiagnostics().error(message);
                 throw new RuntimeException(message, e);
             }
         }
-        if (templateConfig.input() != null && templateConfig.input().subscription() != null) {
+        if (pipelineTemplate.input() != null && pipelineTemplate.input().subscription() != null) {
             GenerationContext handlerContext = org.pipelineframework.processor.renderer.Jsr269GenerationContext.create(
                 ctx.getProcessingEnv(),
                 generationPathResolver.resolveRoleOutputDir(ctx, DeploymentRole.PIPELINE_SERVER),
@@ -497,12 +496,12 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
             try {
                 ClassName generatedClass = checkpointSubscriptionHandlerRenderer.render(
                     orchestratorBinding,
-                    templateConfig.input().subscription(),
+                    pipelineTemplate.input().subscription(),
                     handlerContext);
                 roleMetadataGenerator.recordClassWithRole(generatedClass, DeploymentRole.PIPELINE_SERVER.name());
             } catch (IOException | RuntimeException e) {
                 String message = "Failed to generate checkpoint subscription artifacts in base package '"
-                    + templateConfig.basePackage()
+                    + pipelineTemplate.basePackage()
                     + "': "
                     + e.getMessage();
                 ctx.getCompilerDiagnostics().error(message);
@@ -692,6 +691,7 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
             OrchestratorIngestClientRenderer orchestratorIngestClientRenderer,
             RoleMetadataGenerator roleMetadataGenerator,
             ClassName cacheKeyGenerator) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         // Get orchestrator binding from context
         Object bindingObj = ctx.getRendererBindings().get("orchestrator");
         if (!(bindingObj instanceof org.pipelineframework.processor.ir.OrchestratorBinding binding)) {
@@ -699,8 +699,7 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
         }
 
         org.pipelineframework.config.template.PipelineTemplateConfig template =
-            ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig config
-                ? config : null;
+            pipelineTemplate;
         boolean v3GeneratedDomainTypes = template != null
             && template.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3;
         java.util.Optional<org.pipelineframework.config.template.PipelineTemplateTypeModel> canonicalTypeModel =
@@ -769,8 +768,8 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
                         .orElse(org.pipelineframework.processor.ir.PipelineTransport.GRPC),
                     binding.basePackage(),
                     null,
-                    ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig templateConfig
-                        && templateConfig.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3));
+                    pipelineTemplate != null
+                        && pipelineTemplate.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3));
             }
 
             if (!rest && !local) {

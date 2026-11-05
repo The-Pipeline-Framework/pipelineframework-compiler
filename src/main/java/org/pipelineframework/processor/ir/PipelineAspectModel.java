@@ -1,6 +1,10 @@
 package org.pipelineframework.processor.ir;
 
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Collections;
 
 /**
  * Contains only semantic information derived from pipeline aspect configurations.
@@ -20,14 +24,16 @@ import java.util.Map;
  * @param scope Gets the scope of the aspect application (GLOBAL or STEPS).
  * @param position Gets the position of the aspect relative to the step (BEFORE_STEP or AFTER_STEP).
  * @param order Gets the order of application (lower executes closer to the step boundary, default is 0).
- * @param config Gets the free-form configuration for the aspect.
+ * @param config Gets the provider configuration for the aspect.
+ * @param targetTypes Concrete or union contract selectors parsed from the authored configuration.
  */
 public record PipelineAspectModel(
         String name,
         AspectScope scope,
         AspectPosition position,
         int order,
-        Map<String, Object> config
+        Map<String, Object> config,
+        List<String> targetTypes
 ) {
     /**
      * Creates a new PipelineAspectModel instance.
@@ -38,7 +44,16 @@ public record PipelineAspectModel(
      * @param order the order of application (lower executes closer to the step boundary)
      * @param config the free-form configuration for the aspect
      */
+    public PipelineAspectModel(String name, AspectScope scope, AspectPosition position,
+            int order, Map<String, Object> config) {
+        this(name, scope, position, order, config, readTargetTypes(name, config));
+    }
+
     public PipelineAspectModel {
+        targetTypes = List.copyOf(targetTypes);
+        if (targetTypes.stream().anyMatch(String::isBlank)) {
+            throw new IllegalArgumentException("targetTypes must contain non-blank canonical types");
+        }
         // Validate non-null invariants
         if (name == null)
             throw new IllegalArgumentException("name cannot be null");
@@ -48,6 +63,9 @@ public record PipelineAspectModel(
             throw new IllegalArgumentException("position cannot be null");
         if (config == null)
             throw new IllegalArgumentException("config cannot be null");
+        var providerConfig = new LinkedHashMap<>(config);
+        providerConfig.remove("targetTypes");
+        config = Collections.unmodifiableMap(providerConfig);
     }
 
     /**
@@ -62,4 +80,25 @@ public record PipelineAspectModel(
                                Map<String, Object> config) {
         this(name, scope, position, 0, config);
     }
+    /** Converts the extensible configuration map into the compiler-owned selector once. */
+    private static List<String> readTargetTypes(String name, Map<String, Object> config) {
+        if (config == null || !config.containsKey("targetTypes")) {
+            return List.of();
+        }
+        Object configured = config.get("targetTypes");
+        if (!(configured instanceof List<?> values) || values.isEmpty()) {
+            throw new IllegalArgumentException("Aspect '" + name
+                + "': targetTypes must be a nonempty list of canonical types");
+        }
+        var targets = new ArrayList<String>();
+        for (Object value : values) {
+            if (!(value instanceof String type) || type.isBlank()) {
+                throw new IllegalArgumentException("Aspect '" + name
+                    + "': targetTypes must be a nonempty list of canonical types");
+            }
+            targets.add(type);
+        }
+        return List.copyOf(targets);
+    }
+
 }

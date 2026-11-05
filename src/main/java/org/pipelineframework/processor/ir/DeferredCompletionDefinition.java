@@ -36,8 +36,17 @@ public record DeferredCompletionDefinition(
     List<String> idempotencyKeyFields,
     String correlationStrategy,
     InitiationDefinition initiation,
-    Optional<CompletionProjectionDefinition> completion
+    Optional<CompletionProjectionDefinition> completion,
+    List<String> accepts,
+    Optional<String> selectedOutputType
 ) {
+    public DeferredCompletionDefinition(String operationOutputType, Optional<ClassName> operationOutputJavaType,
+        String timeout, List<String> idempotencyKeyFields, String correlationStrategy,
+        InitiationDefinition initiation, Optional<CompletionProjectionDefinition> completion) {
+        this(operationOutputType, operationOutputJavaType, timeout, idempotencyKeyFields,
+            correlationStrategy, initiation, completion, List.of(), Optional.empty());
+    }
+
     public DeferredCompletionDefinition {
         operationOutputType = requireText(operationOutputType, "operationOutput.type");
         operationOutputJavaType = operationOutputJavaType == null ? Optional.empty() : operationOutputJavaType;
@@ -45,6 +54,17 @@ public record DeferredCompletionDefinition(
         idempotencyKeyFields = idempotencyKeyFields == null ? List.of() : List.copyOf(idempotencyKeyFields);
         correlationStrategy = requireText(correlationStrategy, "correlation.strategy");
         Objects.requireNonNull(initiation, "initiation");
+        selectedOutputType = Objects.requireNonNull(selectedOutputType, "selectedOutputType").map(String::trim);
+        if (selectedOutputType.filter(String::isBlank).isPresent() || accepts.isEmpty() != selectedOutputType.isEmpty()) {
+            throw new IllegalArgumentException("await.accepts and await.output must be declared together");
+        }
+        accepts = List.copyOf(Objects.requireNonNull(accepts, "accepts"));
+        if (accepts.stream().anyMatch(String::isBlank)) {
+            throw new IllegalArgumentException("await.accepts must contain non-blank canonical type references");
+        }
+        if (!accepts.isEmpty() && !(initiation instanceof PostOperationTransportDefinition)) {
+            throw new IllegalArgumentException("await.accepts supports post-operation transport completion only");
+        }
         completion = completion == null ? Optional.empty() : completion;
     }
 

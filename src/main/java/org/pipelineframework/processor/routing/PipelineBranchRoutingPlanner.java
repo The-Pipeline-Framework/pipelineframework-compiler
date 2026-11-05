@@ -34,7 +34,8 @@ public final class PipelineBranchRoutingPlanner {
         if (ctx == null) {
             return Optional.of(PipelineBranchingPlan.disabled());
         }
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig templateConfig)) {
+        var templateConfig = ctx.getPipelineTemplateConfig();
+        if (templateConfig == null) {
             return planWithoutTemplate(ctx);
         }
         List<PipelineTemplateStep> templateSteps = templateConfig.steps() == null ? List.of() : templateConfig.steps();
@@ -666,7 +667,7 @@ public final class PipelineBranchRoutingPlanner {
     }
 
     private PipelineTemplateConfig requireTemplateConfig(PipelineCompilationContext ctx) {
-        return ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig templateConfig ? templateConfig : null;
+        return ctx.getPipelineTemplateConfig();
     }
 
     private void error(PipelineCompilationContext ctx, String message) {

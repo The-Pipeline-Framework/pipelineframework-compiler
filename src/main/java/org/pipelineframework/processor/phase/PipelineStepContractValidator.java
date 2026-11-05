@@ -33,11 +33,11 @@ final class PipelineStepContractValidator {
     void validate(PipelineCompilationContext ctx, List<PipelineStepModel> models) {
         validateCallbackInvocationShape(ctx, models);
         if (ctx == null
-            || !(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
-            || config.inputContract() == null
+            || ctx.getPipelineTemplateConfig() == null
+            || ctx.getPipelineTemplateConfig().inputContract() == null
             || models == null
             || models.size() < 2
-            || (!config.steps().isEmpty() && models.size() != config.steps().size())
+            || (!ctx.getPipelineTemplateConfig().steps().isEmpty() && models.size() != ctx.getPipelineTemplateConfig().steps().size())
             || (ctx.getBranchingPlan() != null && ctx.getBranchingPlan().branchAware())
             || ctx.getProcessingEnv() == null) {
             return;
@@ -52,8 +52,8 @@ final class PipelineStepContractValidator {
                 continue;
             }
             ctx.getCompilerDiagnostics().error(
-                "Step '" + stepName(config, index, current) + "' resolves Java input '" + currentInput.get()
-                    + "', but previous step '" + stepName(config, index - 1, previous)
+                "Step '" + stepName(ctx.getPipelineTemplateConfig(), index, current) + "' resolves Java input '" + currentInput.get()
+                    + "', but previous step '" + stepName(ctx.getPipelineTemplateConfig(), index - 1, previous)
                     + "' resolves Java output '"
                     + previousOutput.get() + "'.");
         }
@@ -63,8 +63,8 @@ final class PipelineStepContractValidator {
         if (ctx == null || models == null || ctx.getProcessingEnv() == null) {
             return;
         }
-        if (ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            && !config.steps().isEmpty() && models.size() != config.steps().size()) {
+        if (ctx.getPipelineTemplateConfig() != null
+            && !ctx.getPipelineTemplateConfig().steps().isEmpty() && models.size() != ctx.getPipelineTemplateConfig().steps().size()) {
             return; // Cross-module subsets cannot establish invocation occurrence shape.
         }
         if (ctx.getBranchingPlan() != null && ctx.getBranchingPlan().branchAware()) {

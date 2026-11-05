@@ -110,7 +110,31 @@ class CommandCallbackParserTest {
         assertTrue(result.errors().stream().anyMatch(error -> error.contains("requires await.callback")), result.errors().toString());
     }
 
+    @Test
+    void ordinaryCommandCanFinishDispatchBeforeTransportAwait() throws Exception {
+        String yaml = YAML.substring(0, YAML.indexOf("    await:")) + """
+            await:
+              operationOutput: { type: Accepted, java: com.example.Accepted }
+              timeout: PT1M
+              correlation: { strategy: interactionId }
+              transport: { type: interaction-api }
+            """.indent(4);
+        var result = parse(yaml, false);
+        assertEquals(1, result.steps().size(), result.errors().toString());
+        var completion = result.steps().getFirst().deferredCompletion().orElseThrow();
+        assertTrue(completion.callback().isEmpty());
+        assertEquals("interaction-api", completion.transportType());
+        assertEquals("Accepted", completion.operationOutputType());
+        var callbackRequired = parse(yaml);
+        assertTrue(callbackRequired.steps().isEmpty());
+        assertTrue(callbackRequired.errors().stream().anyMatch(error -> error.contains("requires await.callback")));
+    }
+
     private Parsed parse(String yaml) throws Exception {
+        return parse(yaml, true);
+    }
+
+    private Parsed parse(String yaml, boolean callbackCapable) throws Exception {
         Path manifest = directory.resolve("META-INF/pipeline/connector-providers.json");
         Files.createDirectories(manifest.getParent());
         Files.writeString(manifest, """
@@ -119,6 +143,12 @@ class CommandCallbackParserTest {
                "typeContract":{"input":"Input","output":"Accepted"},
                "callbacks":[{"id":"completed","typeContract":{"input":"Completed"},"required":true}]}]}]}
             """);
+        if (!callbackCapable) {
+            var catalogue = com.google.gson.JsonParser.parseString(Files.readString(manifest)).getAsJsonObject();
+            catalogue.getAsJsonArray("providers").get(0).getAsJsonObject().getAsJsonArray("operations")
+                .get(0).getAsJsonObject().remove("callbacks");
+            Files.writeString(manifest, catalogue.toString());
+        }
         Path config = directory.resolve("pipeline.yaml");
         Files.writeString(config, yaml);
         List<String> errors = new ArrayList<>();

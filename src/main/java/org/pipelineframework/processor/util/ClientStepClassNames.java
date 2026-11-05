@@ -16,6 +16,14 @@ public final class ClientStepClassNames {
             + suffix(model, transportMode.clientStepSuffix());
     }
 
+    /** Runtime class for the operation before its optional completion decorator. */
+    public static String operationClassName(PipelineStepModel model, PipelineTransport transport) {
+        String suffix = model.enabledTargets().contains(GenerationTarget.COMMAND_CLIENT_STEP) ? "CommandClientStep"
+            : model.enabledTargets().contains(GenerationTarget.QUERY_CLIENT_STEP) ? "QueryClientStep"
+            : transport.clientStepSuffix();
+        return model.servicePackage() + ".pipeline." + stripTrailingService(model.generatedName()) + suffix;
+    }
+
     public static String suffix(PipelineStepModel model, String defaultSuffix) {
         if (model.enabledTargets().contains(GenerationTarget.DEFERRED_COMPLETION_STEP)) {
             return "DeferredCompletionStep";

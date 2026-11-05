@@ -26,7 +26,6 @@ import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.AspectExpansionProcessor;
 import org.pipelineframework.processor.ResolvedStep;
 import org.pipelineframework.processor.ir.DeploymentRole;
-import org.pipelineframework.processor.ir.GenerationTarget;
 import org.pipelineframework.processor.ir.PipelineStepModel;
 import org.pipelineframework.processor.ir.PipelineTransport;
 import org.pipelineframework.processor.ir.StepDefinition;
@@ -186,8 +185,7 @@ public final class PipelineBranchingMetadataGenerator {
             if (!emittedRuntimeClasses.add(runtimeStepClass)) {
                 continue;
             }
-            String acceptedContract = model.inputMapping() != null
-                    && model.inputMapping().domainType() instanceof ClassName className
+            String acceptedContract = model.inboundDomainType() instanceof ClassName className
                 ? className.simpleName()
                 : inputRuntimeClass;
             steps.add(new StepMetadata(
@@ -274,8 +272,7 @@ public final class PipelineBranchingMetadataGenerator {
     ) {
         PipelineTransport transport = java.util.Objects.requireNonNullElse(
             ctx.getTransportMode(), PipelineTransport.GRPC);
-        String operationRuntimeClass = model.servicePackage() + ".pipeline."
-            + stripTrailingService(model.generatedName()) + transport.clientStepSuffix();
+        String operationRuntimeClass = ClientStepClassNames.operationClassName(model, transport);
         steps.add(new StepMetadata(
             definitionId,
             plan.terminalStepIndex(),
@@ -348,8 +345,9 @@ public final class PipelineBranchingMetadataGenerator {
         String definitionId,
         String stepName
     ) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (ctx.getResolvedPipelineDefinitionGraph().isEmpty()
-            || !(ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig template)) {
+            || pipelineTemplate == null) {
             return List.of();
         }
         PipelineReference owner = new PipelineReference(definitionId);
@@ -357,7 +355,7 @@ public final class PipelineBranchingMetadataGenerator {
             .filter(binding -> binding.invocationLocation().definitionLocalLocation().definition().equals(owner))
             .filter(binding -> binding.invocationLocation().definitionLocalLocation().localStepId().equals(stepName))
             .map(binding -> LocalPipelineInvocationClassName.canonicalName(
-                template.basePackage(), binding.invocationLocation()))
+                pipelineTemplate.basePackage(), binding.invocationLocation()))
             .distinct()
             .sorted()
             .toList();
@@ -488,17 +486,18 @@ public final class PipelineBranchingMetadataGenerator {
     }
 
     private String runtimeAcceptedType(ClassName domainType, PipelineCompilationContext ctx, boolean transportMappedRuntime) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (!transportMappedRuntime || generatedV3DomainTypes(ctx)) {
             return domainType.reflectionName();
         }
         PipelineTransport transportMode = java.util.Objects.requireNonNullElse(ctx.getTransportMode(), PipelineTransport.GRPC);
         if (transportMode == PipelineTransport.GRPC
-            && ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig templateConfig
-            && templateConfig.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3
+            && pipelineTemplate != null
+            && pipelineTemplate.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3
             && domainType.reflectionName().contains("$")) {
             String nestedName = domainType.reflectionName();
             String unionName = nestedName.substring(nestedName.lastIndexOf('.') + 1, nestedName.indexOf('$'));
-            ClassName unionType = ClassName.get(templateConfig.basePackage() + ".grpc", "PipelineTypes", unionName);
+            ClassName unionType = ClassName.get(pipelineTemplate.basePackage() + ".grpc", "PipelineTypes", unionName);
             if (ctx.getProcessingEnv() != null
                 && ctx.getProcessingEnv().getElementUtils() != null
                 && ctx.getProcessingEnv().getElementUtils().getTypeElement(unionType.canonicalName()) == null) {
@@ -527,7 +526,7 @@ public final class PipelineBranchingMetadataGenerator {
     }
 
     private Optional<String> runtimeInputType(PipelineStepModel model, PipelineCompilationContext ctx, boolean transportMappedRuntime) {
-        TypeName inputType = model.inputMapping() == null ? null : model.inputMapping().domainType();
+        TypeName inputType = model.inboundDomainType();
         if (!(inputType instanceof ClassName className)) {
             return inputType == null ? Optional.empty() : Optional.of(inputType.toString());
         }
@@ -547,28 +546,30 @@ public final class PipelineBranchingMetadataGenerator {
     }
 
     private static boolean generatedV3DomainTypes(PipelineCompilationContext ctx) {
-        return ctx.getPipelineTemplateConfig()
-            instanceof org.pipelineframework.config.template.PipelineTemplateConfig templateConfig
-            && templateConfig.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3;
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        return pipelineTemplate != null
+            && pipelineTemplate.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3;
     }
 
     private static ClassName canonicalV3InputType(ClassName type, PipelineCompilationContext ctx) {
-        if (!(ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig templateConfig)
-            || templateConfig.basePackage() == null
-            || templateConfig.basePackage().isBlank()) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate == null
+            || pipelineTemplate.basePackage() == null
+            || pipelineTemplate.basePackage().isBlank()) {
             return type;
         }
-        String transportPrefix = templateConfig.basePackage() + ".grpc.PipelineTypes.";
+        String transportPrefix = pipelineTemplate.basePackage() + ".grpc.PipelineTypes.";
         return type.canonicalName().startsWith(transportPrefix)
-            ? ClassName.get(templateConfig.basePackage() + ".domain", type.simpleName())
+            ? ClassName.get(pipelineTemplate.basePackage() + ".domain", type.simpleName())
             : type;
     }
 
     private String pipelineBasePackage(PipelineCompilationContext ctx, ClassName domainType) {
-        if (ctx.getPipelineTemplateConfig() instanceof org.pipelineframework.config.template.PipelineTemplateConfig templateConfig
-            && templateConfig.basePackage() != null
-            && !templateConfig.basePackage().isBlank()) {
-            return templateConfig.basePackage();
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate != null
+            && pipelineTemplate.basePackage() != null
+            && !pipelineTemplate.basePackage().isBlank()) {
+            return pipelineTemplate.basePackage();
         }
         String packageName = domainType.packageName();
         return packageName.endsWith(".common.domain")
@@ -633,20 +634,21 @@ public final class PipelineBranchingMetadataGenerator {
     }
 
     private List<DefinitionCompletionMetadata> definitionCompletions(PipelineCompilationContext ctx) {
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
-            || config.dialect() != PipelineTemplateDialect.V3) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate == null
+            || pipelineTemplate.dialect() != PipelineTemplateDialect.V3) {
             return List.of();
         }
         List<DefinitionCompletionMetadata> completions = new ArrayList<>();
         if (ctx.getBranchingPlan() != null && ctx.getBranchingPlan().branchAware()
-            && ctx.getBranchingPlan().terminalStepIndex() == -1 && config.outputContract() != null) {
-            completions.add(completion(config, "$root", config.outputContract()));
+            && ctx.getBranchingPlan().terminalStepIndex() == -1 && pipelineTemplate.outputContract() != null) {
+            completions.add(completion(pipelineTemplate, "$root", pipelineTemplate.outputContract()));
         }
         ctx.getLocalDefinitionBranchingPlans().entrySet().stream()
             .filter(entry -> entry.getValue().branchAware() && entry.getValue().terminalStepIndex() == -1)
             .sorted(Map.Entry.comparingByKey(Comparator.comparing(PipelineReference::logicalId)))
-            .forEach(entry -> completions.add(completion(config, entry.getKey().logicalId(),
-                config.pipelines().get(entry.getKey().logicalId()).outputContract())));
+            .forEach(entry -> completions.add(completion(pipelineTemplate, entry.getKey().logicalId(),
+                pipelineTemplate.pipelines().get(entry.getKey().logicalId()).outputContract())));
         return List.copyOf(completions);
     }
 

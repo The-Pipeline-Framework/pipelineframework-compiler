@@ -243,6 +243,11 @@ public final class BlockDefinitionImporter {
         List<PackageDefinition> definitions = new ArrayList<>();
         Set<String> declaredNames = new LinkedHashSet<>();
         for (BlockPackageManifest.Definition declaration : manifest.definitions()) {
+            if ("self".equals(declaration.name())) {
+                throw new IllegalStateException("Block package '" + coordinate(manifest)
+                    + "' declares reserved definition name 'self'; choose another name for the definition");
+            }
+
             if (!declaredNames.add(declaration.name())) {
                 throw new IllegalStateException("Block package '" + coordinate(manifest)
                     + "' declares definition '" + declaration.name() + "' more than once.");
@@ -942,7 +947,7 @@ public final class BlockDefinitionImporter {
             Object reference = map.get("pipeline");
             if (reference != null) {
                 String logicalId = String.valueOf(reference).trim();
-                if (!logicalId.contains("/") && !localDefinitions.contains(logicalId)) {
+                if (!"self".equals(logicalId) && !logicalId.contains("/") && !localDefinitions.contains(logicalId)) {
                     List<String> candidates = importedByShortName.getOrDefault(logicalId, List.of());
                     if (candidates.size() > 1) {
                         throw new IllegalStateException("Pipeline reference '" + logicalId

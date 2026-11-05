@@ -58,7 +58,7 @@ class ModelContextRoleEnricher {
             return List.of();
         }
 
-        List<PipelineStepModel> expanded = expandAspects(baseModels, filteredAspects);
+        List<PipelineStepModel> expanded = expandAspects(ctx, baseModels, filteredAspects);
         return expanded.stream()
             .filter(PipelineStepModel::sideEffect)
             .map(model -> withDeploymentRole(model, DeploymentRole.PLUGIN_SERVER))
@@ -73,7 +73,7 @@ class ModelContextRoleEnricher {
             .filter(aspect -> aspect != null)
             .filter(this::hasPluginImplementation)
             .toList();
-        List<PipelineStepModel> expanded = expandAspects(baseModels, expandableAspects);
+        List<PipelineStepModel> expanded = expandAspects(ctx, baseModels, expandableAspects);
         List<PipelineStepModel> clientModels = expanded.stream()
             .map(model -> withDeploymentRole(model, DeploymentRole.ORCHESTRATOR_CLIENT))
             .toList();
@@ -101,6 +101,7 @@ class ModelContextRoleEnricher {
     }
 
     private List<PipelineStepModel> expandAspects(
+            PipelineCompilationContext ctx,
             List<PipelineStepModel> baseModels,
             List<PipelineAspectModel> aspects) {
         if (aspects == null || aspects.isEmpty()) {
@@ -111,7 +112,7 @@ class ModelContextRoleEnricher {
             .map(model -> new ResolvedStep(model, null, null))
             .toList();
 
-        AspectExpansionProcessor processor = new AspectExpansionProcessor();
+        AspectExpansionProcessor processor = new AspectExpansionProcessor(ctx);
         List<ResolvedStep> expanded = processor.expandAspects(resolvedSteps, aspects);
         return expanded.stream()
             .map(ResolvedStep::model)

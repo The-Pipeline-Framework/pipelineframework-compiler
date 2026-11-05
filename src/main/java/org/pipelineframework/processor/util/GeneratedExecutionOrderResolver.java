@@ -102,12 +102,7 @@ public final class GeneratedExecutionOrderResolver {
     }
 
     private String ordinaryOperationClientStepName(PipelineStepModel model, PipelineTransport transport) {
-        PipelineTransport effectiveTransport = transport == null ? PipelineTransport.GRPC : transport;
-        String generatedName = model.generatedName();
-        String baseName = generatedName != null && generatedName.endsWith("Service")
-            ? generatedName.substring(0, generatedName.length() - "Service".length())
-            : generatedName;
-        return model.servicePackage() + ".pipeline." + baseName + effectiveTransport.clientStepSuffix();
+        return ClientStepClassNames.operationClassName(model, transport == null ? PipelineTransport.GRPC : transport);
     }
 
     private record GeneratedStepGroup(

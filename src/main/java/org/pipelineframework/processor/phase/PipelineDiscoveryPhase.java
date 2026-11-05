@@ -42,7 +42,7 @@ import org.pipelineframework.connector.ConnectorProviderManifestLoader;
 
 /**
  * Discovers and loads pipeline configuration, aspects, and semantic models.
- * This phase focuses solely on discovery without performing validation or code generation.
+ * Validates authored canonical consumers and explicit self-call continuations before aspect expansion.
  */
 public class PipelineDiscoveryPhase implements PipelineCompilationPhase {
     private static final PipelineStepConfigLoader.StepConfig DEFAULT_STEP_CONFIG =
@@ -179,16 +179,16 @@ public class PipelineDiscoveryPhase implements PipelineCompilationPhase {
 
                 templateConfig = loadPipelineTemplateConfig(effectiveConfigPath, options, diagnostics);
                 ctx.setPipelineTemplateConfig(templateConfig);
+                if (templateConfig != null) {
+                    new org.pipelineframework.processor.routing.AuthoredConsumerValidator().validate(templateConfig);
+                }
 
                 ParsedPipelineDefinitionCatalog parsedDefinitions = parseStepDefinitions(
                     effectiveConfigPath, diagnostics, imported.definitions().stream()
                         .map(org.pipelineframework.processor.block.ImportedPipelineDefinition::qualifiedId)
                         .collect(java.util.stream.Collectors.toUnmodifiableSet()));
                 if (templateConfig != null) {
-                    var lowered = new PipelineRecurrenceLowering().lower(templateConfig, parsedDefinitions);
-                    templateConfig = lowered.config();
-                    parsedDefinitions = lowered.parsed();
-                    ctx.setPipelineTemplateConfig(templateConfig);
+                    new org.pipelineframework.processor.awaitable.NestedAwaitValidator().validate(templateConfig, parsedDefinitions);
                 }
                 ctx.setParsedPipelineDefinitionCatalog(parsedDefinitions);
                 ctx.setStepDefinitions(parsedDefinitions.rootSteps());

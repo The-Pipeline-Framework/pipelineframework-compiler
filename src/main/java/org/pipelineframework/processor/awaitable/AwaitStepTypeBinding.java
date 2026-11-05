@@ -21,8 +21,15 @@ public record AwaitStepTypeBinding(
     String finalOutputCanonicalType,
     Optional<String> completionPayloadCanonicalType,
     Optional<TypeName> completionPayloadType,
-    boolean acknowledgementAwareCompletion
+    boolean acknowledgementAwareCompletion,
+    Optional<org.pipelineframework.processor.ir.AwaitBranchSelection> branchSelection
 ) {
+    public AwaitStepTypeBinding(TypeName operationOutputType, TypeName finalOutputType,
+        String finalOutputCanonicalType, Optional<String> completionPayloadCanonicalType,
+        Optional<TypeName> completionPayloadType, boolean acknowledgementAwareCompletion) {
+        this(operationOutputType, finalOutputType, finalOutputCanonicalType, completionPayloadCanonicalType,
+            completionPayloadType, acknowledgementAwareCompletion, Optional.empty());
+    }
     public AwaitStepTypeBinding(TypeName operationOutputType, TypeName finalOutputType,
         String finalOutputCanonicalType, Optional<String> completionPayloadCanonicalType,
         Optional<TypeName> completionPayloadType) {
@@ -30,6 +37,7 @@ public record AwaitStepTypeBinding(
             completionPayloadCanonicalType, completionPayloadType, false);
     }
     public AwaitStepTypeBinding {
+        Objects.requireNonNull(branchSelection, "branchSelection");
         Objects.requireNonNull(operationOutputType, "operationOutputType");
         Objects.requireNonNull(finalOutputType, "finalOutputType");
         Objects.requireNonNull(finalOutputCanonicalType, "finalOutputCanonicalType");

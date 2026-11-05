@@ -47,7 +47,8 @@ public final class OperationRepresentationGenerationPhase implements PipelineCom
 
     @Override
     public void execute(PipelineCompilationContext ctx) throws Exception {
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config) || config.version() != 3
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
+        if (pipelineTemplate == null || pipelineTemplate.version() != 3
             || ctx.getRepresentationProviderRegistry() == null) {
             return;
         }
@@ -55,12 +56,12 @@ public final class OperationRepresentationGenerationPhase implements PipelineCom
         Map<String, ResolvedOperationRepresentation> resolved = new LinkedHashMap<>();
         for (PipelineStepModel model : models(ctx)) {
             model.connectorOperationSelection().ifPresent(selection -> resolveIfSupported(
-                ctx, config, providers, selection, () -> canonical(config, model.inputMapping()),
-                () -> canonical(config, model.outputMapping()), resolved));
+                ctx, pipelineTemplate, providers, selection, () -> canonical(pipelineTemplate, model.inputMapping()),
+                () -> canonical(pipelineTemplate, model.outputMapping()), resolved));
             model.dynamicOperationSelection().ifPresent(dynamic -> dynamic.callables().forEach(callable ->
-                resolveIfSupported(ctx, config, providers, callable.operation(),
-                    () -> canonical(config, callable.inputType(), callable.inputClass()),
-                    () -> canonical(config, callable.outputType(), callable.outputClass()), resolved)));
+                resolveIfSupported(ctx, pipelineTemplate, providers, callable.operation(),
+                    () -> canonical(pipelineTemplate, callable.inputType(), callable.inputClass()),
+                    () -> canonical(pipelineTemplate, callable.outputType(), callable.outputClass()), resolved)));
         }
         Map<String, List<ResolvedOperationRepresentation>> byProvider = resolved.values().stream()
             .collect(java.util.stream.Collectors.groupingBy(ResolvedOperationRepresentation::providerKey,

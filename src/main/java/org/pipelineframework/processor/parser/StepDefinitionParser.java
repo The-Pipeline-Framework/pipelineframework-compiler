@@ -225,7 +225,7 @@ public class StepDefinitionParser {
         Map<String, ParsedConnectorBinding> connectorBindings = parseConnectorBindings(templateData);
 
         List<StepDefinition> rootSteps = parseStepList(
-            templateData.get("steps"), basePackage, version, v3JavaTypes, queryDefinitions, connectorBindings, false, false);
+            templateData.get("steps"), basePackage, version, v3JavaTypes, queryDefinitions, connectorBindings, false, "$root");
         if (rootSteps.isEmpty() && !(templateData.get("steps") instanceof List)) {
             LOG.debugf("No 'steps' array found in pipeline template");
         }
@@ -248,7 +248,7 @@ public class StepDefinitionParser {
                 if (definitions.putIfAbsent(id, parseStepList(
                         definition.get("steps"), basePackage, version, v3JavaTypes,
                         queryDefinitions, connectorBindings,
-                        definitionsRequiringExactOperationTypes.contains(id), true)) != null) {
+                        definitionsRequiringExactOperationTypes.contains(id), id)) != null) {
                     throw new IOException("Duplicate pipeline definition ID '" + id + "'");
                 }
             }
@@ -296,7 +296,7 @@ public class StepDefinitionParser {
             Map<String, QueryDefinition> queryDefinitions,
             Map<String, ParsedConnectorBinding> connectorBindings,
             boolean requireExactOperationTypes,
-            boolean nestedDefinition) {
+            String definitionId) {
         if (!(stepsObj instanceof List<?> stepsList)) {
             return List.of();
         }
@@ -312,7 +312,7 @@ public class StepDefinitionParser {
             try {
                 stepDef = parseStepDefinition(
                     stepData, basePackage, version, v3JavaTypes, queryDefinitions, connectorBindings,
-                    requireExactOperationTypes, nestedDefinition);
+                    requireExactOperationTypes, definitionId);
             } catch (StepSkippedException ignored) {
                 continue;
             }
@@ -344,7 +344,7 @@ public class StepDefinitionParser {
             Map<String, QueryDefinition> queryDefinitions,
             Map<String, ParsedConnectorBinding> connectorBindings,
             boolean requireExactOperationTypes,
-            boolean nestedDefinition) {
+            String definitionId) {
         String name = getStringValue(stepData, "name");
         if (isBlank(name)) {
             LOG.warnf("Skipping step with null or blank name: %s", stepData);
@@ -380,6 +380,9 @@ public class StepDefinitionParser {
         }
         boolean pipelineDeclared = stepData.containsKey("pipeline");
         String pipelineReference = getStringValue(stepData, "pipeline");
+        if ("self".equals(pipelineReference)) {
+            pipelineReference = definitionId;
+        }
         if (pipelineDeclared && isBlank(pipelineReference)) {
             String message = "Skipping step '" + name + "': pipeline reference must not be blank";
             LOG.warn(message);
@@ -516,13 +519,6 @@ public class StepDefinitionParser {
 
         Optional<DeferredCompletionDefinition> deferredCompletion = Optional.empty();
         if (stepData.containsKey("await")) {
-            if (nestedDefinition) {
-                String message = "Skipping step '" + name
-                    + "': nested pipeline definitions do not support await: yet";
-                LOG.warn(message);
-                report(Diagnostic.Kind.ERROR, message);
-                return null;
-            }
             if (executionShape != StepExecutionShape.INTERNAL
                 && executionShape != StepExecutionShape.COMMAND) {
                 String message = "Skipping step '" + name
@@ -550,11 +546,11 @@ public class StepDefinitionParser {
                 return null;
             }
             deferredCompletion = Optional.of(parsed);
-            if ((executionShape == StepExecutionShape.COMMAND) != parsed.callback().isPresent()
+            if ((parsed.callback().isPresent() && executionShape != StepExecutionShape.COMMAND)
                 || (executionShape == StepExecutionShape.COMMAND && (requireExactOperationTypes || version != 3
                     || !(stepData.get("operation") instanceof String) || !(stepData.get("using") instanceof String)))) {
                 report(Diagnostic.Kind.ERROR, "Step '" + name
-                    + "': await requires INTERNAL + transport or application-local native COMMAND + callback (version 3)");
+                    + "': await requires INTERNAL + transport or application-local native COMMAND + transport/callback (version 3)");
                 throw new StepSkippedException();
             }
         }
@@ -1404,7 +1400,7 @@ public class StepDefinitionParser {
             ConnectorProviderId.of(selected.provider()), selected.providerVersion(), selected.operation(),
             ConnectorOperationKind.COMMAND, selected.operationVersion());
         try {
-            if (completion.isEmpty()) {
+            if (completion.flatMap(DeferredCompletionDefinition::callback).isEmpty()) {
                 if (!operation.callbacks().isEmpty()) {
                     throw new IllegalArgumentException("callback-capable Command requires await.callback");
                 }
@@ -2119,7 +2115,7 @@ public class StepDefinitionParser {
             return null;
         }
         Set<String> supportedKeys = Set.of(
-            "operationOutput", "timeout", "idempotency", "correlation", "transport", "callback", "completion");
+            "operationOutput", "timeout", "idempotency", "correlation", "transport", "callback", "completion", "accepts", "output");
         Set<String> unknownKeys = new LinkedHashSet<>();
         for (Object key : awaitMap.keySet()) {
             if (!(key instanceof String text) || !supportedKeys.contains(text)) {
@@ -2285,6 +2281,23 @@ public class StepDefinitionParser {
                 completionProjector));
         }
 
+        List<String> acceptedTypes = parseStringList(awaitMap.get("accepts"), stepName, "await.accepts");
+        if (acceptedTypes == null || (awaitMap.containsKey("accepts") && acceptedTypes.isEmpty())) {
+            report(Diagnostic.Kind.ERROR, "Step '" + stepName + "': await.accepts must select a canonical output variant");
+            throw new StepSkippedException();
+        }
+        Optional<String> selectedOutputType = Optional.empty();
+        if (awaitMap.containsKey("output")) {
+            if (!(awaitMap.get("output") instanceof String outputType) || outputType.isBlank()) {
+                report(Diagnostic.Kind.ERROR, "Step '" + stepName + "': await.output must name a canonical type");
+                throw new StepSkippedException();
+            }
+            selectedOutputType = Optional.of(outputType.trim());
+        }
+        if (callbackMode && !acceptedTypes.isEmpty()) {
+            report(Diagnostic.Kind.ERROR, "Step '" + stepName + "': await.accepts requires post-operation transport completion");
+            throw new StepSkippedException();
+        }
         Map<String, Object> normalizedTransport = new LinkedHashMap<>(normalizeMap(transportMap));
         if (containsNullValue(normalizedTransport)) {
             String message = "Skipping step '" + stepName
@@ -2319,9 +2332,9 @@ public class StepDefinitionParser {
             timeout,
             idempotencyKeyFields,
             strategy,
-            transportType,
-            normalizedTransport,
-            completion);
+            new DeferredCompletionDefinition.PostOperationTransportDefinition(transportType, normalizedTransport),
+            completion,
+            acceptedTypes, selectedOutputType);
     }
 
     private boolean hasWebhookUrl(Map<?, ?> transportMap) {

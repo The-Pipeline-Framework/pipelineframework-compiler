@@ -38,8 +38,26 @@ public record DeferredCompletionSelection(
     Optional<TypeName> completionPayloadType,
     Optional<ClassName> completionProjector,
     Optional<ResolvedConnectorCallback> callback,
-    boolean acknowledgementAwareCompletion
+    boolean acknowledgementAwareCompletion,
+    Optional<AwaitBranchSelection> branchSelection
 ) {
+    public DeferredCompletionSelection(TypeName finalOutputType, String finalOutputCanonicalType,
+        Optional<String> completionPayloadCanonicalType, Duration timeout, List<String> idempotencyKeyFields,
+        String correlationStrategy, String transportType, Map<String, Object> transportConfig,
+        Optional<TypeName> completionPayloadType, Optional<ClassName> completionProjector,
+        Optional<ResolvedConnectorCallback> callback, boolean acknowledgementAwareCompletion) {
+        this(finalOutputType, finalOutputCanonicalType, completionPayloadCanonicalType, timeout, idempotencyKeyFields,
+            correlationStrategy, transportType, transportConfig, completionPayloadType, completionProjector,
+            callback, acknowledgementAwareCompletion, Optional.empty());
+    }
+
+    public DeferredCompletionSelection withBranchSelection(Optional<AwaitBranchSelection> branch) {
+        return new DeferredCompletionSelection(finalOutputType, finalOutputCanonicalType,
+            completionPayloadCanonicalType, timeout, idempotencyKeyFields, correlationStrategy,
+            transportType, transportConfig, completionPayloadType, completionProjector, callback,
+            acknowledgementAwareCompletion, branch);
+    }
+
     public DeferredCompletionSelection(TypeName finalOutputType, String finalOutputCanonicalType,
         Optional<String> completionPayloadCanonicalType, Duration timeout, List<String> idempotencyKeyFields,
         String correlationStrategy, String transportType, Map<String, Object> transportConfig,
@@ -78,6 +96,10 @@ public record DeferredCompletionSelection(
     }
 
     public DeferredCompletionSelection {
+        branchSelection = Objects.requireNonNull(branchSelection, "branchSelection");
+        if (branchSelection.isPresent() && (callback.isPresent() || acknowledgementAwareCompletion)) {
+            throw new IllegalArgumentException("Selected Await requires post-operation transport completion");
+        }
         callback = Objects.requireNonNull(callback, "callback");
         Objects.requireNonNull(finalOutputType, "finalOutputType");
         finalOutputCanonicalType = requireText(finalOutputCanonicalType, "finalOutputCanonicalType");

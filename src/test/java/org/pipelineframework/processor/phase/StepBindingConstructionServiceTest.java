@@ -48,6 +48,25 @@ class StepBindingConstructionServiceTest {
     }
 
     @Test
+    void preservesTheBindingOfEachObserverClientSharingAPluginService() {
+        var ctx = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        var first = TestModelFactory.createTestModelWithTargets("SharedObserverService", Set.of(GenerationTarget.LOCAL_CLIENT_STEP))
+            .toBuilder().sideEffect(true).generatedName("ObserveFirst")
+            .deploymentRole(org.pipelineframework.processor.ir.DeploymentRole.ORCHESTRATOR_CLIENT).build();
+        var second = first.toBuilder().generatedName("ObserveSecond").build();
+        ctx.setStepModels(List.of(first, second));
+        var descriptor = DescriptorProtos.FileDescriptorSet.getDefaultInstance();
+        for (var bindings : List.of(service.buildBindings(ctx, descriptor),
+            StepBindingBuilder.constructBindings(ctx.getStepModels(), descriptor, processingEnv))) {
+            org.junit.jupiter.api.Assertions.assertEquals(2, bindings.size());
+            org.junit.jupiter.api.Assertions.assertSame(first,
+                ((org.pipelineframework.processor.ir.LocalBinding) bindings.get("ObserveFirst_local")).model());
+            org.junit.jupiter.api.Assertions.assertSame(second,
+                ((org.pipelineframework.processor.ir.LocalBinding) bindings.get("ObserveSecond_local")).model());
+        }
+    }
+
+    @Test
     void delegatedStepBuildsExternalAdapterAndLocalBinding() {
         when(processingEnv.getMessager()).thenReturn(messager);
         PipelineCompilationContext ctx = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());

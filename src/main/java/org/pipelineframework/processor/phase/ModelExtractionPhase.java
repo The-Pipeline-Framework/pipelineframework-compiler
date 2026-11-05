@@ -12,7 +12,6 @@ import javax.lang.model.util.Types;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.TypeName;
 import org.pipelineframework.annotation.PipelineStep;
-import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.parallelism.OrderingRequirement;
 import org.pipelineframework.parallelism.ThreadSafety;
 import org.pipelineframework.processor.PipelineCompilationContext;
@@ -35,13 +34,14 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
 
     private static boolean isPagedSource(
         PipelineCompilationContext ctx, PipelineReference definition, String stepName) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (!ROOT.equals(definition)
-            || !(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config)
-            || config.dialect() != org.pipelineframework.config.template.PipelineTemplateDialect.V3
-            || config.steps() == null) {
+            || pipelineTemplate == null
+            || pipelineTemplate.dialect() != org.pipelineframework.config.template.PipelineTemplateDialect.V3
+            || pipelineTemplate.steps() == null) {
             return false;
         }
-        return config.steps().stream().anyMatch(step -> step != null
+        return pipelineTemplate.steps().stream().anyMatch(step -> step != null
             && stepName.equals(step.name()) && step.paging().isPresent());
     }
 
@@ -106,8 +106,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                 PipelineReference definition = new PipelineReference(entry.getKey());
                 List<PipelineStepModel> models = extractStepModelsFromYaml(
                     ctx, definition, directSteps, ctxWarningLogger);
-                models = addProviderBoundaryModels(ctx, definition, directSteps, models,
-                    ctxWarningLogger);
+                models = addProviderBoundaryModels(ctx, definition, directSteps, models, ctxWarningLogger);
                 localDefinitionModels.put(entry.getKey(), List.copyOf(models));
             }
             ctx.setLocalDefinitionStepModels(Collections.unmodifiableMap(new LinkedHashMap<>(localDefinitionModels)));
@@ -308,6 +307,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             PipelineReference definition,
             org.pipelineframework.processor.ir.StepDefinition stepDef,
             Consumer<String> ctxWarningLogger) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (stepDef.inputType() == null || stepDef.outputType() == null) {
             ctx.getCompilerDiagnostics().error(
                 "Command step '" + stepDef.name() + "' must resolve both Java input and output bindings; "
@@ -323,35 +323,45 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             return null;
         }
 
-        String templateBasePackage = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            ? config.basePackage()
+        String templateBasePackage = pipelineTemplate != null
+            ? pipelineTemplate.basePackage()
             : null;
         TypeName inputType = normalizeLegacyDomainType(stepDef.inputType(), null, templateBasePackage, ctx);
         TypeName outputType = normalizeLegacyDomainType(stepDef.outputType(), null, templateBasePackage, ctx);
 
-        Optional<DeferredCompletionSelection> callbackCompletion = Optional.empty();
+        Optional<DeferredCompletionSelection> commandCompletion = Optional.empty();
         if (stepDef.deferredCompletion().isPresent()) {
             var completion = stepDef.deferredCompletion().orElseThrow();
-            var binding = awaitTypeBindings.resolve(ctx, stepDef);
+            var binding = awaitTypeBindings.resolve(ctx, definition, stepDef);
             if (binding.isEmpty()) {
                 throw new IllegalArgumentException("Command completion types could not be resolved for " + stepDef.name());
             }
             var resolved = binding.orElseThrow();
             outputType = resolved.operationOutputType();
-            var callback = completion.callback().orElseThrow();
-            var operation = stepDef.connectorOperationSelection().orElseThrow();
-            callbackCompletion = Optional.of(new DeferredCompletionSelection(resolved.finalOutputType(),
-                resolved.finalOutputCanonicalType(), resolved.completionPayloadCanonicalType(),
-                java.time.Duration.parse(completion.timeout()), List.of(), completion.correlationStrategy(), "", Map.of(),
-                resolved.completionPayloadType(), completion.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector),
-                Optional.of(new DeferredCompletionSelection.ResolvedConnectorCallback(
-                    org.pipelineframework.connector.ConnectorProviderManifestLoader.load(
-                        org.pipelineframework.connector.ConnectorProviderManifestLoader.metadataClassLoader(getClass()))
-                        .requireOperation(operation.operation().providerId(), operation.providerMajorVersion(),
-                            operation.operation().operationId(), operation.operation().kind(), operation.operation().majorVersion())
-                        .callbacks().stream().filter(candidate -> candidate.id().equals(callback.name())).findFirst().orElseThrow(),
-                    operation, callback.endpointResolverClass(), callback.authenticatorClass())),
-                resolved.acknowledgementAwareCompletion()));
+            if (completion.callback().isPresent()) {
+                var callback = completion.callback().orElseThrow();
+                var operation = stepDef.connectorOperationSelection().orElseThrow();
+                commandCompletion = Optional.of(new DeferredCompletionSelection(resolved.finalOutputType(),
+                    resolved.finalOutputCanonicalType(), resolved.completionPayloadCanonicalType(),
+                    java.time.Duration.parse(completion.timeout()), List.of(), completion.correlationStrategy(), "", Map.of(),
+                    resolved.completionPayloadType(), completion.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector),
+                    Optional.of(new DeferredCompletionSelection.ResolvedConnectorCallback(
+                        org.pipelineframework.connector.ConnectorProviderManifestLoader.load(
+                            org.pipelineframework.connector.ConnectorProviderManifestLoader.metadataClassLoader(getClass()))
+                            .requireOperation(operation.operation().providerId(), operation.providerMajorVersion(),
+                                operation.operation().operationId(), operation.operation().kind(), operation.operation().majorVersion())
+                            .callbacks().stream().filter(candidate -> candidate.id().equals(callback.name())).findFirst().orElseThrow(),
+                        operation, callback.endpointResolverClass(), callback.authenticatorClass())),
+                    resolved.acknowledgementAwareCompletion()));
+            } else {
+                commandCompletion = Optional.of(new DeferredCompletionSelection(resolved.finalOutputType(),
+                    resolved.finalOutputCanonicalType(), resolved.completionPayloadCanonicalType(),
+                    java.time.Duration.parse(completion.timeout()), completion.idempotencyKeyFields(),
+                    completion.correlationStrategy(), completion.transportType(), completion.transportConfig(),
+                    resolved.completionPayloadType(), completion.completion()
+                        .map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))
+                    .withBranchSelection(resolved.branchSelection()));
+            }
         }
 
         String serviceName = operationServiceName(ctx, definition, stepDef.name());
@@ -361,11 +371,13 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             .generatedName(serviceName)
             .servicePackage(servicePackage)
             .serviceClassName(ClassName.get("org.pipelineframework.command", "CommandStepDescriptor"))
-            .deferredCompletionSelection(callbackCompletion)
+            .deferredCompletionSelection(commandCompletion)
             .inputMapping(TypeMapping.withoutMapper(inputType))
             .outputMapping(TypeMapping.withoutMapper(outputType))
             .streamingShape(StreamingShape.UNARY_UNARY)
-            .enabledTargets(java.util.Set.of(GenerationTarget.COMMAND_CLIENT_STEP))
+            .enabledTargets(commandCompletion.filter(value -> value.callback().isEmpty()).isPresent()
+                ? java.util.Set.of(GenerationTarget.COMMAND_CLIENT_STEP, GenerationTarget.DEFERRED_COMPLETION_STEP)
+                : java.util.Set.of(GenerationTarget.COMMAND_CLIENT_STEP))
             .executionMode(ExecutionMode.DEFAULT)
             .deploymentRole(DeploymentRole.ORCHESTRATOR_CLIENT)
             .sideEffect(false)
@@ -380,6 +392,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             PipelineReference definition,
             org.pipelineframework.processor.ir.StepDefinition stepDef,
             Consumer<String> ctxWarningLogger) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (stepDef.inputType() == null || stepDef.outputType() == null) {
             ctx.getCompilerDiagnostics().error(
                 "Query step '" + stepDef.name() + "' must resolve both Java input and output bindings; "
@@ -396,8 +409,8 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             return null;
         }
 
-        String templateBasePackage = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            ? config.basePackage()
+        String templateBasePackage = pipelineTemplate != null
+            ? pipelineTemplate.basePackage()
             : null;
         TypeName inputType = normalizeLegacyDomainType(stepDef.inputType(), null, templateBasePackage, ctx);
         TypeName outputType = normalizeLegacyDomainType(stepDef.outputType(), null, templateBasePackage, ctx);
@@ -427,27 +440,28 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             PipelineReference definition,
             org.pipelineframework.processor.ir.StepDefinition stepDef,
             Consumer<String> ctxWarningLogger) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (stepDef.inputType() == null || stepDef.outputType() == null) {
             ctx.getCompilerDiagnostics().error(
                 "Dynamic operation step '" + stepDef.name() + "' must resolve both Java input and output bindings");
             return null;
         }
-        String templateBasePackage = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            ? config.basePackage() : null;
+        String templateBasePackage = pipelineTemplate != null
+            ? pipelineTemplate.basePackage() : null;
         TypeName inputType = normalizeLegacyDomainType(stepDef.inputType(), null, templateBasePackage, ctx);
         TypeName outputType = normalizeLegacyDomainType(stepDef.outputType(), null, templateBasePackage, ctx);
         String serviceName = operationServiceName(ctx, definition, stepDef.name());
         String runtimeStepId = isImportedDefinition(ctx, definition)
             ? definition.logicalId() + "#" + stepDef.name()
             : serviceName;
-        if (!(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig template)) {
+        if (pipelineTemplate == null) {
             throw new IllegalStateException(
                 "Dynamic operation step '" + stepDef.name() + "' requires a normalized v3 type model");
         }
         DynamicOperationSelection selection;
         try {
             selection = new DynamicOperationSelectionResolver().resolve(
-                ctx.getEffectivePipelineConfig(), template, definition, stepDef.name(),
+                ctx.getEffectivePipelineConfig(), pipelineTemplate, definition, stepDef.name(),
                 stepDef.dynamicOperationSource().orElseThrow(), runtimeStepId);
         } catch (IllegalArgumentException | IllegalStateException failure) {
             throw new IllegalStateException(
@@ -534,7 +548,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             .getTypeElement(stepDef.executionClass().canonicalName());
 
         if (serviceClass == null) {
-            PipelineStepModel syntheticModel = createCrossModuleInternalModel(stepDef, ctx);
+            PipelineStepModel syntheticModel = createCrossModuleInternalModel(stepDef, ctx, definition);
             if (syntheticModel != null) {
                 return syntheticModel;
             }
@@ -587,7 +601,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
         }
         Optional<org.pipelineframework.processor.awaitable.AwaitStepTypeBinding> completionBinding =
             stepDef.deferredCompletion().isPresent()
-                ? awaitTypeBindings.resolve(ctx, stepDef)
+                ? awaitTypeBindings.resolve(ctx, definition, stepDef)
                 : Optional.empty();
         if (stepDef.deferredCompletion().isPresent() && completionBinding.isEmpty()) {
             return null;
@@ -666,7 +680,8 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                 definitionValue.transportType(),
                 definitionValue.transportConfig(),
                 completionBinding.orElseThrow().completionPayloadType(),
-                definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))));
+                definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))
+                .withBranchSelection(completionBinding.orElseThrow().branchSelection())));
         return builder.build();
     }
 
@@ -731,16 +746,23 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
     PipelineStepModel createCrossModuleInternalModel(
             org.pipelineframework.processor.ir.StepDefinition stepDef,
             PipelineCompilationContext ctx) {
+        return createCrossModuleInternalModel(stepDef, ctx, ROOT);
+    }
+
+    private PipelineStepModel createCrossModuleInternalModel(
+            org.pipelineframework.processor.ir.StepDefinition stepDef,
+            PipelineCompilationContext ctx, PipelineReference definition) {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         if (stepDef.inputType() == null || stepDef.outputType() == null) {
             return null;
         }
-        String templateBasePackage = ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig config
-            ? config.basePackage()
+        String templateBasePackage = pipelineTemplate != null
+            ? pipelineTemplate.basePackage()
             : null;
         TypeName inputType = normalizeLegacyDomainType(stepDef.inputType(), stepDef.executionClass(), templateBasePackage, ctx);
         Optional<org.pipelineframework.processor.awaitable.AwaitStepTypeBinding> completionBinding =
             stepDef.deferredCompletion().isPresent()
-                ? awaitTypeBindings.resolveCanonicalBoundary(ctx, stepDef)
+                ? awaitTypeBindings.resolveCanonicalBoundary(ctx, definition, stepDef)
                 : Optional.empty();
         if (stepDef.deferredCompletion().isPresent() && completionBinding.isEmpty()) {
             return null;
@@ -811,7 +833,8 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                 definitionValue.transportType(),
                 definitionValue.transportConfig(),
                 completionBinding.orElseThrow().completionPayloadType(),
-                definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))));
+                definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))
+                .withBranchSelection(completionBinding.orElseThrow().branchSelection())));
         return builder.build();
     }
 
@@ -1998,9 +2021,11 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
     static List<PipelineStepModel> deduplicateByDefinitionServiceAndRole(List<PipelineStepModel> stepModels) {
         Map<String, PipelineStepModel> uniqueByServiceName = new LinkedHashMap<>();
         for (PipelineStepModel model : stepModels) {
-            String key = model.definition().logicalId() + "::" + model.serviceName()
+            String identity = model.artifactBindingName();
+            String key = model.definition().logicalId() + "::" + identity
                 + "::" + String.valueOf(model.deploymentRole());
-            // Keep first occurrence so concrete @PipelineStep models take precedence over template fallbacks.
+            // Observer clients are occurrences; plugin-server beans may share a typed implementation.
+            // Keep first functional occurrence so concrete models take precedence over template fallbacks.
             uniqueByServiceName.putIfAbsent(key, model);
         }
         return new ArrayList<>(uniqueByServiceName.values());

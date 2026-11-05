@@ -202,14 +202,23 @@ public class LocalClientStepRenderer implements PipelineRenderer<LocalBinding> {
                 clientStepBuilder.addMethod(applyTransformMethod);
             }
             case UNARY_UNARY -> {
-                MethodSpec applyOneToOneMethod = MethodSpec.methodBuilder("applyOneToOne")
+                var method = MethodSpec.methodBuilder("applyOneToOne")
                     .addAnnotation(Override.class)
                     .addModifiers(Modifier.PUBLIC)
                     .returns(ParameterizedTypeName.get(RuntimeSymbols.UNI, outputType))
-                    .addParameter(inputType, "input")
-                    .addStatement("return $T.traceUnary($S, $S, this.service.process(input))",
-                        tracing, rpcServiceName, rpcMethodName)
-                    .build();
+                    .addParameter(inputType, "input");
+                if (model.observationProjection().flatMap(org.pipelineframework.processor.ir.ObservationProjection::variant).isPresent()) {
+                    var projection = model.observationProjection().orElseThrow();
+                    method.beginControlFlow("if (input instanceof $T selected)", projection.variantType())
+                        .addStatement("return $T.traceUnary($S, $S, this.service.process(selected.$L())).replaceWith(input)",
+                            tracing, rpcServiceName, rpcMethodName, projection.accessor())
+                        .endControlFlow()
+                        .addStatement("return $T.createFrom().item(input)", RuntimeSymbols.UNI);
+                } else {
+                    method.addStatement("return $T.traceUnary($S, $S, this.service.process(input))",
+                        tracing, rpcServiceName, rpcMethodName);
+                }
+                MethodSpec applyOneToOneMethod = method.build();
                 clientStepBuilder.addMethod(applyOneToOneMethod);
             }
             default -> throw new IllegalStateException(

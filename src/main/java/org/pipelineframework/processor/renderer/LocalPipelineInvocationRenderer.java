@@ -15,7 +15,6 @@ import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
 import com.squareup.javapoet.TypeSpec;
 import org.pipelineframework.config.CardinalitySemantics;
-import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.composition.CompiledPipelineLocation;
 import org.pipelineframework.processor.composition.DefinitionLocalLocation;
@@ -25,7 +24,6 @@ import org.pipelineframework.processor.composition.PipelineInvocationBinding;
 import org.pipelineframework.processor.composition.PipelineReference;
 import org.pipelineframework.processor.composition.LocalPipelineInvocationClassName;
 import org.pipelineframework.processor.composition.ResolvedPipelineDefinitionGraph;
-import org.pipelineframework.processor.ir.GenerationTarget;
 import org.pipelineframework.processor.ir.PipelineStepModel;
 import org.pipelineframework.processor.ir.StepDefinition;
 import org.pipelineframework.processor.phase.NamingPolicy;
@@ -41,8 +39,9 @@ public final class LocalPipelineInvocationRenderer {
     private static final ClassName PROVIDER = ClassName.get("jakarta.inject", "Provider");
 
     public void render(PipelineCompilationContext ctx, Path outputDir) throws IOException {
+        var pipelineTemplate = ctx.getPipelineTemplateConfig();
         var resolvedGraph = ctx.getResolvedPipelineDefinitionGraph();
-        if (resolvedGraph.isEmpty() || !(ctx.getPipelineTemplateConfig() instanceof PipelineTemplateConfig template)) {
+        if (resolvedGraph.isEmpty() || pipelineTemplate == null) {
             return;
         }
         ResolvedPipelineDefinitionGraph graph = resolvedGraph.orElseThrow();
@@ -52,7 +51,7 @@ public final class LocalPipelineInvocationRenderer {
         }
         Map<CompiledPipelineLocation, ClassName> invocationTypes = new LinkedHashMap<>();
         for (PipelineInvocationBinding binding : bindings.values()) {
-            invocationTypes.put(binding.invocationLocation(), ClassName.get(template.basePackage() + ".pipeline",
+            invocationTypes.put(binding.invocationLocation(), ClassName.get(pipelineTemplate.basePackage() + ".pipeline",
                 LocalPipelineInvocationClassName.simpleName(binding.invocationLocation())));
         }
         for (PipelineInvocationBinding binding : bindings.values()) {
@@ -106,10 +105,21 @@ public final class LocalPipelineInvocationRenderer {
                 .addAnnotation(RuntimeSymbols.INJECT).build());
             childFields.add(recursiveChild ? field + ".get()" : field);
         }
-        var targetPlan = ctx.getLocalDefinitionBranchingPlans().get(binding.target());
+        var targetPlan = "$root".equals(binding.target().logicalId()) ? ctx.getBranchingPlan()
+            : ctx.getLocalDefinitionBranchingPlans().get(binding.target());
         if (targetPlan == null) {
             throw new IllegalStateException("No branch plan for linked pipeline definition '"
                 + binding.target().logicalId() + "'.");
+        }
+        if (binding.cardinality() == CardinalitySemantics.ONE_TO_ONE) {
+            type.addSuperinterface(INVOCATION_STEPS.nestedClass("LinkedInvocation"));
+            type.addMethod(MethodSpec.methodBuilder("linkedDefinition")
+                .addAnnotation(Override.class).addModifiers(Modifier.PUBLIC)
+                .returns(INVOCATION_STEPS.nestedClass("LinkedDefinition"))
+                .addStatement("return new $T($S, $S, $L, $L, java.util.List.of($L))",
+                    INVOCATION_STEPS.nestedClass("LinkedDefinition"), binding.target().logicalId(),
+                    binding.invocationLocation().definitionLocalLocation().localStepId(), binding.recursive(),
+                    targetPlan.terminalStepIndex(), String.join(", ", childFields)).build());
         }
         type.addMethod(invocationMethod(
             binding.cardinality(), input, output, binding.target().logicalId(), targetPlan.terminalStepIndex(),
@@ -129,18 +139,10 @@ public final class LocalPipelineInvocationRenderer {
     private ClassName childType(PipelineCompilationContext ctx, PipelineInvocationBinding parent,
             PipelineDefinitionStep child, Map<CompiledPipelineLocation, ClassName> invocationTypes) {
         if (child.pipelineReference().isPresent()) {
-            if (parent.recursive() && child.pipelineReference().filter(parent.target()::equals).isPresent()) {
-                CompiledPipelineLocation location = new CompiledPipelineLocation(
-                    parent.invocationLocation().invocationPath(),
-                    new DefinitionLocalLocation(parent.target(), child.localStepId()));
-                ClassName type = invocationTypes.get(location);
-                if (type == null) {
-                    throw new IllegalStateException("No generated recursive invocation type for " + location.display());
-                }
-                return type;
-            }
             List<DefinitionLocalLocation> path = new ArrayList<>(parent.invocationLocation().invocationPath());
-            path.add(parent.invocationLocation().definitionLocalLocation());
+            if (!parent.recursive()) {
+                path.add(parent.invocationLocation().definitionLocalLocation());
+            }
             CompiledPipelineLocation location = new CompiledPipelineLocation(path,
                 new DefinitionLocalLocation(parent.target(), child.localStepId()));
             ClassName type = invocationTypes.get(location);
@@ -149,8 +151,8 @@ public final class LocalPipelineInvocationRenderer {
             }
             return type;
         }
-        List<PipelineStepModel> available = ctx.getLocalDefinitionStepModels()
-            .getOrDefault(parent.target().logicalId(), List.of());
+        List<PipelineStepModel> available = "$root".equals(parent.target().logicalId()) ? ctx.getStepModels()
+            : ctx.getLocalDefinitionStepModels().getOrDefault(parent.target().logicalId(), List.of());
         PipelineStepModel model = available.stream()
             .filter(candidate -> matchesAuthoredStep(candidate, child.localStepId()))
             .findFirst().orElseThrow(() -> new IllegalStateException("No generated child step model for '"
@@ -222,8 +224,8 @@ public final class LocalPipelineInvocationRenderer {
         return switch (cardinality) {
             case ONE_TO_ONE -> MethodSpec.methodBuilder("applyOneToOne").addAnnotation(Override.class).addModifiers(Modifier.PUBLIC)
                 .returns(ParameterizedTypeName.get(RuntimeSymbols.UNI, output)).addParameter(input, "input")
-                .addStatement("return $T.<$T, $T>oneToOne(runner, $S, $L, $L).applyOneToOne(input)",
-                    INVOCATION_STEPS, input, output, definitionId, definitionTerminalStepIndex, list).build();
+                .addStatement("return $T.<$T, $T>oneToOne(runner, $S, $S, $L, $L).applyOneToOne(input)",
+                    INVOCATION_STEPS, input, output, definitionId, callsiteId, definitionTerminalStepIndex, list).build();
             case ONE_TO_MANY -> MethodSpec.methodBuilder("applyOneToMany").addAnnotation(Override.class).addModifiers(Modifier.PUBLIC)
                 .returns(ParameterizedTypeName.get(RuntimeSymbols.MULTI, output)).addParameter(input, "input")
                 .addStatement("return $T.<$T, $T>oneToMany(runner, $S, $L, $L).applyOneToMany(input)",
