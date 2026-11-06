@@ -49,9 +49,15 @@ class ConnectorBindingMetadataGeneratorTest {
         Files.writeString(manifest, """
             {"schemaVersion":1,"providers":[{"id":"acme.work","version":{"major":1,"minor":0},
             "configurationSchema":{"id":"acme.work.provider","version":1,"fields":[
+            {"name":"secret","type":"SECRET_REF","required":true},
+            {"name":"optionalConnection","type":"CONNECTION_REF","required":false},
             {"name":"connection","type":"CONNECTION_REF","required":true},
-            {"name":"secret","type":"SECRET_REF","required":true}]},
-            "operations":[{"id":"invoice.send","kind":"tpf:command","majorVersion":1}]}]}
+            {"name":"label","type":"STRING","required":false}]},
+            "operations":[{"id":"invoice.send","kind":"tpf:command","majorVersion":1,
+            "configurationSchema":{"id":"acme.work.send","version":1,"fields":[
+            {"name":"optionalChannel","type":"CONNECTION_REF","required":false},
+            {"name":"channel","type":"CONNECTION_REF","required":true},
+            {"name":"label","type":"STRING","required":false}]}}]}]}
             """);
         Path pipeline = tempDir.resolve("pipeline.yaml");
         Files.writeString(pipeline, """
@@ -64,11 +70,14 @@ class ConnectorBindingMetadataGeneratorTest {
                 config:
                   connection: work-connection
                   secret: secret-reference
+                  label: private-configuration-label
             steps:
               - name: Send invoice
                 kind: command
                 operation: invoice.send
                 using: work
+                config:
+                  channel: private-operation-reference
                 input: Invoice
                 output: SendResult
                 java:
@@ -94,18 +103,25 @@ class ConnectorBindingMetadataGeneratorTest {
         }
 
         String json = Files.readString(classOutput.resolve(ConnectorBindingMetadataGenerator.RESOURCE_PATH));
-        JsonObject binding = JsonParser.parseString(json).getAsJsonObject()
-            .getAsJsonArray("bindings").get(0).getAsJsonObject();
+        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(3, root.get("schemaVersion").getAsInt());
+        JsonObject binding = root.getAsJsonArray("bindings").get(0).getAsJsonObject();
         assertEquals("work", binding.get("name").getAsString());
         assertEquals("acme.work", binding.get("provider").getAsString());
         assertEquals("acme.work.provider", binding.getAsJsonObject("configuration").get("schemaId").getAsString());
         assertEquals(
             List.of("schemaId", "schemaVersion", "digest"),
             binding.getAsJsonObject("configuration").keySet().stream().toList());
-        assertEquals("invoice.send", binding.getAsJsonArray("operations").get(0).getAsJsonObject()
-            .get("operation").getAsString());
+        JsonObject operation = binding.getAsJsonArray("operations").get(0).getAsJsonObject();
+        assertEquals("invoice.send", operation.get("operation").getAsString());
+        assertEquals("command", operation.get("kind").getAsString());
+        assertEquals(1, operation.get("operationVersion").getAsInt());
+        assertEquals(List.of("connection", "optionalConnection", "secret"), referenceFields(binding));
+        assertEquals(List.of("channel", "optionalChannel"), referenceFields(operation));
         assertFalse(json.contains("work-connection"), json);
         assertFalse(json.contains("secret-reference"), json);
+        assertFalse(json.contains("private-operation-reference"), json);
+        assertFalse(json.contains("private-configuration-label"), json);
     }
 
     @Test
@@ -172,7 +188,13 @@ class ConnectorBindingMetadataGeneratorTest {
             .map(value -> value.getAsJsonObject())
             .filter(value -> value.get("name").getAsString().equals("payments"))
             .findFirst().orElseThrow();
+        JsonObject model = root.getAsJsonArray("bindings").get(0).getAsJsonObject();
+        assertEquals("model", model.get("name").getAsString());
+        assertEquals(List.of(), referenceFields(model));
+        assertEquals(List.of(), referenceFields(model.getAsJsonArray("operations").get(0).getAsJsonObject()));
+        assertEquals(List.of(), referenceFields(payments));
         JsonObject callable = payments.getAsJsonArray("callables").get(0).getAsJsonObject();
+        assertEquals(List.of(), referenceFields(callable));
         assertEquals("charge", callable.get("alias").getAsString());
         assertEquals("charge.create", callable.get("operation").getAsString());
         assertEquals("ChargeArguments", callable.get("input").getAsString());
@@ -185,6 +207,11 @@ class ConnectorBindingMetadataGeneratorTest {
         } finally {
             Thread.currentThread().setContextClassLoader(original);
         }
+    }
+
+    private static List<String> referenceFields(JsonObject metadata) {
+        return metadata.getAsJsonArray("externalConfigurationReferenceFields").asList().stream()
+            .map(com.google.gson.JsonElement::getAsString).toList();
     }
 
     private static final class PathResourceFiler implements Filer {

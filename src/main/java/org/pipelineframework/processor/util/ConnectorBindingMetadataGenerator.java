@@ -7,6 +7,7 @@ import java.util.Comparator;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -22,9 +23,12 @@ import org.pipelineframework.config.pipeline.PipelineYamlConnectorBinding;
 import org.pipelineframework.config.pipeline.PipelineYamlOperationSelection;
 import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.config.template.PipelineTemplateDialect;
+import org.pipelineframework.connector.ConnectorConfigFieldDescriptor;
 import org.pipelineframework.connector.ConnectorConfigSchemaDescriptor;
+import org.pipelineframework.connector.ConnectorConfigValueType;
 import org.pipelineframework.connector.ConnectorConfigurationDocument;
 import org.pipelineframework.connector.ConnectorConfigurationSnapshot;
+import org.pipelineframework.connector.ConnectorOperationKind;
 import org.pipelineframework.connector.ConnectorProviderArtifactDescriptor;
 import org.pipelineframework.connector.ConnectorProviderId;
 import org.pipelineframework.connector.ConnectorProviderManifestCatalog;
@@ -94,7 +98,8 @@ public final class ConnectorBindingMetadataGenerator {
         List<OperationReference> operations = config.stepDefinitions().values().stream().flatMap(List::stream)
             .filter(step -> step.operationSelection().isPresent())
             .filter(step -> binding.name().equals(step.operationSelection().orElseThrow().using()))
-            .map(step -> operationReference(step.name(), step.kind(), step.operationSelection().orElseThrow()))
+            .map(step -> operationReference(step.name(), step.kind(), step.operationSelection().orElseThrow(),
+                providerId, binding.version(), catalog))
             .sorted(Comparator.comparing(OperationReference::step))
             .toList();
         List<CallableReference> callables = config.stepDefinitions().values().stream().flatMap(List::stream)
@@ -104,7 +109,8 @@ public final class ConnectorBindingMetadataGenerator {
                     step.name(), callable, config.basePackage(), template, providerId, binding.version(), catalog)))
             .sorted(Comparator.comparing(CallableReference::step).thenComparing(CallableReference::alias))
             .toList();
-        return new BindingMetadata(binding.name(), binding.provider(), binding.version(), configuration, operations, callables);
+        return new BindingMetadata(binding.name(), binding.provider(), binding.version(), configuration, operations, callables,
+            externalConfigurationReferenceFields(provider.provider().configurationSchema()));
     }
 
     private static CallableReference callableReference(
@@ -137,7 +143,7 @@ public final class ConnectorBindingMetadataGenerator {
             step, callable.alias(), operation.kind().value(), operation.id(), operation.majorVersion(),
             callable.input(), contract.outputType().orElseThrow(() -> new IllegalArgumentException(
                 "callable operation has no output contract: " + callable.using() + "/" + callable.operation())),
-            callable.trustedArguments());
+            callable.trustedArguments(), externalConfigurationReferenceFields(operation.configurationSchema()));
     }
 
     private static Map<String, Object> sanitizedConfiguration(
@@ -160,9 +166,28 @@ public final class ConnectorBindingMetadataGenerator {
     private static OperationReference operationReference(
         String step,
         String kind,
-        PipelineYamlOperationSelection selection
+        PipelineYamlOperationSelection selection,
+        ConnectorProviderId providerId,
+        int providerVersion,
+        ConnectorProviderManifestCatalog catalog
     ) {
-        return new OperationReference(step, kind.toLowerCase(java.util.Locale.ROOT), selection.operation(), selection.operationVersion());
+        String normalizedKind = kind.toLowerCase(Locale.ROOT);
+        var operationKind = ConnectorOperationKind.of(normalizedKind.contains(":") ? normalizedKind : "tpf:" + normalizedKind);
+        var operation = catalog.requireOperation(
+            providerId, providerVersion, selection.operation(), operationKind, selection.operationVersion());
+        return new OperationReference(step, normalizedKind, selection.operation(), selection.operationVersion(),
+            externalConfigurationReferenceFields(operation.configurationSchema()));
+    }
+
+    /** Includes optional typed reference fields, without serializing their configured values. */
+    @SuppressWarnings("removal")
+    private static List<String> externalConfigurationReferenceFields(Optional<ConnectorConfigSchemaDescriptor> schema) {
+        return schema.stream().flatMap(value -> value.fields().stream())
+            .filter(field -> field.type() == ConnectorConfigValueType.CONNECTION_REF
+                || field.type() == ConnectorConfigValueType.SECRET_REF)
+            .map(ConnectorConfigFieldDescriptor::name)
+            .sorted()
+            .toList();
     }
 
     private Optional<Path> resolvePipelineConfigPath(PipelineCompilationContext context) {
@@ -201,11 +226,18 @@ public final class ConnectorBindingMetadataGenerator {
         int providerVersion,
         Map<String, Object> configuration,
         List<OperationReference> operations,
-        List<CallableReference> callables
+        List<CallableReference> callables,
+        List<String> externalConfigurationReferenceFields
     ) {
     }
 
-    private record OperationReference(String step, String kind, String operation, int operationVersion) {
+    private record OperationReference(
+        String step,
+        String kind,
+        String operation,
+        int operationVersion,
+        List<String> externalConfigurationReferenceFields
+    ) {
     }
 
     private record CallableReference(
@@ -216,7 +248,8 @@ public final class ConnectorBindingMetadataGenerator {
         int operationVersion,
         String input,
         String output,
-        Map<String, String> trustedArguments
+        Map<String, String> trustedArguments,
+        List<String> externalConfigurationReferenceFields
     ) {
     }
 }
