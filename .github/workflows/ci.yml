@@ -10,6 +10,27 @@ permissions:
   contents: read
 
 jobs:
+  polyglot-projection-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-path: ${{ github.workspace }}/.m2/repository
+      - name: Generate research projection into temporary output
+        # Keep committed outputs untouched so the following byte-for-byte drift checks can fail.
+        run: python3 conformance/polyglot-projection-v0/run.py --output target/polyglot-projection-v0/ci-generated
+      - name: Check closed profile, generated drift and Java reference
+        run: |
+          python3 -m venv target/polyglot-projection-v0/test-venv
+          target/polyglot-projection-v0/test-venv/bin/python -m pip install -r conformance/polyglot-projection-v0/requirements-test.txt
+          target/polyglot-projection-v0/test-venv/bin/python -B -m unittest discover -s conformance/polyglot-projection-v0 -p 'test_*.py'
   verify:
     runs-on: ubuntu-latest
     steps:

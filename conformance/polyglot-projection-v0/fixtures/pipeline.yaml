@@ -1,0 +1,21 @@
+# Authored application fixture: no application Java and no native DSL extension.
+version: 3
+appName: polyglot-abc
+basePackage: research.polyglot
+transport: LOCAL
+platform: COMPUTE
+contract: { input: ProbeValue, output: ProbeValue }
+types:
+  ProbeValue:
+    fields:
+      - { name: value, type: int32, presence: required, nullability: non_null }
+  PresenceProbe:
+    fields:
+      - { name: requiredValue, type: int32, presence: required, nullability: non_null }
+      - { name: nullableValue, type: int32, presence: required, nullability: nullable }
+      - { name: optionalValue, type: int32, presence: optional, nullability: non_null }
+      - { name: optionalNullableValue, type: int32, presence: optional, nullability: nullable }
+steps:
+  - { name: A, cardinality: ONE_TO_ONE, input: ProbeValue, output: ProbeValue }
+  - { name: B, cardinality: ONE_TO_ONE, input: ProbeValue, output: ProbeValue }
+  - { name: C, cardinality: ONE_TO_ONE, input: ProbeValue, output: ProbeValue }
