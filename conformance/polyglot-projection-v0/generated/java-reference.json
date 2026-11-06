@@ -1,0 +1,111 @@
+{
+  "cases" : [ {
+    "attempts" : {
+      "A" : 1,
+      "B" : 1,
+      "C" : 1
+    },
+    "id" : "success",
+    "outcome" : "COMPLETED",
+    "result" : {
+      "value" : 5
+    }
+  }, {
+    "attempts" : {
+      "A" : 3,
+      "B" : 1,
+      "C" : 1
+    },
+    "id" : "transient-A",
+    "outcome" : "COMPLETED",
+    "result" : {
+      "value" : 5
+    }
+  }, {
+    "attempts" : {
+      "A" : 3,
+      "B" : 0,
+      "C" : 0
+    },
+    "failureCode" : "TRANSIENT",
+    "id" : "retry-exhausted",
+    "outcome" : "FAILED"
+  }, {
+    "attempts" : {
+      "A" : 1,
+      "B" : 0,
+      "C" : 0
+    },
+    "failureCode" : "BUSINESS_REJECTION",
+    "id" : "terminal-A",
+    "outcome" : "FAILED"
+  }, {
+    "attempts" : {
+      "A" : 1,
+      "B" : 1,
+      "C" : 0
+    },
+    "failureCode" : "BUSINESS_REJECTION",
+    "id" : "terminal-B",
+    "outcome" : "FAILED"
+  }, {
+    "attempts" : {
+      "A" : 1,
+      "B" : 0,
+      "C" : 0
+    },
+    "id" : "cancel-after-A",
+    "outcome" : "CANCELLED"
+  }, {
+    "attempts" : {
+      "A" : 0,
+      "B" : 0,
+      "C" : 0
+    },
+    "id" : "pre-cancelled",
+    "outcome" : "CANCELLED"
+  } ],
+  "contexts" : [ {
+    "executionId" : "run-a",
+    "observations" : [ {
+      "step" : "A",
+      "executionId" : "run-a",
+      "traceId" : "trace-a"
+    }, {
+      "step" : "B",
+      "executionId" : "run-a",
+      "traceId" : "trace-a"
+    }, {
+      "step" : "C",
+      "executionId" : "run-a",
+      "traceId" : "trace-a"
+    } ],
+    "result" : {
+      "value" : 5
+    },
+    "traceId" : "trace-a"
+  }, {
+    "executionId" : "run-b",
+    "observations" : [ {
+      "step" : "A",
+      "executionId" : "run-b",
+      "traceId" : "trace-b"
+    }, {
+      "step" : "B",
+      "executionId" : "run-b",
+      "traceId" : "trace-b"
+    }, {
+      "step" : "C",
+      "executionId" : "run-b",
+      "traceId" : "trace-b"
+    } ],
+    "result" : {
+      "value" : 17
+    },
+    "traceId" : "trace-b"
+  } ],
+  "language" : "java",
+  "profile" : "tpf-polyglot-probe/0",
+  "projectionSha256" : "aeef5a95f098d5f8af294b49feb6cf0a8b04db5fad0d8222d0a608ea6ea7d39b",
+  "scenariosSha256" : "aa3da5ea64b045d4dc818ce9daa5b357b074894e2183dbaa12ae8342d23d2033"
+}

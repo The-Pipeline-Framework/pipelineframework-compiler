@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "profile": "tpf-polyglot-probe/0",
+  "pipelineId": "polyglot-abc",
+  "handlers": [
+    {"step": "A", "handler": "a", "inputType": "ProbeValue", "outputType": "ProbeValue", "retryLimit": 2},
+    {"step": "B", "handler": "b", "inputType": "ProbeValue", "outputType": "ProbeValue", "retryLimit": 0},
+    {"step": "C", "handler": "c", "inputType": "ProbeValue", "outputType": "ProbeValue", "retryLimit": 0}
+  ]
+}

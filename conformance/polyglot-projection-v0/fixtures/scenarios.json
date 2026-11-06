@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {"id":"success","input":{"value":3},"expected":{"outcome":"COMPLETED","attempts":{"A":1,"B":1,"C":1},"result":{"value":5}}},
+    {"id":"transient-A","input":{"value":3},"fault":{"step":"A","code":"TRANSIENT","times":2},"expected":{"outcome":"COMPLETED","attempts":{"A":3,"B":1,"C":1},"result":{"value":5}}},
+    {"id":"retry-exhausted","input":{"value":3},"fault":{"step":"A","code":"TRANSIENT","times":3},"expected":{"outcome":"FAILED","attempts":{"A":3,"B":0,"C":0},"failureCode":"TRANSIENT"}},
+    {"id":"terminal-A","input":{"value":3},"fault":{"step":"A","code":"BUSINESS_REJECTION","times":1},"expected":{"outcome":"FAILED","attempts":{"A":1,"B":0,"C":0},"failureCode":"BUSINESS_REJECTION"}},
+    {"id":"terminal-B","input":{"value":3},"fault":{"step":"B","code":"BUSINESS_REJECTION","times":1},"expected":{"outcome":"FAILED","attempts":{"A":1,"B":1,"C":0},"failureCode":"BUSINESS_REJECTION"}},
+    {"id":"cancel-after-A","input":{"value":3},"cancelAfter":"A","expected":{"outcome":"CANCELLED","attempts":{"A":1,"B":0,"C":0}}},
+    {"id":"pre-cancelled","input":{"value":3},"cancelBefore":true,"expected":{"outcome":"CANCELLED","attempts":{"A":0,"B":0,"C":0}}}
+  ],
+  "contexts": [
+    {"executionId":"run-a","traceId":"trace-a","input":{"value":3},"expected":{"value":5}},
+    {"executionId":"run-b","traceId":"trace-b","input":{"value":9},"expected":{"value":17}}
+  ]
+}
