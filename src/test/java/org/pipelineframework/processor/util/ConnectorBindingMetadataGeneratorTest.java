@@ -3,6 +3,7 @@ package org.pipelineframework.processor.util;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -125,6 +126,50 @@ class ConnectorBindingMetadataGeneratorTest {
     }
 
     @Test
+    void rejectsStepOperationVersionThatDiffersFromProviderManifest() throws Exception {
+        Path metadataRoot = tempDir.resolve("version-mismatch-provider-metadata");
+        Path manifest = metadataRoot.resolve("META-INF/pipeline/connector-providers.json");
+        Files.createDirectories(manifest.getParent());
+        Files.writeString(manifest, """
+            {"schemaVersion":1,"providers":[{"id":"acme.work","version":{"major":1,"minor":0},
+            "operations":[{"id":"invoice.send","kind":"tpf:command","majorVersion":1}]}]}
+            """);
+        Path pipeline = tempDir.resolve("version-mismatch-pipeline.yaml");
+        Files.writeString(pipeline, """
+            version: 3
+            basePackage: com.example
+            connectors:
+              work: { provider: acme.work, version: 1 }
+            steps:
+              - name: Send invoice
+                kind: command
+                operation: invoice.send
+                operationVersion: 2
+                using: work
+                input: Invoice
+                output: SendResult
+            """);
+        ProcessingEnvironment processingEnv = mock(ProcessingEnvironment.class);
+        when(processingEnv.getFiler()).thenReturn(new PathResourceFiler(tempDir.resolve("version-mismatch-output")));
+        when(processingEnv.getOptions()).thenReturn(Map.of());
+        PipelineCompilationContext context = new PipelineCompilationContext(
+            processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        context.setModuleDir(tempDir);
+        context.setEffectivePipelineConfig(new PipelineYamlConfigLoader().load(pipeline));
+
+        ClassLoader original = Thread.currentThread().getContextClassLoader();
+        try (URLClassLoader loader = new URLClassLoader(new URL[] { metadataRoot.toUri().toURL() }, null)) {
+            Thread.currentThread().setContextClassLoader(loader);
+            var failure = assertThrows(IllegalArgumentException.class,
+                () -> new ConnectorBindingMetadataGenerator(processingEnv).writeMetadata(context));
+            assertTrue(failure.getMessage().contains("invoice.send"), failure.getMessage());
+            assertTrue(failure.getMessage().contains("static metadata"), failure.getMessage());
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
+        }
+    }
+
+    @Test
     void validatesAndEmitsCallableTargetsAgainstExactBindingOperationMetadata() throws Exception {
         Path metadataRoot = tempDir.resolve("callable-provider-metadata");
         Path manifest = metadataRoot.resolve("META-INF/pipeline/connector-providers.json");
@@ -135,6 +180,9 @@ class ConnectorBindingMetadataGeneratorTest {
                 {"id":"decide","kind":"tpf:query","majorVersion":1,"queryCapabilities":{"cacheability":"LIVE_ONLY"}}]},
               {"id":"acme.payments","version":{"major":1,"minor":0},"operations":[
                 {"id":"charge.create","kind":"tpf:command","majorVersion":2,
+                 "configurationSchema":{"id":"acme.payments.charge","version":1,"fields":[
+                   {"name":"account","type":"CONNECTION_REF","required":true},
+                   {"name":"optionalLedger","type":"CONNECTION_REF","required":false}]},
                  "typeContract":{"input":"com.example.boundary.ChargeArguments","output":"ChargeResult"}}]}
             ]}
             """);
@@ -194,7 +242,7 @@ class ConnectorBindingMetadataGeneratorTest {
         assertEquals(List.of(), referenceFields(model.getAsJsonArray("operations").get(0).getAsJsonObject()));
         assertEquals(List.of(), referenceFields(payments));
         JsonObject callable = payments.getAsJsonArray("callables").get(0).getAsJsonObject();
-        assertEquals(List.of(), referenceFields(callable));
+        assertEquals(List.of("account", "optionalLedger"), referenceFields(callable));
         assertEquals("charge", callable.get("alias").getAsString());
         assertEquals("charge.create", callable.get("operation").getAsString());
         assertEquals("ChargeArguments", callable.get("input").getAsString());

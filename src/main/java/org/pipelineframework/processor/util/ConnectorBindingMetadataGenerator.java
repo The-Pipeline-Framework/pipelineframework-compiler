@@ -49,6 +49,7 @@ public final class ConnectorBindingMetadataGenerator {
         this.processingEnv = Objects.requireNonNull(processingEnv, "processing environment must not be null");
     }
 
+    /** Validates exact provider/operation identities and emits references without configured secrets. */
     public void writeMetadata(PipelineCompilationContext context) throws IOException {
         PipelineYamlConfig config = context.getEffectivePipelineConfig();
         if (config == null) {
@@ -80,6 +81,7 @@ public final class ConnectorBindingMetadataGenerator {
         }
     }
 
+    /** Combines binding, authored step and callable facts against the selected provider manifest. */
     private static BindingMetadata metadata(
         PipelineYamlConnectorBinding binding,
         PipelineYamlConfig config,
@@ -113,6 +115,7 @@ public final class ConnectorBindingMetadataGenerator {
             externalConfigurationReferenceFields(provider.provider().configurationSchema()));
     }
 
+    /** Resolves a callable contract and records required external reference field names, never their values. */
     private static CallableReference callableReference(
         String step,
         org.pipelineframework.config.pipeline.PipelineYamlCallable callable,
@@ -163,6 +166,7 @@ public final class ConnectorBindingMetadataGenerator {
         return Collections.unmodifiableMap(result);
     }
 
+    /** Resolves the authored step operation with its exact kind and major version before emitting metadata. */
     private static OperationReference operationReference(
         String step,
         String kind,
