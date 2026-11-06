@@ -66,7 +66,7 @@
   "provenance" : {
     "dslSha256" : "d7fb0040ee42ede225b79fc185903c892337a3f5da9da35226652420eec657b4",
     "bindingsSha256" : "11aa5f8a36b306d3873ff0d2676699ec3f9e3f130d99049518a081db2c39978a",
-    "generatorTreeSha256" : "856386df2856b2ad95d4e1ab43775273731ada8ac0de6b0cceb8f356cba94fa7",
+    "generatorTreeSha256" : "7cddd1e0f5db40ed04d02899c6ec0aac7b51ce0119f5f320ef999a69ac4e52f7",
     "contractsVersion" : "26.11.1",
     "dslJarSha256" : "e40c48f95c03c7ce9982531d041cd61418f4029dffd25a082876c9901037ae82",
     "semanticModelJarSha256" : "3162f934eb946af2b027f4684cbf72b6eb4ce838e8dd0b5f2356d2f3eeced01a"

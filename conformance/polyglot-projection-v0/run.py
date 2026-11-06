@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
@@ -16,20 +17,38 @@ ROOT = HERE.parents[1]
 TARGET = ROOT / "target/polyglot-projection-v0"
 
 
-def source_digest() -> str:
-    """Hash named source files, not timestamps, generated outputs, absolute paths or a self-referential SHA."""
+def source_snapshot(source_dir: Path) -> tuple[tuple[str, bytes], ...]:
+    """Capture exactly the source bytes that will be staged for compilation and identified."""
+    paths = [*source_dir.glob("*.java"), source_dir / "run.py", source_dir / "dependencies.pom.xml"]
+    return tuple((path.name, path.read_bytes()) for path in sorted(paths, key=lambda p: p.name))
+
+
+def snapshot_digest(snapshot: tuple[tuple[str, bytes], ...]) -> str:
+    """Hash names and captured bytes, not timestamps, absolute paths or a self-referential SHA."""
     digest = hashlib.sha256()
-    for path in sorted([*HERE.glob("*.java"), HERE / "run.py", HERE / "dependencies.pom.xml"], key=lambda p: p.name):
-        digest.update(path.name.encode("utf-8") + b"\0" + path.read_bytes() + b"\0")
+    for name, content in snapshot:
+        digest.update(name.encode("utf-8") + b"\0" + content + b"\0")
     return digest.hexdigest()
 
 
-def prepare(skip_resolve: bool = False) -> str:
+@dataclass(frozen=True)
+class Prepared:
+    classpath: str
+    generator_tree_sha256: str
+
+
+def prepare(skip_resolve: bool = False, *, source_dir: Path = HERE) -> Prepared:
     TARGET.mkdir(parents=True, exist_ok=True)
+    snapshot = source_snapshot(source_dir)
+    # Each preparation owns both an immutable source copy and its classes. Later preparation
+    # cannot overwrite a classpath still used by an earlier Prepared value.
+    staged = Path(tempfile.mkdtemp(prefix="prepared-", dir=TARGET))
+    for name, content in snapshot:
+        (staged / name).write_bytes(content)
     classpath_file = TARGET / "classpath.txt"
     if not skip_resolve:
         subprocess.run([
-            str(ROOT / "mvnw"), "-f", str(HERE / "dependencies.pom.xml"),
+            str(ROOT / "mvnw"), "-f", str(staged / "dependencies.pom.xml"),
             "--batch-mode", "--no-transfer-progress",
             "org.apache.maven.plugins:maven-dependency-plugin:3.8.1:build-classpath",
             f"-Dmaven.repo.local={ROOT / '.m2/repository'}", f"-Dmdep.outputFile={classpath_file}",
@@ -37,14 +56,14 @@ def prepare(skip_resolve: bool = False) -> str:
     if not classpath_file.exists():
         raise SystemExit("Resolve dependencies once before using --skip-resolve")
     classpath = classpath_file.read_text(encoding="utf-8").strip()
-    classes = TARGET / "classes"
+    classes = staged / "classes"
     classes.mkdir(exist_ok=True)
     subprocess.run(["javac", "--release", "21", "-proc:none", "-cp", classpath, "-d", str(classes),
-                    *map(str, sorted(HERE.glob("*.java")))], cwd=ROOT, check=True)
-    return os.pathsep.join([str(classes), classpath])
+                    *map(str, sorted(staged.glob("*.java")))], cwd=ROOT, check=True)
+    return Prepared(os.pathsep.join([str(classes), classpath]), snapshot_digest(snapshot))
 
 
-def generate(classpath: str, dsl: Path, bindings: Path, output: Path) -> subprocess.CompletedProcess[str]:
+def generate(prepared: Prepared, dsl: Path, bindings: Path, output: Path) -> subprocess.CompletedProcess[str]:
     # Stage bytes once. The producer's shape and semantic passes see the same input even if the
     # caller edits the original file. A temporary output is published only on success.
     with tempfile.TemporaryDirectory(prefix="projection-input-", dir=TARGET) as temporary:
@@ -53,9 +72,9 @@ def generate(classpath: str, dsl: Path, bindings: Path, output: Path) -> subproc
         staged_bindings = staged / "native-bindings.json"
         staged_dsl.write_bytes(dsl.read_bytes())
         staged_bindings.write_bytes(bindings.read_bytes())
-        result = subprocess.run(["java", "-cp", classpath, "PolyglotProjectionProbe", str(staged_dsl),
-                                 str(staged_bindings), str(staged / "output"), source_digest()],
-                                cwd=ROOT, text=True, capture_output=True)
+        result = subprocess.run(["java", "-cp", prepared.classpath, "PolyglotProjectionProbe", str(staged_dsl),
+                                 str(staged_bindings), str(staged / "output"), prepared.generator_tree_sha256],
+                                cwd=ROOT, text=True, capture_output=True, check=False)
         if result.returncode == 0:
             output.mkdir(parents=True, exist_ok=True)
             for artifact in sorted((staged / "output").iterdir()):
@@ -77,17 +96,17 @@ def main() -> None:
     parser.add_argument("--projection-only", action="store_true",
                         help="generate another admitted flow without running the a,b,c-specific oracle")
     args = parser.parse_args()
-    classpath = prepare(args.skip_resolve)
-    result = generate(classpath, args.dsl.resolve(), args.bindings.resolve(), args.output.resolve())
+    prepared = prepare(args.skip_resolve)
+    result = generate(prepared, args.dsl.resolve(), args.bindings.resolve(), args.output.resolve())
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
-    if result.returncode == 0 and args.projection_only:
+    if result.returncode == 0:
         # A previously generated baseline report must not look like evidence for a changed flow.
         for name in ("java-reference.json", "java-reference.sha256"):
             (args.output.resolve() / name).unlink(missing_ok=True)
     if result.returncode == 0 and not args.projection_only:
         reference = args.output.resolve() / "java-reference.json"
-        subprocess.run(["java", "-cp", classpath, "JavaReferenceProbe", str(args.output.resolve() / "projection.json"),
+        subprocess.run(["java", "-cp", prepared.classpath, "JavaReferenceProbe", str(args.output.resolve() / "projection.json"),
                         str(args.scenarios.resolve()), str(reference)], cwd=ROOT, check=True)
         reference.with_suffix(".sha256").write_text(
             hashlib.sha256(reference.read_bytes()).hexdigest() + "  java-reference.json\n", encoding="utf-8")

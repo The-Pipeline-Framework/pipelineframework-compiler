@@ -27,7 +27,10 @@ jobs:
         # Keep committed outputs untouched so the following byte-for-byte drift checks can fail.
         run: python3 conformance/polyglot-projection-v0/run.py --output target/polyglot-projection-v0/ci-generated
       - name: Check closed profile, generated drift and Java reference
-        run: python3 -B -m unittest discover -s conformance/polyglot-projection-v0 -p 'test_*.py'
+        run: |
+          python3 -m venv target/polyglot-projection-v0/test-venv
+          target/polyglot-projection-v0/test-venv/bin/python -m pip install -r conformance/polyglot-projection-v0/requirements-test.txt
+          target/polyglot-projection-v0/test-venv/bin/python -B -m unittest discover -s conformance/polyglot-projection-v0 -p 'test_*.py'
   verify:
     runs-on: ubuntu-latest
     steps:

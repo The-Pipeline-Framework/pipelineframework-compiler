@@ -45,7 +45,7 @@ public final class PolyglotProjectionProbe {
     // This probe deliberately does not invent a public cross-language identifier mangler.
     // Reject the union of Python/TypeScript keywords and names used by generated declarations.
     private static final Set<String> RESERVED = Set.of((
-        "and as assert async await break case class continue debugger declare def default del "
+        "and as assert async await break case class const continue debugger declare def default del "
         + "delete do elif else enum except export extends False false finally for from function "
         + "global if implements import in infer instanceof interface is keyof lambda let match "
         + "module namespace new nonlocal not null None of or package pass private protected public "

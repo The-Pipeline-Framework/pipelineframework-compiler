@@ -34,13 +34,19 @@ From the compiler repository root:
 
 ```sh
 python3 conformance/polyglot-projection-v0/run.py
-python3 -B -m unittest discover -s conformance/polyglot-projection-v0 -p 'test_*.py'
+python3 -m venv target/polyglot-projection-v0/test-venv
+target/polyglot-projection-v0/test-venv/bin/python -m pip install -r conformance/polyglot-projection-v0/requirements-test.txt
+target/polyglot-projection-v0/test-venv/bin/python -B -m unittest discover -s conformance/polyglot-projection-v0 -p 'test_*.py'
 ```
 
 After the first resolution, `run.py --skip-resolve` reuses that isolated cache.
 CI runs this bounded check separately from the canonical compiler suite. It
 generates into `target`, leaving committed output untouched before the tests
 compare both fixture packages and the Java reference byte for byte.
+The test environment pins `jsonschema` 4.25.1 to validate both generated artifacts
+against JSON Schema draft 2020-12. A deliberately narrowed retry maximum must
+reject both artifacts. This dependency is used only by conformance tests;
+generation remains standard-library Python plus the released Java dependencies.
 Expect `PROJECTION_PASS:polyglot-abc` and
 `JAVA_REFERENCE_PASS:7 scenarios,2 overlapping contexts`. The reference reads
 the same projection and fixed [scenarios](fixtures/scenarios.json) as the native
@@ -109,8 +115,9 @@ python3 conformance/polyglot-projection-v0/run.py --skip-resolve --projection-on
   --output conformance/polyglot-projection-v0/generated-changed-order
 ```
 
-`--projection-only` omits the baseline a,b,c-specific Java oracle and removes a
-stale reference report from the output directory. The changed-order artifact has
+`--projection-only` omits the baseline a,b,c-specific Java oracle. Every successful
+projection generation clears a previous reference report and checksum before an
+oracle is attempted; failed oracle validation leaves no stale reference. The changed-order artifact has
 the same closed profile; it does not claim the baseline scenario answers apply.
 
 Candidate configuration numbers follow the shared profile's exact numerical
@@ -140,7 +147,12 @@ JAR digests and immutable contracts version. `generatorTreeSha256` hashes sorted
 tool source names and bytes (`*.java`, `run.py`, `dependencies.pom.xml`), separated
 by zero bytes; no timestamp, absolute path or self-referential commit hash enters
 the result. An artifact digest is distinct from those source identities.
-The runner stages the input bytes before the loader's two reads. Generated files
+The runner captures tool sources once, compiles the staged Java bytes into a
+separate prepared class directory, and retains that snapshot's digest with its
+classpath. Editing source after preparation does not stamp that new source's
+identity onto older classes; preparing again uses the changed bytes and digest.
+The tests prove both cases using temporary source copies. The runner also stages
+input bytes before the loader's two reads. Generated files
 are byte-for-byte reproducible; fixtures and tests remain inspectable research
 evidence, not a public SDK, compiler CLI or production native runtime.
 
@@ -155,7 +167,7 @@ merge, release publication or deployment.
 Recorded local evidence (2026-11-06): compiler baseline
 `9a03f7a9b3d78d72c0ac3ca3621962b2788c2e97`, OpenJDK 21.0.9, Python 3.14.6,
 released contracts 26.11.1 resolved from Maven Central. Both fixture packages
-regenerated; all 12 focused tests passed, including the Java oracle's seven fixed
+regenerated; all 15 focused tests passed, including the Java oracle's seven fixed
 cases, two forced-overlap contexts and deliberately wrong-answer rejection.
 The canonical production compiler suite was not run for this standalone probe;
 the existing CI suite remains unchanged alongside the new bounded job.
