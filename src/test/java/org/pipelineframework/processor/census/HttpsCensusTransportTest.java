@@ -51,4 +51,20 @@ class HttpsCensusTransportTest {
                     () -> new HttpsCensusTransport(URI.create(base + "/slow-body")).send("{}")));
         } finally { server.stop(0); }
     }
+    @Test void localTlsHandshakeFailureIsRejected() throws Exception {
+        var tls = javax.net.ssl.SSLContext.getInstance("TLS");
+        // A TLS peer without a server key cannot complete the handshake.
+        tls.init(new javax.net.ssl.KeyManager[0], new javax.net.ssl.TrustManager[0], new java.security.SecureRandom());
+        try (var server = tls.getServerSocketFactory().createServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            var peer = Thread.ofVirtual().start(() -> {
+                try (var connection = (javax.net.ssl.SSLSocket) server.accept()) { connection.startHandshake(); }
+                catch (java.io.IOException expectedHandshakeFailure) { }
+            });
+            try {
+                URI endpoint = URI.create("https://localhost:" + server.getLocalPort() + "/observations");
+                assertThrows(javax.net.ssl.SSLHandshakeException.class, () -> new HttpsCensusTransport(endpoint).send("{}"));
+            } finally { server.close(); peer.join(Duration.ofSeconds(2)); }
+        }
+    }
+
 }

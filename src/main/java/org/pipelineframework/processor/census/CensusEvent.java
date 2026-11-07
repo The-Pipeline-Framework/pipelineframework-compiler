@@ -9,10 +9,15 @@ import java.util.*;
 public record CensusEvent(UUID installationId, UUID applicationInstanceId, LocalDate observedAt,
         String compilerVersion, String contractsVersion, int javaMajor, BuildCensusSummary summary) {
     public CensusEvent {
-        Objects.requireNonNull(installationId); Objects.requireNonNull(applicationInstanceId); Objects.requireNonNull(observedAt);
+        if (!isRandomIdentity(installationId) || !isRandomIdentity(applicationInstanceId))
+            throw new IllegalArgumentException("Census identities must be RFC 4122 random UUIDs");
+        Objects.requireNonNull(observedAt);
         Objects.requireNonNull(summary);
         compilerVersion = normalizeVersion(compilerVersion); contractsVersion = normalizeVersion(contractsVersion);
         if (javaMajor < 1 || javaMajor > 999) throw new IllegalArgumentException("Invalid Java major");
+    }
+    static boolean isRandomIdentity(UUID identity) {
+        return identity != null && identity.version() == 4 && identity.variant() == 2;
     }
     public Map<String, Object> values() {
         Map<String, Object> result = new TreeMap<>(summary.projection());

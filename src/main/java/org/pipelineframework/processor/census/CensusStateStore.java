@@ -76,11 +76,13 @@ public final class CensusStateStore {
         }
         if (Files.isSymbolicLink(file) || Files.size(file) > 1024 * 1024) throw new java.io.IOException("Invalid census state");
         State state = gson.fromJson(Files.readString(file), State.class);
-        Objects.requireNonNull(state); Objects.requireNonNull(state.installation());
+        Objects.requireNonNull(state);
+        if (!CensusEvent.isRandomIdentity(state.installation())) throw new java.io.IOException("Invalid census installation identity");
         if (state.salt() == null || !state.salt().matches("[a-f0-9]{64}") || state.applications().size() > 1024)
             throw new java.io.IOException("Invalid census state");
         for (var entry : state.applications().entrySet()) {
-            Application app = Objects.requireNonNull(entry.getValue()); Objects.requireNonNull(app.identity());
+            Application app = Objects.requireNonNull(entry.getValue());
+            if (!CensusEvent.isRandomIdentity(app.identity())) throw new java.io.IOException("Invalid census application identity");
             if (!entry.getKey().matches("[a-f0-9]{64}") || app.attemptedDate() == null || app.acknowledgedDigest() == null || app.acknowledgedWeek() == null)
                 throw new java.io.IOException("Invalid census state");
             if (!app.attemptedDate().isEmpty()) LocalDate.parse(app.attemptedDate());

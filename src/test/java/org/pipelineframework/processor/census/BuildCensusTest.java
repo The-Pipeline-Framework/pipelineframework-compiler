@@ -257,4 +257,22 @@ class BuildCensusTest {
         } finally { release.countDown(); }
     }
 
+    @Test void nonrandomPersistedIdentityCannotAppearInPreviewOrBeResetSilently() throws Exception {
+        var host = host(CensusConfiguration.Mode.PREVIEW); var store = new CensusStateStore(host.configuration().stateDirectory());
+        store.observe(host, summary(), clock("2026-10-04"), json -> { fail("Preview transmitted"); return false; });
+        Path state = host.configuration().stateDirectory().resolve("state.json");
+        var original = JsonParser.parseString(Files.readString(state)).getAsJsonObject();
+        String v1 = "2d1833c0-1dd2-11b2-8234-123456789abc";
+        for (boolean installation : new boolean[] {true, false}) {
+            var damaged = original.deepCopy();
+            if (installation) damaged.addProperty("installation", v1);
+            else damaged.getAsJsonObject("applications").entrySet().iterator().next().getValue().getAsJsonObject().addProperty("identity", v1);
+            String corrupt = damaged.toString(); Files.writeString(state, corrupt);
+            assertThrows(java.io.IOException.class, () -> store.observe(host, summary(), clock("2026-10-05"), json -> {
+                fail("Invalid retained identity transmitted"); return false;
+            }));
+            assertEquals(corrupt, Files.readString(state));
+        }
+    }
+
 }
