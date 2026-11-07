@@ -178,8 +178,10 @@ class BuildCensusTest {
         var childDefinition = new PipelineDefinition(child, "Value", "Value", List.of(PipelineDefinitionStep.direct("x", "Value", "Value", CardinalitySemantics.ONE_TO_ONE)));
         var rootDefinition = new PipelineDefinition(root, "Value", "Value", linked);
         ctx.setResolvedPipelineDefinitionGraph(new PipelineDefinitionLinker(reference -> Optional.of(childDefinition)).link(rootDefinition));
-        var projector = new BuildCensusProjector(); var blocked = new CountDownLatch(1);
-        try (var reporter = new BuildCensusReporter(() -> json -> { blocked.await(); return false; }, clock("2026-10-04"))) {
+        var projector = new BuildCensusProjector(); var blocked = new CountDownLatch(1); var entered = new CountDownLatch(1);
+        try (var reporter = new BuildCensusReporter(() -> json -> { entered.countDown(); blocked.await(); return false; }, clock("2026-10-04"))) {
+            reporter.submit(host, projector.project(ctx).orElseThrow());
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
             for (int i = 0; i < 50; i++) reporter.submit(host, projector.project(ctx).orElseThrow());
             long[] samples = new long[100];
             for (int i = 0; i < samples.length; i++) {
@@ -239,9 +241,13 @@ class BuildCensusTest {
     @Test void saturatedQueueDropsExcessAndCoalescesTheLatestPendingApplication() throws Exception {
         var first = host(CensusConfiguration.Mode.REPORT); var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1); var delivered = new CountDownLatch(9);
+        var sentinelDelivered = new CountDownLatch(1);
         List<String> events = new CopyOnWriteArrayList<>();
         try (var reporter = new BuildCensusReporter(() -> json -> {
-            entered.countDown(); release.await(); events.add(json); delivered.countDown(); return true;
+            entered.countDown(); release.await(); events.add(json); delivered.countDown();
+            if (JsonParser.parseString(json).getAsJsonObject().get("transport").getAsString().equals("GRPC")) sentinelDelivered.countDown();
+            // Queue behavior is independent of acknowledgement; avoid a final asynchronous state write after test teardown.
+            return false;
         }, clock("2026-10-04"))) {
             reporter.submit(first, summary()); assertTrue(entered.await(2, TimeUnit.SECONDS));
             for (int i = 0; i < 9; i++) {
@@ -251,7 +257,12 @@ class BuildCensusTest {
                         summary().transport(), BuildCensusSummary.Platform.FUNCTION, summary().runtimeLayout()));
             }
             release.countDown(); assertTrue(delivered.await(4, TimeUnit.SECONDS));
-            assertEquals(9, events.size());
+            // A FIFO sentinel observes all earlier accepted work before the final count.
+            var sentinel = new BuildCensusHostContext(Files.writeString(temporary.resolve("sentinel.yaml"), "private"), first.configuration());
+            reporter.submit(sentinel, new BuildCensusSummary(summary().sizes(), summary().featureCounts(),
+                    BuildCensusSummary.Transport.GRPC, summary().platform(), summary().runtimeLayout()));
+            assertTrue(sentinelDelivered.await(2, TimeUnit.SECONDS));
+            assertEquals(10, events.size());
             assertEquals(1, events.stream().map(json -> JsonParser.parseString(json).getAsJsonObject())
                     .filter(event -> event.get("platform").getAsString().equals("FUNCTION")).count());
         } finally { release.countDown(); }
