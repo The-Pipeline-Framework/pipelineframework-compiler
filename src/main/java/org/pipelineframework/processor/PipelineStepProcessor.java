@@ -18,18 +18,6 @@ import javax.tools.Diagnostic;
 import org.pipelineframework.annotation.PipelineOrchestrator;
 import org.pipelineframework.annotation.PipelinePlugin;
 import org.pipelineframework.annotation.PipelineStep;
-import org.pipelineframework.processor.phase.ModelExtractionPhase;
-import org.pipelineframework.processor.phase.OperationRepresentationGenerationPhase;
-import org.pipelineframework.processor.phase.PipelineBindingConstructionPhase;
-import org.pipelineframework.processor.phase.PipelineBranchPlanningPhase;
-import org.pipelineframework.processor.phase.PipelineDiscoveryPhase;
-import org.pipelineframework.processor.phase.PipelineGenerationPhase;
-import org.pipelineframework.processor.phase.PipelineInfrastructurePhase;
-import org.pipelineframework.processor.phase.PipelineRuntimeMappingPhase;
-import org.pipelineframework.processor.phase.PipelineSemanticAnalysisPhase;
-import org.pipelineframework.processor.phase.PipelineTargetResolutionPhase;
-import org.pipelineframework.processor.phase.RepresentationProviderGenerationPhase;
-import org.pipelineframework.processor.phase.RepresentationProviderPreparationPhase;
 import org.pipelineframework.processor.util.RoleMetadataGenerator;
 
 /**
@@ -64,6 +52,9 @@ import org.pipelineframework.processor.util.RoleMetadataGenerator;
     "pipeline.rest.naming.strategy", // Optional: REST naming strategy (LEGACY|RESOURCEFUL)
     "pipeline.mapper.fallback.enabled", // Optional: enables delegated mapper fallback engine
     "pipeline.parallelism", // Optional: parallelism mode (PARALLEL|SEQUENTIAL|AUTO)
+    "tpf.telemetry.disabled",
+    "tpf.telemetry.mode",
+    "tpf.telemetry.preview",
     "pipeline.codegen.rendererProfile" // Optional: renderer profile selection (quarkus|spring)
 })
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
@@ -71,23 +62,11 @@ public class PipelineStepProcessor extends AbstractProcessingTool {
 
     private final PipelineCompiler compiler;
     private boolean compilationExecuted;
+    private java.util.Optional<org.pipelineframework.processor.census.BuildCensusObservation> pendingCensus = java.util.Optional.empty();
 
     /** Creates the service-loader compatible production processor. */
     public PipelineStepProcessor() {
-        this(new PipelineCompiler(List.of(
-            new PipelineDiscoveryPhase(),
-            new RepresentationProviderPreparationPhase(),
-            new PipelineBranchPlanningPhase(),
-            new ModelExtractionPhase(),
-            new OperationRepresentationGenerationPhase(),
-            new PipelineRuntimeMappingPhase(),
-            new RepresentationProviderGenerationPhase(),
-            new PipelineSemanticAnalysisPhase(),
-            new PipelineTargetResolutionPhase(),
-            new PipelineBindingConstructionPhase(),
-            new PipelineGenerationPhase(),
-            new PipelineInfrastructurePhase()
-        )));
+        this.compiler = PipelineCompiler.production(observation -> pendingCensus = java.util.Optional.of(observation));
     }
 
     PipelineStepProcessor(PipelineCompiler compiler) {
@@ -98,11 +77,23 @@ public class PipelineStepProcessor extends AbstractProcessingTool {
     public synchronized void init(ProcessingEnvironment processingEnv) {
         super.init(processingEnv);
         compilationExecuted = false;
+        pendingCensus = java.util.Optional.empty();
     }
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         if (compilationExecuted) {
+            if (roundEnv.processingOver()) {
+                if (!roundEnv.errorRaised()) {
+                    try {
+                        pendingCensus.ifPresent(candidate ->
+                            new org.pipelineframework.processor.census.BuildCensusReporter().submit(candidate.host(), candidate.summary()));
+                    } catch (RuntimeException unavailable) {
+                        // Census initialization and handoff cannot alter compiler results.
+                    }
+                }
+                pendingCensus = java.util.Optional.empty();
+            }
             return false;
         }
 

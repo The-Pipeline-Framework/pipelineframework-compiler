@@ -12,6 +12,9 @@ concurrency:
   group: tpf-candidate-publish-${{ github.event.workflow_run.head_repository.full_name || github.event.workflow_run.repository.full_name }}-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
+env:
+  TPF_TELEMETRY_DISABLED: "true"
+
 jobs:
   publish:
     if: >-
