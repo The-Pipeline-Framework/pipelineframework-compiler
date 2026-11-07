@@ -124,10 +124,12 @@ class PipelineRootRecurrenceLoweringTest {
             .enabledTargets(Set.of(GenerationTarget.LOCAL_CLIENT_STEP)).build();
         ctx.setStepModels(List.of(model));
         var initialize = model.toBuilder().serviceName("ProcessInitializeService").generatedName("ProcessInitializeService")
+            .definition(new org.pipelineframework.processor.composition.PipelineReference("initialize"))
             .serviceClassName(ClassName.get("com.example", "Initialize"))
             .inputMapping(TypeMapping.withoutMapper(ClassName.get("com.example.domain", "Initial")))
             .outputMapping(TypeMapping.withoutMapper(ClassName.get("com.example.domain", "TurnState"))).build();
         ctx.setLocalDefinitionStepModels(java.util.Map.of("initialize", List.of(initialize)));
+        ctx.setStepModels(List.of(model, initialize));
         var metadata = new org.pipelineframework.processor.util.PipelineTelemetryMetadataGenerator(env);
         if (callsiteName.equals("AdvanceService")) {
             var failure = assertThrows(IllegalArgumentException.class, () -> metadata.writeTelemetryMetadata(ctx));

@@ -151,9 +151,9 @@ public final class LocalPipelineInvocationRenderer {
             }
             return type;
         }
-        List<PipelineStepModel> available = "$root".equals(parent.target().logicalId()) ? ctx.getStepModels()
-            : ctx.getLocalDefinitionStepModels().getOrDefault(parent.target().logicalId(), List.of());
+        List<PipelineStepModel> available = new GeneratedExecutionOrderResolver().executionModels(ctx, parent.target());
         PipelineStepModel model = available.stream()
+            .filter(candidate -> !candidate.sideEffect())
             .filter(candidate -> matchesAuthoredStep(candidate, child.localStepId()))
             .findFirst().orElseThrow(() -> new IllegalStateException("No generated child step model for '"
                 + child.localStepId() + "' in definition '" + parent.target().logicalId()
@@ -184,7 +184,9 @@ public final class LocalPipelineInvocationRenderer {
                 classes.add(invocationTypes.get(binding.invocationLocation()).canonicalName());
                 continue;
             }
-            PipelineStepModel model = ctx.getStepModels().stream()
+            PipelineStepModel model = new GeneratedExecutionOrderResolver()
+                .executionModels(ctx, new PipelineReference("$root")).stream()
+                .filter(candidate -> !candidate.sideEffect())
                 .filter(candidate -> candidate.serviceName().equals(toYamlServiceName(root.name())))
                 .findFirst().orElseThrow(() -> new IllegalStateException("No generated root step model for '" + root.name() + "'."));
             classes.add(RuntimeStepClassNames.className(

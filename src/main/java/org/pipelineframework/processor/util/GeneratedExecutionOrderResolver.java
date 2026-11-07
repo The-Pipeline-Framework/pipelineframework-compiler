@@ -35,10 +35,7 @@ public final class GeneratedExecutionOrderResolver {
         Objects.requireNonNull(definition, "definition must not be null");
         Objects.requireNonNull(orderedFunctionalSteps, "orderedFunctionalSteps must not be null");
 
-        List<PipelineStepModel> clientModels = ctx.getStepModels().stream()
-            .filter(model -> model.deploymentRole() == DeploymentRole.ORCHESTRATOR_CLIENT)
-            .filter(model -> definition.equals(model.definition()))
-            .toList();
+        List<PipelineStepModel> clientModels = executionModels(ctx, definition);
         if (clientModels.stream().noneMatch(PipelineStepModel::sideEffect)
             && clientModels.stream().noneMatch(this::hasDeferredCompletion)) {
             return List.of();
@@ -95,6 +92,26 @@ public final class GeneratedExecutionOrderResolver {
             }
         }
         return List.copyOf(expanded);
+    }
+
+    /**
+     * Selects current executable models, preferring orchestrator clients over colocated server
+     * copies. An ordinary LOCAL definition can execute without an orchestrator or any aspects;
+     * in that case its server models still own operation and deferred-completion targets.
+     */
+    public List<PipelineStepModel> executionModels(PipelineCompilationContext ctx, PipelineReference definition) {
+        List<PipelineStepModel> models = ctx.getStepModels().stream()
+            .filter(model -> definition.equals(model.definition()))
+            .toList();
+        var clientIdentities = models.stream()
+            .filter(model -> model.deploymentRole() == DeploymentRole.ORCHESTRATOR_CLIENT)
+            .map(PipelineStepModel::artifactBindingName)
+            .collect(java.util.stream.Collectors.toSet());
+        return models.stream()
+            .filter(model -> model.deploymentRole() == DeploymentRole.ORCHESTRATOR_CLIENT
+                || (ctx.isTransportModeLocal() && model.deploymentRole() == DeploymentRole.PIPELINE_SERVER
+                    && !clientIdentities.contains(model.artifactBindingName())))
+            .toList();
     }
 
     private boolean hasDeferredCompletion(PipelineStepModel model) {

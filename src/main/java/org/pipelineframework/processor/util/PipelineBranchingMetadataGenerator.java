@@ -84,13 +84,13 @@ public final class PipelineBranchingMetadataGenerator {
             if (!entry.getValue().branchAware()) {
                 continue;
             }
-            List<PipelineStepModel> childModels = ctx.getLocalDefinitionStepModels()
-                .getOrDefault(entry.getKey().logicalId(), List.of());
+            List<PipelineStepModel> childModels = definitionExecutionModels(ctx, entry.getKey(),
+                ctx.getLocalDefinitionStepModels().getOrDefault(entry.getKey().logicalId(), List.of()));
             appendPlan(ctx, entry.getValue(), indexModelsByStepName(childModels), true,
                 entry.getKey().logicalId(), steps);
             appendSideEffectDescriptors(
                 ctx,
-                definitionExecutionModels(ctx, entry.getKey(), childModels),
+                childModels,
                 true,
                 entry.getKey().logicalId(),
                 entry.getValue().terminalStepIndex(),
@@ -116,10 +116,7 @@ public final class PipelineBranchingMetadataGenerator {
         PipelineReference definition,
         List<PipelineStepModel> authoredModels
     ) {
-        List<PipelineStepModel> expanded = ctx.getStepModels().stream()
-            .filter(model -> model.deploymentRole() == DeploymentRole.ORCHESTRATOR_CLIENT)
-            .filter(model -> definition.equals(model.definition()))
-            .toList();
+        List<PipelineStepModel> expanded = new GeneratedExecutionOrderResolver().executionModels(ctx, definition);
         return expanded.isEmpty() ? withSyntheticAspects(ctx, authoredModels) : expanded;
     }
 
