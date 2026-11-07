@@ -54,6 +54,46 @@ class PipelineBranchingMetadataGeneratorTest {
     Path tempDir;
 
     @Test
+    void beforeObserverNameCannotShadowTheAuthoredChildStep() throws IOException {
+        Path output = tempDir.resolve("child-observer-collision");
+        var env = mock(ProcessingEnvironment.class);
+        when(env.getOptions()).thenReturn(Map.of());
+        when(env.getFiler()).thenReturn(new PathResourceFiler(output));
+        var ctx = new PipelineCompilationContext(env, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        ctx.setTransportMode(PipelineTransport.LOCAL);
+        var definition = new PipelineReference("child");
+        var authored = stepModel("PersistenceValueSideEffect", "com.example", "Input", "Result")
+            .toBuilder().definition(definition).build();
+        var observer = stepModel("ObservePersistenceValueSideEffect", "com.example.observer", "Input", "Input",
+            Set.of(GenerationTarget.LOCAL_CLIENT_STEP)).toBuilder()
+            .generatedName("PersistenceValueSideEffect").sideEffect(true)
+            .aspectPosition(AspectPosition.BEFORE_STEP).definition(definition).build();
+        ctx.setStepModels(List.of(observer, authored));
+        ctx.setLocalDefinitionStepModels(Map.of("child", List.of(authored)));
+        ctx.setLocalDefinitionBranchingPlans(Map.of(definition,
+            new PipelineBranchingPlan(true, 0, List.of(new PipelineBranchingPlan.BranchStep(
+                0, "Persistence Value Side Effect", "Input", "Result", List.of("Input"), List.of("Result"),
+                List.of(ClassName.get("com.example.common.domain", "Input")), true)))));
+
+        new PipelineBranchingMetadataGenerator(env).writeBranchingMetadata(ctx);
+
+        var metadata = new Gson().fromJson(Files.readString(output.resolve("META-INF/pipeline/branching.json")),
+            JsonObject.class);
+        var steps = metadata.getAsJsonArray("steps");
+        assertEquals(2, steps.size());
+        var functional = steps.get(0).getAsJsonObject();
+        assertEquals("com.example.pipeline.PersistenceValueSideEffectLocalClientStep",
+            functional.get("runtimeStepClass").getAsString());
+        assertEquals(0, functional.get("index").getAsInt());
+        assertTrue(functional.get("terminal").getAsBoolean());
+        var observation = steps.get(1).getAsJsonObject();
+        assertEquals("com.example.observer.pipeline.PersistenceValueSideEffectLocalClientStep",
+            observation.get("runtimeStepClass").getAsString());
+        assertEquals(-1, observation.get("index").getAsInt());
+        assertFalse(observation.get("terminal").getAsBoolean());
+    }
+
+    @Test
     void writesCanonicalDefinitionCompletionWithoutAddingAnAuthoredStep() throws IOException {
         Path output = tempDir.resolve("definition-completion");
         ProcessingEnvironment env = mock(ProcessingEnvironment.class);

@@ -26,6 +26,26 @@ import org.pipelineframework.processor.ir.TypeMapping;
 class GeneratedExecutionOrderResolverTest {
 
     @Test
+    void keepsDifferentServicesWithTheSameBindingNameWhilePreferringTheirOwnClientCopies() {
+        PipelineReference root = new PipelineReference("$root");
+        PipelineCompilationContext ctx = new PipelineCompilationContext(null, Jsr269SourceInventory.empty());
+        ctx.setTransportMode(PipelineTransport.LOCAL);
+        var ordinary = model("ProcessFooService", "ProcessFooService", false, root, null)
+            .withDeploymentRole(DeploymentRole.PIPELINE_SERVER);
+        var query = ordinary.toBuilder()
+            .serviceClassName(ClassName.get("org.pipelineframework.query", "QueryStepDescriptor"))
+            .deploymentRole(DeploymentRole.ORCHESTRATOR_CLIENT)
+            .enabledTargets(Set.of(GenerationTarget.QUERY_CLIENT_STEP)).build();
+        ctx.setStepModels(List.of(query, ordinary));
+        var resolver = new GeneratedExecutionOrderResolver();
+        assertEquals(List.of(query, ordinary), resolver.executionModels(ctx, root));
+
+        var ordinaryClient = ordinary.withDeploymentRole(DeploymentRole.ORCHESTRATOR_CLIENT);
+        ctx.setStepModels(List.of(query, ordinary, ordinaryClient));
+        assertEquals(List.of(query, ordinaryClient), resolver.executionModels(ctx, root));
+    }
+
+    @Test
     void expansionKeepsSharedObserverInBothDefinitionOrders() {
         PipelineReference root = new PipelineReference("$root");
         PipelineReference child = new PipelineReference("child");
