@@ -431,6 +431,9 @@ public final class PipelineBranchingMetadataGenerator {
     private Map<String, PipelineStepModel> indexModelsByStepName(List<PipelineStepModel> orderedModels) {
         Map<String, PipelineStepModel> models = new LinkedHashMap<>();
         for (PipelineStepModel model : orderedModels) {
+            if (model.sideEffect()) {
+                continue;
+            }
             models.putIfAbsent(normalizeStepToken(stepTokenFromModel(model)), model);
             models.putIfAbsent(normalizeStepToken(stripTrailingService(model.generatedName())), model);
             models.putIfAbsent(normalizeStepToken(model.serviceName()), model);

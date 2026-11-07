@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import com.squareup.javapoet.ClassName;
+
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.composition.PipelineReference;
 import org.pipelineframework.processor.ir.AspectPosition;
@@ -105,13 +107,19 @@ public final class GeneratedExecutionOrderResolver {
             .toList();
         var clientIdentities = models.stream()
             .filter(model -> model.deploymentRole() == DeploymentRole.ORCHESTRATOR_CLIENT)
-            .map(PipelineStepModel::artifactBindingName)
+            .map(ExecutionModelIdentity::new)
             .collect(java.util.stream.Collectors.toSet());
         return models.stream()
             .filter(model -> model.deploymentRole() == DeploymentRole.ORCHESTRATOR_CLIENT
                 || (ctx.isTransportModeLocal() && model.deploymentRole() == DeploymentRole.PIPELINE_SERVER
-                    && !clientIdentities.contains(model.artifactBindingName())))
+                    && !clientIdentities.contains(new ExecutionModelIdentity(model))))
             .toList();
+    }
+
+    private record ExecutionModelIdentity(String bindingName, ClassName serviceClass) {
+        private ExecutionModelIdentity(PipelineStepModel model) {
+            this(model.artifactBindingName(), model.serviceClassName());
+        }
     }
 
     private boolean hasDeferredCompletion(PipelineStepModel model) {
