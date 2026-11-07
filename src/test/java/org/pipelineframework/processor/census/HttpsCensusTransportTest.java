@@ -52,17 +52,29 @@ class HttpsCensusTransportTest {
         } finally { server.stop(0); }
     }
     @Test void localTlsHandshakeFailureIsRejected() throws Exception {
-        var tls = javax.net.ssl.SSLContext.getInstance("TLS");
-        // A TLS peer without a server key cannot complete the handshake.
-        tls.init(new javax.net.ssl.KeyManager[0], new javax.net.ssl.TrustManager[0], new java.security.SecureRandom());
-        try (var server = tls.getServerSocketFactory().createServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
-            var peer = Thread.ofVirtual().start(() -> {
-                try (var connection = (javax.net.ssl.SSLSocket) server.accept()) { connection.startHandshake(); }
-                catch (java.io.IOException expectedHandshakeFailure) { }
+        // Reject the ClientHello with a TLS fatal handshake_failure alert. No keys,
+        // DNS lookups or server-side crypto provider startup are involved.
+        InetAddress loopback = InetAddress.getByAddress(new byte[] {127, 0, 0, 1});
+        try (var server = new ServerSocket(0, 1, loopback)) {
+            var clientHelloSeen = new java.util.concurrent.CountDownLatch(1);
+            var peer = Thread.ofPlatform().daemon().start(() -> {
+                try (var connection = server.accept()) {
+                    connection.setSoTimeout(1500);
+                    byte[] header = connection.getInputStream().readNBytes(5);
+                    if (header.length != 5 || header[0] != 0x16) return;
+                    int length = ((header[3] & 0xff) << 8) | (header[4] & 0xff);
+                    if (length == 0 || length > 16384) return;
+                    byte[] hello = connection.getInputStream().readNBytes(length);
+                    if (hello.length != length || hello[0] != 1) return;
+                    clientHelloSeen.countDown();
+                    connection.getOutputStream().write(new byte[] {0x15, 0x03, 0x03, 0, 2, 2, 0x28});
+                    connection.getOutputStream().flush();
+                } catch (java.io.IOException unavailable) { }
             });
             try {
-                URI endpoint = URI.create("https://localhost:" + server.getLocalPort() + "/observations");
-                assertThrows(javax.net.ssl.SSLHandshakeException.class, () -> new HttpsCensusTransport(endpoint).send("{}"));
+                URI endpoint = URI.create("https://127.0.0.1:" + server.getLocalPort() + "/observations");
+                assertThrows(javax.net.ssl.SSLException.class, () -> new HttpsCensusTransport(endpoint).send("{}"));
+                assertEquals(0, clientHelloSeen.getCount(), "The local peer rejected a real TLS ClientHello");
             } finally { server.close(); peer.join(Duration.ofSeconds(2)); }
         }
     }
