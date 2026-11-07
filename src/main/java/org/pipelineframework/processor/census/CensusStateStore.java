@@ -58,7 +58,14 @@ public final class CensusStateStore {
                 Application attempted = new Application(app.identity(), today.toString(), app.acknowledgedDigest(), app.acknowledgedWeek());
                 boolean firstUse = !state.noticeShown();
                 state = new State(state.installation(), state.salt(), true, with(state.applications(), key, attempted));
-                write(state); // durable attempt marker precedes delivery, even if delivery throws.
+                write(state);
+                // A forced file plus an atomic rename is not enough after a power loss.
+                // Force the directory entries before sending; unsupported hosts fail closed.
+                for (Path parent = directory.toRealPath(); parent != null; parent = parent.getParent()) {
+                    try (FileChannel channelToSync = FileChannel.open(parent, StandardOpenOption.READ)) {
+                        channelToSync.force(true);
+                    }
+                }
                 if (firstUse) System.err.println("TPF build census: minimal build statistics enabled. Disable with TPF_TELEMETRY_DISABLED=true. Inspect: https://pipelineframework.org/develop/pipeline-compilation/generated-artifacts#build-census");
                 if (transport.send(event.json())) {
                     write(new State(state.installation(), state.salt(), true,
@@ -96,16 +103,24 @@ public final class CensusStateStore {
         Map<String, Application> next = new TreeMap<>(source); next.put(key, value); return next;
     }
     private void write(State state) throws Exception {
-        writePrivate(directory.resolve("state.json"), gson.toJson(state));
+        writePrivate(directory.resolve("state.json"), gson.toJson(state), true);
     }
-    void writePrivate(Path output, String contents) throws Exception {
+    void writePreview(Path output, String contents) throws Exception {
+        writePrivate(output, contents, false);
+    }
+    private void writePrivate(Path output, String contents, boolean replace) throws Exception {
         if (Files.isSymbolicLink(output)) throw new java.io.IOException("Unsafe census output");
         Path temporary = Files.createTempFile(output.toAbsolutePath().getParent(), "census-", ".tmp");
         try {
             secure(temporary, false);
             Files.writeString(temporary, contents, StandardCharsets.UTF_8);
             try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) { channel.force(true); }
-            Files.move(temporary, output, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            if (replace) {
+                Files.move(temporary, output, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } else {
+                // Atomic create-only publication of the completed private file.
+                Files.createLink(output, temporary);
+            }
         } finally { Files.deleteIfExists(temporary); }
     }
     private void secure(Path path, boolean folder) throws Exception {

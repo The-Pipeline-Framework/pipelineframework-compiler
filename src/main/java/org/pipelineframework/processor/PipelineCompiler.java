@@ -27,6 +27,10 @@ public final class PipelineCompiler {
                 var configuration = org.pipelineframework.processor.census.CensusConfiguration.resolve(
                         context.getCompilerOptions().asMap(), System.getenv(), System.getProperties());
                 if (configuration.mode() == org.pipelineframework.processor.census.CensusConfiguration.Mode.OFF) return;
+                // Without the host's actual CLASS_OUTPUT, an arbitrary preview path could
+                // point into a custom packaged output directory.
+                if (configuration.mode() == org.pipelineframework.processor.census.CensusConfiguration.Mode.PREVIEW
+                        && context.getClassOutputRoot().isEmpty()) return;
                 new org.pipelineframework.processor.census.BuildCensusProjector().project(context).ifPresent(summary -> {
                     var roots = new java.util.HashSet<java.nio.file.Path>();
                     java.util.Optional.ofNullable(context.getModuleDir()).ifPresent(module -> {

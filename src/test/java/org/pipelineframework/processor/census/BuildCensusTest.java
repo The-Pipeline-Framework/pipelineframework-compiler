@@ -89,6 +89,11 @@ class BuildCensusTest {
         Properties properties = new Properties(); properties.setProperty("user.home", temporary.toString()); properties.setProperty("os.name", "Linux");
         var options = Map.of("tpf.telemetry.mode", "preview", "tpf.telemetry.preview", temporary.resolve("preview.json").toString());
         assertEquals(CensusConfiguration.Mode.OFF, CensusConfiguration.resolve(options, Map.of("TPF_TELEMETRY_DISABLED", "maybe"), properties).mode());
+        assertEquals(CensusConfiguration.Mode.OFF, CensusConfiguration.resolve(options, Map.of("TPF_TELEMETRY_STATE_DIR", " "), properties).mode());
+        var valueless = new HashMap<>(options);
+        valueless.put("tpf.telemetry.disabled", null); // javac represents a bare -A option with a null value.
+        assertEquals(CensusConfiguration.Mode.OFF, CensusConfiguration.resolve(valueless, Map.of(), properties).mode());
+
         assertEquals(CensusConfiguration.Mode.OFF, CensusConfiguration.resolve(options, Map.of("CI", "true"), properties).mode());
         assertEquals(CensusConfiguration.Mode.PREVIEW, CensusConfiguration.resolve(options, Map.of("CI", "true", "TPF_TELEMETRY_STATE_PERSISTENT", "true"), properties).mode());
         assertEquals(CensusConfiguration.Mode.OFF, CensusConfiguration.resolve(Map.of(), Map.of(), properties).mode());

@@ -64,6 +64,11 @@ public class PipelineStepProcessor extends AbstractProcessingTool {
     private boolean compilationExecuted;
     private java.util.Optional<org.pipelineframework.processor.census.BuildCensusObservation> pendingCensus = java.util.Optional.empty();
 
+    private static final class CensusReporterHolder {
+        private static final org.pipelineframework.processor.census.BuildCensusReporter INSTANCE =
+            new org.pipelineframework.processor.census.BuildCensusReporter();
+    }
+
     /** Creates the service-loader compatible production processor. */
     public PipelineStepProcessor() {
         this.compiler = PipelineCompiler.production(observation -> pendingCensus = java.util.Optional.of(observation));
@@ -87,7 +92,7 @@ public class PipelineStepProcessor extends AbstractProcessingTool {
                 if (!roundEnv.errorRaised()) {
                     try {
                         pendingCensus.ifPresent(candidate ->
-                            new org.pipelineframework.processor.census.BuildCensusReporter().submit(candidate.host(), candidate.summary()));
+                            CensusReporterHolder.INSTANCE.submit(candidate.host(), candidate.summary()));
                     } catch (RuntimeException unavailable) {
                         // Census initialization and handoff cannot alter compiler results.
                     }

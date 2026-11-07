@@ -43,13 +43,33 @@ class CensusMetadataTest {
             Files.createDirectories(directory);
             var configuration = new CensusConfiguration(CensusConfiguration.Mode.PREVIEW, temporary.resolve("state"), java.util.Optional.of(directory.resolve("preview.json")));
             var host = new BuildCensusHostContext(source, configuration, java.util.Set.of(temporary.resolve("custom-artifacts")));
-            assertFalse(host.permitsPreviewOutput());
+            assertTrue(host.previewDestination().isEmpty());
             assertFalse(Files.exists(directory.resolve("preview.json")));
         }
         Path resources = project.resolve("src/main/resources");
         Path alias = temporary.resolve("private-alias"); Files.createSymbolicLink(alias, resources);
-        assertFalse(new BuildCensusHostContext(source, new CensusConfiguration(CensusConfiguration.Mode.PREVIEW,
-                temporary.resolve("state"), java.util.Optional.of(alias.resolve("preview.json")))).permitsPreviewOutput());
+        assertTrue(new BuildCensusHostContext(source, new CensusConfiguration(CensusConfiguration.Mode.PREVIEW,
+                temporary.resolve("state"), java.util.Optional.of(alias.resolve("preview.json")))).previewDestination().isEmpty());
         assertFalse(Files.exists(temporary.resolve("state")));
     }
+    @Test void previewDoesNotFollowARetargetedAliasOrOverwriteAnExistingFile() throws Exception {
+        Path source = Files.writeString(temporary.resolve("pipeline.yaml"), "private");
+        Path safe = Files.createDirectory(temporary.resolve("safe"));
+        Path packaged = Files.createDirectory(temporary.resolve("artifacts"));
+        Path alias = Files.createSymbolicLink(temporary.resolve("preview-alias"), safe);
+        var configuration = new CensusConfiguration(CensusConfiguration.Mode.PREVIEW, temporary.resolve("state"),
+                java.util.Optional.of(alias.resolve("preview.json")));
+        var host = new BuildCensusHostContext(source, configuration, java.util.Set.of(packaged));
+        Path destination = host.previewDestination().orElseThrow();
+        Files.delete(alias);
+        Files.createSymbolicLink(alias, packaged);
+        assertTrue(host.previewDestination().isEmpty());
+        var store = new CensusStateStore(configuration.stateDirectory());
+        store.writePreview(destination, "{}");
+        assertFalse(Files.exists(packaged.resolve("preview.json")));
+        assertEquals("{}", Files.readString(safe.resolve("preview.json")));
+        assertThrows(FileAlreadyExistsException.class, () -> store.writePreview(destination, "replacement"));
+        assertEquals("{}", Files.readString(destination));
+    }
+
 }

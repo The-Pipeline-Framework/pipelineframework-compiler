@@ -8,22 +8,28 @@ import java.util.concurrent.*;
 
 /** Fixed public destination. Construct and use only on the census daemon, never on a compiler thread. */
 public final class HttpsCensusTransport implements CensusTransport {
-    private final HttpClient client;
     private final URI endpoint;
     public HttpsCensusTransport() { this(URI.create("https://pipelineframework.org/api/census/v1/observations")); }
     // Package-private controlled endpoint for tests; no endpoint override is exposed to builds.
     HttpsCensusTransport(URI endpoint) {
         this.endpoint = endpoint;
-        client = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).followRedirects(HttpClient.Redirect.NEVER)
-                .proxy(new ProxySelector() {
-                    public List<Proxy> select(URI uri) { return List.of(Proxy.NO_PROXY); }
-                    public void connectFailed(URI uri, SocketAddress address, java.io.IOException error) { }
-                }).build();
     }
     public boolean send(String json) throws Exception {
         var request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(1))
                 .header("Content-Type", "application/json").header("User-Agent", "TPF-Build-Census/1")
                 .POST(HttpRequest.BodyPublishers.ofString(json)).build();
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).followRedirects(HttpClient.Redirect.NEVER)
+                .proxy(new ProxySelector() {
+                    public List<Proxy> select(URI uri) { return List.of(Proxy.NO_PROXY); }
+                    public void connectFailed(URI uri, SocketAddress address, java.io.IOException error) { }
+                }).build();
+        try {
+            return send(client, request);
+        } finally {
+            client.shutdownNow();
+        }
+    }
+    private boolean send(HttpClient client, HttpRequest request) throws Exception {
         var response = client.sendAsync(request, HttpResponse.BodyHandlers.discarding());
         try {
             return response.get(1, TimeUnit.SECONDS).statusCode() == 204;
@@ -37,7 +43,6 @@ public final class HttpsCensusTransport implements CensusTransport {
             throw interrupted;
         } finally {
             response.cancel(true);
-            client.shutdownNow();
         }
     }
 }

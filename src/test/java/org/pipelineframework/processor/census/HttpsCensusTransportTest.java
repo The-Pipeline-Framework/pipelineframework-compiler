@@ -42,7 +42,9 @@ class HttpsCensusTransportTest {
         server.start();
         String base = "http://localhost:" + server.getAddress().getPort();
         try {
-            assertTrue(new HttpsCensusTransport(URI.create(base + "/ok")).send("{}"));
+            var reusable = new HttpsCensusTransport(URI.create(base + "/ok"));
+            assertTrue(reusable.send("{}"));
+            assertTrue(reusable.send("{}"));
             assertFalse(new HttpsCensusTransport(URI.create(base + "/redirect")).send("{}"));
             assertEquals(0, redirected.get());
             assertFalse(new HttpsCensusTransport(URI.create(base + "/status-429")).send("{}"));

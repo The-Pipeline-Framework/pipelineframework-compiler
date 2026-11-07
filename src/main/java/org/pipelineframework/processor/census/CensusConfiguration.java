@@ -15,8 +15,13 @@ public record CensusConfiguration(Mode mode, Path stateDirectory, Optional<Path>
             Path state = os.contains("mac") ? home.resolve("Library/Application Support/TPF/census")
                     : os.contains("win") ? Path.of(environment.getOrDefault("LOCALAPPDATA", home.toString())).resolve("TPF/census")
                     : Path.of(environment.getOrDefault("XDG_STATE_HOME", home.resolve(".local/state").toString())).resolve("tpf/census");
-            if (environment.containsKey("TPF_TELEMETRY_STATE_DIR")) state = Path.of(environment.get("TPF_TELEMETRY_STATE_DIR"));
-            boolean disabled = disables(options.get("tpf.telemetry.disabled")) || disables(environment.get("TPF_TELEMETRY_DISABLED"))
+            if (environment.containsKey("TPF_TELEMETRY_STATE_DIR")) {
+                String override = environment.get("TPF_TELEMETRY_STATE_DIR");
+                if (override.isBlank()) return new CensusConfiguration(Mode.OFF, state, Optional.empty());
+                state = Path.of(override);
+            }
+            boolean disabled = (options.containsKey("tpf.telemetry.disabled")
+                    && !"false".equalsIgnoreCase(options.get("tpf.telemetry.disabled"))) || disables(environment.get("TPF_TELEMETRY_DISABLED"))
                     || disables(properties.getProperty("tpf.telemetry.disabled"));
             String requested = options.getOrDefault("tpf.telemetry.mode", environment.getOrDefault("TPF_TELEMETRY_MODE", "report"));
             boolean ephemeral = java.util.stream.Stream.of("CI", "GITHUB_ACTIONS", "JENKINS_URL", "HUDSON_URL",
