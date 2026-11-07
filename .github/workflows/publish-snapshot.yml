@@ -12,6 +12,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  TPF_TELEMETRY_DISABLED: "true"
+
 jobs:
   publish:
     runs-on: ubuntu-latest

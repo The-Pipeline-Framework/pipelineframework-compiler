@@ -206,6 +206,10 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource><directory>src/main/resources</directory><filtering>false</filtering></resource>
+            <resource><directory>src/main/build-metadata</directory><filtering>true</filtering></resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -230,6 +234,7 @@
                 <configuration>
                     <argLine>@{argLine} --enable-preview</argLine>
                     <systemPropertyVariables>
+                        <tpf.telemetry.disabled>true</tpf.telemetry.disabled>
                         <compiler.project.basedir>${project.basedir}</compiler.project.basedir>
                     </systemPropertyVariables>
                 </configuration>

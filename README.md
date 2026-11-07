@@ -66,3 +66,25 @@ Fork pull requests require `safe-to-system-test`. Configure `SYSTEM_TEST_APP_ID`
 `SYSTEM_TEST_APP_PRIVATE_KEY` as a repository secret for the coordination GitHub App. Candidate publication uses no
 Maven Central credentials or GPG key. Candidate versioning does not rewrite the released `tpf.version` contract
 dependency.
+
+
+## Build census
+
+The compiler owns build-only census projection and a bounded daemon reporting shell.
+Public reporting is release-gated off; local preview is available with javac options
+`-Atpf.telemetry.mode=preview` and `-Atpf.telemetry.preview=/private/census-preview.json`.
+Opt out with `TPF_TELEMETRY_DISABLED=true`, JVM property `tpf.telemetry.disabled=true`,
+or processor option `-Atpf.telemetry.disabled=true`. Any disabling source wins, including
+invalid values. Known CI/container environments require explicitly retained state through
+`TPF_TELEMETRY_STATE_PERSISTENT=true` even for preview.
+
+Choose a fresh preview filename outside source and packaged output. Existing files are
+never replaced; preview requires an identifiable compiler output directory.
+The event covers a successful TPF compiler pass. javac can still report errors after
+annotation processing, and packaging and tests run separately.
+
+The packaged schema is `META-INF/tpf/census-v1.schema.json`; protocol/collector source lives
+in the separate `pipelineframework-census` repository. See the canonical
+[compilation guidance](https://github.com/The-Pipeline-Framework/pipelineframework/blob/1b531d775e0edae0742265196b5defcb51121bfa/docs/develop/pipeline-compilation/generated-artifacts.md#build-census)
+for inspected fields, identity, state directories, delivery limitations, and privacy controls.
+No census dependencies or reporting code are added to generated applications or runtime paths.
