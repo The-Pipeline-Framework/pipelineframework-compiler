@@ -13,11 +13,13 @@ import org.junit.jupiter.api.io.TempDir;
 public class CensusCompilationTest {
     @TempDir Path temporary;
 
+    /** Checks that a subprocess exits even while its fake transport is blocked. */
     @Test void unfinishedDaemonReportingDoesNotKeepJvmAlive() {
         assertTimeoutPreemptively(Duration.ofSeconds(5), () -> runHost("exit"));
         assertTrue(Files.exists(temporary.resolve("exit-entered")));
     }
 
+    /** Starts two JVMs on the same retained directory and checks the single daily attempt. */
     @Test void multipleCompilerProcessesShareOneRetainedDailyIdentity() throws Exception {
         try (var processes = java.util.concurrent.Executors.newFixedThreadPool(2)) {
             var first = processes.submit(() -> { runHost("observe"); return true; });
@@ -30,6 +32,7 @@ public class CensusCompilationTest {
         assertEquals(1, state.getAsJsonObject("applications").size());
     }
 
+    /** Exercises real javac processing for application, custom output, service and invalid builds. */
     @Test void productionHostPreviewsOnlyErrorFreeApplicationAuthority() throws Exception {
         Files.writeString(temporary.resolve("pipeline.yaml"), """
                 version: 1
@@ -70,6 +73,7 @@ public class CensusCompilationTest {
         runHost("invalid");
         assertFalse(Files.exists(temporary.resolve("invalid.json")));
     }
+    /** Runs the production processor or state probe in a subprocess with controlled census settings. */
     private void runHost(String mode) throws Exception {
         var command = List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                 "-Dtpf.telemetry.disabled=false", "-Duser.home=" + temporary,
@@ -85,6 +89,7 @@ public class CensusCompilationTest {
                     Files.readString(temporary.resolve(mode + ".log"))));
         } finally { process.destroyForcibly(); }
     }
+    /** Runs the selected subprocess fixture and allows time for asynchronous inspection. */
     public static void main(String[] args) throws Exception {
         Path root = Path.of(args[0]); String mode = args[1];
         if (mode.equals("exit") || mode.equals("observe")) {

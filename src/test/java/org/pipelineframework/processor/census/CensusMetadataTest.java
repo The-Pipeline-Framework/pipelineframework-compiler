@@ -9,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class CensusMetadataTest {
     @TempDir Path temporary;
+    /** Tests both artifact metadata names with a competing resource earlier on the classpath. */
     @Test void versionsBelongToOwnerArtifactNotAnEarlierApplicationResource() throws Exception {
         String name = CountBand.class.getName().replace('.', '/') + ".class";
         byte[] owner;
@@ -36,6 +37,7 @@ class CensusMetadataTest {
             }
         }
     }
+    /** Rejects reserved directories, custom packaged output, and aliases pointing at them. */
     @Test void inspectionNeverWritesUnderResourcesOrKnownHostOutputRoots() throws Exception {
         Path project = Files.createDirectory(temporary.resolve("project"));
         Path source = Files.writeString(project.resolve("pipeline.yaml"), "private");
@@ -52,6 +54,7 @@ class CensusMetadataTest {
                 temporary.resolve("state"), java.util.Optional.of(alias.resolve("preview.json")))).previewDestination().isEmpty());
         assertFalse(Files.exists(temporary.resolve("state")));
     }
+    /** Retargets an alias after validation and checks canonical create-only publication. */
     @Test void previewDoesNotFollowARetargetedAliasOrOverwriteAnExistingFile() throws Exception {
         Path source = Files.writeString(temporary.resolve("pipeline.yaml"), "private");
         Path safe = Files.createDirectory(temporary.resolve("safe"));

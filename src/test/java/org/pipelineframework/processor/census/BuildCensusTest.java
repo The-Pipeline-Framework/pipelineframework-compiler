@@ -27,12 +27,14 @@ class BuildCensusTest {
                     "query", CountBand.ONE, "command", CountBand.ZERO, "await", CountBand.ZERO),
                 BuildCensusSummary.Transport.REST, BuildCensusSummary.Platform.COMPUTE, BuildCensusSummary.Layout.MODULAR);
     }
+    /** Creates a private configuration anchor and retained state directory within the fixture. */
     private BuildCensusHostContext host(CensusConfiguration.Mode mode) throws Exception {
         Path source = temporary.resolve("private-company-pipeline.yaml");
         if (!Files.exists(source)) Files.writeString(source, "secret: never-transmit");
         return new BuildCensusHostContext(source, new CensusConfiguration(mode, temporary.resolve("state"), Optional.of(temporary.resolve("preview.json"))));
     }
     private Clock clock(String date) { return Clock.fixed(Instant.parse(date + "T12:00:00Z"), ZoneOffset.UTC); }
+    /** Checks public count boundaries and rejects custom version labels and schema keys. */
     @Test void countBandsAndVersionNormalizationAreBounded() {
         assertEquals(CountBand.UNKNOWN, CountBand.of(-1)); assertEquals(CountBand.ONE, CountBand.of(1));
         assertEquals(CountBand.TWO_TO_FIVE, CountBand.of(5)); assertEquals(CountBand.SIX_TO_TEN, CountBand.of(6));
@@ -42,6 +44,7 @@ class BuildCensusTest {
         assertThrows(IllegalArgumentException.class, () -> new BuildCensusSummary(Map.of("private", CountBand.ONE),
                 summary().featureCounts(), summary().transport(), summary().platform(), summary().runtimeLayout()));
     }
+    /** Checks renewal and configuration-change delivery without rotating retained application IDs. */
     @Test void retainedIdentitySuppressesBuildsButRenewsWeeklyAndOnVersionIndependentConfigurationChanges() throws Exception {
         var host = host(CensusConfiguration.Mode.REPORT); var store = new CensusStateStore(host.configuration().stateDirectory());
         List<String> events = new ArrayList<>(); CensusTransport transport = json -> { events.add(json); return true; };
@@ -66,6 +69,7 @@ class BuildCensusTest {
         assertNotEquals(first.get("application_instance_id"), JsonParser.parseString(events.getLast()).getAsJsonObject().get("application_instance_id"));
         Files.writeString(temporary.resolve("event.json"), events.getFirst());
     }
+    /** Checks that an offline attempt consumes the daily slot and corrupt state prevents delivery. */
     @Test void failedDeliveryIsThrottledAndCorruptStateNeverResetsIdentity() throws Exception {
         var host = host(CensusConfiguration.Mode.REPORT); var store = new CensusStateStore(host.configuration().stateDirectory());
         var attempts = new java.util.concurrent.atomic.AtomicInteger();
@@ -77,6 +81,7 @@ class BuildCensusTest {
         assertThrows(Exception.class, () -> store.observe(host, summary(), clock("2026-10-06"), failure));
         assertEquals(2, attempts.get());
     }
+    /** Checks that inspection exposes a candidate locally without sending it or revealing the source path. */
     @Test void previewUsesSamePayloadAndNeverCallsTransport() throws Exception {
         var host = host(CensusConfiguration.Mode.PREVIEW);
         var outcome = new CensusStateStore(host.configuration().stateDirectory()).observe(host, summary(), clock("2026-10-04"),
@@ -85,6 +90,7 @@ class BuildCensusTest {
         assertTrue(JsonParser.parseString(outcome.preview().orElseThrow()).getAsJsonObject().has("event"));
         assertFalse(outcome.preview().orElseThrow().contains(host.originalConfiguration().toString()));
     }
+    /** Covers malformed opt-outs, disposable hosts, and a disabled submission with no local state. */
     @Test void policyFailsClosedAndDisabledReporterHasNoSideEffects() throws Exception {
         Properties properties = new Properties(); properties.setProperty("user.home", temporary.toString()); properties.setProperty("os.name", "Linux");
         var options = Map.of("tpf.telemetry.mode", "preview", "tpf.telemetry.preview", temporary.resolve("preview.json").toString());
@@ -102,6 +108,7 @@ class BuildCensusTest {
         }
         assertFalse(Files.exists(temporary.resolve("state")));
     }
+    /** Holds delivery open to check that submission returns and the worker is a daemon. */
     @Test void workerDoesNotBlockCompilerAndIsDaemonOnly() throws Exception {
         CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
         try (var reporter = new BuildCensusReporter(() -> json -> {
@@ -112,6 +119,7 @@ class BuildCensusTest {
             assertTrue(entered.await(2, TimeUnit.SECONDS)); release.countDown();
         }
     }
+    /** Protects the retained state when another writer holds the lock or the destination is a symlink. */
     @Test void lockContentionAndSymlinksDoNotMutateState() throws Exception {
         var host = host(CensusConfiguration.Mode.REPORT); var store = new CensusStateStore(host.configuration().stateDirectory());
         store.observe(host, summary(), clock("2026-10-04"), json -> true);
@@ -126,6 +134,7 @@ class BuildCensusTest {
         assertThrows(Exception.class, () -> store.observe(host, summary(), clock("2026-10-05"), json -> true));
         assertEquals("unchanged", Files.readString(target));
     }
+    /** Checks compiler error suppression and isolation of exceptions from optional observers. */
     @Test void errorsAndObserverExceptionsCannotTurnIntoReportsOrBuildFailures() {
         var ctx = new PipelineCompilationContext(mock(javax.annotation.processing.ProcessingEnvironment.class), Jsr269SourceInventory.empty(),
                 new PipelineCompilerOptions(Map.of()), (severity, message) -> { });
@@ -140,6 +149,7 @@ class BuildCensusTest {
                 new PipelineCompilerOptions(Map.of()), (severity, message) -> { });
         assertDoesNotThrow(() -> new PipelineCompiler(List.of(), ignored -> { throw new IllegalStateException("census unavailable"); }).compile(valid));
     }
+    /** Uses two references to the same nested definition to distinguish logical counts from expanded copies. */
     @Test void logicalGraphCountsReusedDefinitionsOnceWithoutModuleModels() throws Exception {
         var ctx = new PipelineCompilationContext(mock(javax.annotation.processing.ProcessingEnvironment.class), Jsr269SourceInventory.empty(),
                 new PipelineCompilerOptions(Map.of()), (severity, message) -> { });
@@ -166,6 +176,7 @@ class BuildCensusTest {
         Files.writeString(Path.of("target/census-client-fixture.json"), event);
         ctx.getCompilerDiagnostics().error("semantic failure"); assertTrue(new BuildCensusProjector().project(ctx).isEmpty());
     }
+    /** Measures the compiler-side handoff with the worker blocked on a controlled transport. */
     @Test void synchronousProjectionAndHandoffStayWithinBudgetOnLargeLogicalFixture() throws Exception {
         var ctx = new PipelineCompilationContext(mock(javax.annotation.processing.ProcessingEnvironment.class), Jsr269SourceInventory.empty(),
                 new PipelineCompilerOptions(Map.of()), (severity, message) -> { });
@@ -201,6 +212,7 @@ class BuildCensusTest {
         } finally { blocked.countDown(); }
     }
 
+    /** Races retained-state initialization and checks that only one daily observation escapes. */
     @Test void concurrentFirstUseHasOneRetainedIdentityAndOneDailyAttempt() throws Exception {
         var host = host(CensusConfiguration.Mode.REPORT);
         var sent = new java.util.concurrent.atomic.AtomicInteger();
@@ -221,6 +233,7 @@ class BuildCensusTest {
         assertEquals("unchanged", Files.readString(blockedDirectory));
     }
 
+    /** Checks that inspection explains a busy lock without fabricating an event. */
     @Test void previewExplainsLockSuppressionWithoutInventingIdentities() throws Exception {
         var host = host(CensusConfiguration.Mode.PREVIEW);
         new CensusStateStore(host.configuration().stateDirectory()).observe(host, summary(), clock("2026-10-04"), json -> false);
@@ -236,6 +249,7 @@ class BuildCensusTest {
         }
     }
 
+    /** Checks renewal across a year boundary in a host time zone different from UTC. */
     @Test void weeklyRenewalUsesUtcIsoWeekAcrossYearBoundary() throws Exception {
         var host = host(CensusConfiguration.Mode.REPORT); var store = new CensusStateStore(host.configuration().stateDirectory());
         var sent = new java.util.concurrent.atomic.AtomicInteger(); CensusTransport transport = json -> { sent.incrementAndGet(); return true; };
@@ -245,6 +259,7 @@ class BuildCensusTest {
         store.observe(host, summary(), Clock.fixed(Instant.parse("2027-01-04T00:01:00Z"), ZoneId.of("Pacific/Honolulu")), transport);
         assertEquals(2, sent.get(), "Renewal uses UTC Monday, regardless of the host clock zone");
     }
+    /** Holds the first delivery open and uses a FIFO sentinel to count all accepted pending work. */
     @Test void saturatedQueueDropsExcessAndCoalescesTheLatestPendingApplication() throws Exception {
         var first = host(CensusConfiguration.Mode.REPORT); var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1); var delivered = new CountDownLatch(9);
@@ -275,6 +290,7 @@ class BuildCensusTest {
         } finally { release.countDown(); }
     }
 
+    /** Injects invalid identifiers and checks that preview rejects them without rewriting the state. */
     @Test void nonrandomPersistedIdentityCannotAppearInPreviewOrBeResetSilently() throws Exception {
         var host = host(CensusConfiguration.Mode.PREVIEW); var store = new CensusStateStore(host.configuration().stateDirectory());
         store.observe(host, summary(), clock("2026-10-04"), json -> { fail("Preview transmitted"); return false; });

@@ -15,6 +15,7 @@ public final class BuildCensusReporter implements AutoCloseable {
     private final Supplier<CensusTransport> transport;
     private final Clock clock;
     public BuildCensusReporter() { this(HttpsCensusTransport::new, Clock.systemUTC()); }
+    /** Creates a worker that starts only on submission and expires when idle. */
     public BuildCensusReporter(Supplier<CensusTransport> transport, Clock clock) {
         this.transport = transport; this.clock = clock;
         worker = new ThreadPoolExecutor(1, 1, 1, TimeUnit.SECONDS, new ArrayBlockingQueue<>(8), runnable -> {
@@ -22,6 +23,7 @@ public final class BuildCensusReporter implements AutoCloseable {
         }, new ThreadPoolExecutor.AbortPolicy());
         worker.allowCoreThreadTimeOut(true);
     }
+    /** Coalesces pending observations for the same anchor and settings, dropping work when the queue is full. */
     public void submit(BuildCensusHostContext host, BuildCensusSummary summary) {
         if (host.configuration().mode() == CensusConfiguration.Mode.OFF) return;
         var key = new Key(host.originalConfiguration().toAbsolutePath().normalize(), host.configuration());
@@ -29,6 +31,7 @@ public final class BuildCensusReporter implements AutoCloseable {
         try { worker.execute(() -> consume(key)); }
         catch (RejectedExecutionException full) { pending.remove(key); }
     }
+    /** Checks preview paths and handles state or transport failures off the compiler thread. */
     private void consume(Key key) {
         Candidate candidate = pending.remove(key);
         if (candidate == null) return;
@@ -36,7 +39,10 @@ public final class BuildCensusReporter implements AutoCloseable {
         try {
             if (candidate.host.configuration().mode() == CensusConfiguration.Mode.PREVIEW) {
                 var destination = candidate.host.previewDestination();
-                if (destination.isEmpty()) return;
+                if (destination.isEmpty()) {
+                    System.err.println("TPF build census: preview skipped because the destination is not permitted.");
+                    return;
+                }
                 String contents;
                 try {
                     var outcome = state.observe(candidate.host, candidate.summary, clock, json -> false);

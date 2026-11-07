@@ -7,6 +7,7 @@ public enum CountBand {
     private final String value;
     CountBand(String value) { this.value = value; }
     public String value() { return value; }
+    /** Maps a count to the protocol band; negative input represents an unknown count. */
     public static CountBand of(long count) {
         if (count < 0) return UNKNOWN;
         if (count == 0) return ZERO;

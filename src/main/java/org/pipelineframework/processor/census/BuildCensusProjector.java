@@ -7,6 +7,7 @@ import org.pipelineframework.config.template.PipelineTemplateConfig;
 
 /** Pure allowlisted projection of the original logical definition catalogue, never module-filtered IR. */
 public final class BuildCensusProjector {
+    /** Counts reachable logical definitions only for an error-free application orchestrator; skips incomplete nested graphs. */
     public Optional<BuildCensusSummary> project(PipelineCompilationContext ctx) {
         if (!ctx.isOrchestratorGenerated() || ctx.isPluginHost() || ctx.hasCompilationErrors()
                 || ctx.getOriginalPipelineConfig().isEmpty()) return Optional.empty();

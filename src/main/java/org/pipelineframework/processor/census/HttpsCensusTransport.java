@@ -14,6 +14,7 @@ public final class HttpsCensusTransport implements CensusTransport {
     HttpsCensusTransport(URI endpoint) {
         this.endpoint = endpoint;
     }
+    /** Uses a fresh client for this attempt and releases it even if the request fails. */
     public boolean send(String json) throws Exception {
         var request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(1))
                 .header("Content-Type", "application/json").header("User-Agent", "TPF-Build-Census/1")
@@ -29,6 +30,7 @@ public final class HttpsCensusTransport implements CensusTransport {
             client.shutdownNow();
         }
     }
+    /** Bounds the entire response, including its body, and acknowledges only HTTP 204. */
     private boolean send(HttpClient client, HttpRequest request) throws Exception {
         var response = client.sendAsync(request, HttpResponse.BodyHandlers.discarding());
         try {

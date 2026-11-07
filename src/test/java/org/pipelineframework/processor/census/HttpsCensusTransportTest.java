@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 @org.junit.jupiter.api.parallel.Isolated("Exercises real request deadlines without concurrent compiler fixture contention")
 @org.junit.jupiter.api.parallel.Execution(org.junit.jupiter.api.parallel.ExecutionMode.SAME_THREAD)
 class HttpsCensusTransportTest {
+    /** Exercises repeat delivery, headers, rejections and response deadlines over loopback. */
     @Test void fixedHeadersNoRedirectsAndDeadline() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         AtomicInteger redirected = new AtomicInteger();
@@ -55,6 +56,7 @@ class HttpsCensusTransportTest {
                     () -> new HttpsCensusTransport(URI.create(base + "/slow-body")).send("{}")));
         } finally { server.stop(0); }
     }
+    /** Uses a local TLS alert to verify rejection without relying on a certificate or public endpoint. */
     @Test void localTlsHandshakeFailureIsRejected() throws Exception {
         // Reject the ClientHello with a TLS fatal handshake_failure alert. No keys,
         // DNS lookups or server-side crypto provider startup are involved.

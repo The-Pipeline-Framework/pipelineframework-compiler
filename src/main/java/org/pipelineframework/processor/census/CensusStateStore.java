@@ -23,6 +23,7 @@ public final class CensusStateStore {
     public record Outcome(String reason, Optional<String> preview, boolean firstUse) { }
     public CensusStateStore(Path directory) { this.directory = directory; }
 
+    /** Locks retained state without waiting, then previews locally or persists an eligible attempt before delivery. */
     public Outcome observe(BuildCensusHostContext host, BuildCensusSummary summary, Clock clock, CensusTransport transport) throws Exception {
         if (host.configuration().mode() == CensusConfiguration.Mode.OFF) return new Outcome("disabled", Optional.empty(), false);
         Files.createDirectories(directory);
@@ -57,6 +58,7 @@ public final class CensusStateStore {
                 if (!reason.equals("eligible")) return new Outcome(reason, Optional.empty(), false);
                 Application attempted = new Application(app.identity(), today.toString(), app.acknowledgedDigest(), app.acknowledgedWeek());
                 boolean firstUse = !state.noticeShown();
+                if (firstUse) System.err.println("TPF build census: minimal build statistics enabled. Disable with TPF_TELEMETRY_DISABLED=true. Inspect: https://pipelineframework.org/develop/pipeline-compilation/generated-artifacts#build-census");
                 state = new State(state.installation(), state.salt(), true, with(state.applications(), key, attempted));
                 write(state);
                 // A forced file plus an atomic rename is not enough after a power loss.
@@ -66,7 +68,6 @@ public final class CensusStateStore {
                         channelToSync.force(true);
                     }
                 }
-                if (firstUse) System.err.println("TPF build census: minimal build statistics enabled. Disable with TPF_TELEMETRY_DISABLED=true. Inspect: https://pipelineframework.org/develop/pipeline-compilation/generated-artifacts#build-census");
                 if (transport.send(event.json())) {
                     write(new State(state.installation(), state.salt(), true,
                             with(state.applications(), key, new Application(app.identity(), today.toString(), reportDigest, week))));
@@ -75,6 +76,7 @@ public final class CensusStateStore {
             } catch (OverlappingFileLockException busy) { return new Outcome("state_busy", Optional.empty(), false); }
         }
     }
+    /** Loads and validates bounded retained state, generating an identity only when no state file exists. */
     private State read() throws Exception {
         Path file = directory.resolve("state.json");
         if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
@@ -105,9 +107,11 @@ public final class CensusStateStore {
     private void write(State state) throws Exception {
         writePrivate(directory.resolve("state.json"), gson.toJson(state), true);
     }
+    /** Publishes a complete private preview without replacing an existing destination. */
     void writePreview(Path output, String contents) throws Exception {
         writePrivate(output, contents, false);
     }
+    /** Forces a private temporary file before atomically publishing it as state or a create-only preview. */
     private void writePrivate(Path output, String contents, boolean replace) throws Exception {
         if (Files.isSymbolicLink(output)) throw new java.io.IOException("Unsafe census output");
         Path temporary = Files.createTempFile(output.toAbsolutePath().getParent(), "census-", ".tmp");
@@ -123,6 +127,7 @@ public final class CensusStateStore {
             }
         } finally { Files.deleteIfExists(temporary); }
     }
+    /** Restricts state files to their owner and fails when the filesystem cannot enforce that boundary. */
     private void secure(Path path, boolean folder) throws Exception {
         if (Files.getFileAttributeView(path, PosixFileAttributeView.class) != null)
             Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(folder ? "rwx------" : "rw-------"));
@@ -132,6 +137,7 @@ public final class CensusStateStore {
                     .setType(AclEntryType.ALLOW).setPrincipal(owner).setPermissions(EnumSet.allOf(AclEntryPermission.class)).build()));
         } else throw new java.io.IOException("Protected state permissions unavailable");
     }
+    /** Derives a local lookup key from the configuration path without storing the path itself. */
     private String digestPath(String salt, String path) throws Exception {
         Mac mac = Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(HexFormat.of().parseHex(salt), "HmacSHA256"));
         return HexFormat.of().formatHex(mac.doFinal(path.getBytes(StandardCharsets.UTF_8)));

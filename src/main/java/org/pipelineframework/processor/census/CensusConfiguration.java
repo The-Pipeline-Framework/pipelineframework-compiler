@@ -8,6 +8,7 @@ public record CensusConfiguration(Mode mode, Path stateDirectory, Optional<Path>
     public enum Mode { OFF, PREVIEW, REPORT }
     public static final boolean PUBLIC_REPORTING_RELEASED = false;
     public CensusConfiguration { Objects.requireNonNull(mode); Objects.requireNonNull(stateDirectory); Objects.requireNonNull(previewFile); }
+    /** Resolves opt-outs before preview or reporting and requires retained state on known disposable hosts. */
     public static CensusConfiguration resolve(Map<String, String> options, Map<String, String> environment, Properties properties) {
         try {
             Path home = Path.of(properties.getProperty("user.home", "."));
@@ -39,6 +40,8 @@ public record CensusConfiguration(Mode mode, Path stateDirectory, Optional<Path>
             return new CensusConfiguration(Mode.OFF, Path.of("."), Optional.empty());
         }
     }
+    /** Treats any supplied value other than explicit false as disabling. */
     private static boolean disables(String value) { return value != null && !"false".equalsIgnoreCase(value); }
+    /** Recognizes a nonblank CI marker unless it is explicitly false. */
     private static boolean enabled(String value) { return value != null && !value.isBlank() && !"false".equalsIgnoreCase(value); }
 }

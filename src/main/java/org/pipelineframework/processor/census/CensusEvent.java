@@ -8,6 +8,7 @@ import java.util.*;
 /** Serializes only explicit census values; never accepts an application model. */
 public record CensusEvent(UUID installationId, UUID applicationInstanceId, LocalDate observedAt,
         String compilerVersion, String contractsVersion, int javaMajor, BuildCensusSummary summary) {
+    /** Validates random identifiers and bounds the version and Java metadata before serialization. */
     public CensusEvent {
         if (!isRandomIdentity(installationId) || !isRandomIdentity(applicationInstanceId))
             throw new IllegalArgumentException("Census identities must be RFC 4122 random UUIDs");
@@ -16,6 +17,7 @@ public record CensusEvent(UUID installationId, UUID applicationInstanceId, Local
         compilerVersion = normalizeVersion(compilerVersion); contractsVersion = normalizeVersion(contractsVersion);
         if (javaMajor < 1 || javaMajor > 999) throw new IllegalArgumentException("Invalid Java major");
     }
+    /** Accepts only RFC-variant version 4 UUIDs. */
     static boolean isRandomIdentity(UUID identity) {
         return identity != null && identity.version() == 4 && identity.variant() == 2;
     }
@@ -27,16 +29,19 @@ public record CensusEvent(UUID installationId, UUID applicationInstanceId, Local
         return result;
     }
     public String json() { return new Gson().toJson(values()); }
+    /** Returns the deduplication input without identifiers or observation date. */
     public String reportValues() {
         Map<String, Object> result = new TreeMap<>(summary.projection());
         result.put("compiler_version", compilerVersion); result.put("contracts_version", contractsVersion); result.put("java_major", javaMajor);
         return new Gson().toJson(result);
     }
+    /** Keeps numeric release versions and maps snapshots to the coarse development suffix. */
     public static String normalizeVersion(String version) {
         if (version != null && version.matches("[0-9]{1,4}([.][0-9]{1,4}){1,3}(-SNAPSHOT|-dev)?"))
             return version.replace("-SNAPSHOT", "-dev");
         return "unknown";
     }
+    /** Reads metadata from the owning artifact so application classpath resources cannot shadow it. */
     public static String packagedVersion(Class<?> owner, String resource) {
         // Resolve beside the owning class artifact, never through the global resource namespace.
         try {

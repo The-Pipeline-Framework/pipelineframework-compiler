@@ -11,16 +11,19 @@ public record BuildCensusSummary(Map<String, CountBand> sizes, Map<String, Count
     public enum Transport { LOCAL, REST, GRPC }
     public enum Platform { COMPUTE, FUNCTION }
     public enum Layout { MODULAR, PIPELINE_RUNTIME, MONOLITH, UNSPECIFIED }
+    /** Freezes the census projection and rejects any vocabulary outside the schema. */
     public BuildCensusSummary {
         sizes = checked(sizes, Set.of("pipelines", "steps", "types", "blocks"));
         featureCounts = checked(featureCounts, Set.of("nested_invocation", "one_to_many", "many_to_one", "query", "command", "await"));
         Objects.requireNonNull(transport); Objects.requireNonNull(platform); Objects.requireNonNull(runtimeLayout);
     }
+    /** Requires every approved field and rejects extra fields before making an immutable copy. */
     private static Map<String, CountBand> checked(Map<String, CountBand> values, Set<String> keys) {
         if (!values.keySet().equals(keys)) throw new IllegalArgumentException("Unexpected census vocabulary");
         values.values().forEach(Objects::requireNonNull);
         return Map.copyOf(values);
     }
+    /** Returns a sorted projection for serialization and stable local hashing. */
     public Map<String, Object> projection() {
         Map<String, Object> result = new TreeMap<>();
         result.put("sizes", bands(sizes)); result.put("feature_counts", bands(featureCounts));

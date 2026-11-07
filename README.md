@@ -79,7 +79,10 @@ invalid values. Known CI/container environments require explicitly retained stat
 `TPF_TELEMETRY_STATE_PERSISTENT=true` even for preview.
 
 Choose a fresh preview filename outside source and packaged output. Existing files are
-never replaced; preview requires an identifiable compiler output directory.
+never replaced; preview requires an identifiable compiler output directory. Resolved
+paths containing any of these reserved components are rejected: `src`, `resources`,
+`classes`, `test-classes`, `target`, `build`, `generated-sources`,
+`generated-test-sources`, and `META-INF`.
 The event covers a successful TPF compiler pass. javac can still report errors after
 annotation processing, and packaging and tests run separately.
 

@@ -26,6 +26,7 @@ import org.pipelineframework.processor.parser.*;
 class CensusAcceptanceTest {
     @TempDir Path directory;
 
+    /** Checks reachable-definition counts using actual parsed and linked V3 definitions. */
     @Test void countsAuthoredReachableLocationsIncludingRecursionAndImportedPackages() throws Exception {
         var ctx = fixture("private");
         // Root + reused child + recursive child + two definitions from one adopted package.
@@ -44,6 +45,7 @@ class CensusAcceptanceTest {
                 .filter(step -> step.deferredCompletion().isPresent()).count(), "Await belongs to its operation");
     }
 
+    /** Checks that runtime placement and generated role copies do not change authored counts. */
     @Test void runtimeLayoutsAndGeneratedRoleCopiesCannotChangeLogicalCounts() throws Exception {
         var ctx = fixture("private");
         var expected = new BuildCensusProjector().project(ctx).orElseThrow();
@@ -69,6 +71,7 @@ class CensusAcceptanceTest {
         }
     }
 
+    /** Renames authored symbols and checks projection invariance and serialization privacy. */
     @Test void renamedApplicationSymbolsAndPrivateSourceValuesNeverEnterCandidateJson() throws Exception {
         var first = new BuildCensusProjector().project(fixture("private")).orElseThrow();
         var renamed = new BuildCensusProjector().project(fixture("renamed")).orElseThrow();
@@ -85,6 +88,7 @@ class CensusAcceptanceTest {
         assertTrue(json.contains("26.11.2-dev"));
     }
 
+    /** Checks the disposable-host rule on a Jenkins host without a generic CI marker. */
     @Test void knownJenkinsBuildNeedsRetainedStateEvenForInspection() {
         Properties properties = new Properties();
         properties.setProperty("user.home", directory.toString()); properties.setProperty("os.name", "Mac OS X");
@@ -95,6 +99,7 @@ class CensusAcceptanceTest {
         assertEquals(CensusConfiguration.Mode.PREVIEW, CensusConfiguration.resolve(options, environment, properties).mode());
     }
 
+    /** Places competing metadata on the classpath and checks that the owner artifact wins. */
     @Test void applicationResourceCannotOverrideOwningCompilerArtifactVersion() throws Exception {
         String resource = "/META-INF/tpf/compiler-version.properties";
         String expected = CensusEvent.packagedVersion(CensusEvent.class, resource);
@@ -114,6 +119,7 @@ class CensusAcceptanceTest {
         }
     }
 
+    /** Builds a logical fixture with reused, recursive, imported and unused definitions. */
     private PipelineCompilationContext fixture(String prefix) throws Exception {
         Path root = Files.createDirectories(directory.resolve(prefix));
         Path used = blockPackage(root, prefix + ".adopted", "adopted", true);
@@ -206,6 +212,7 @@ class CensusAcceptanceTest {
         }
     }
 
+    /** Converts parsed steps into typed linker inputs without deployment copies. */
     private PipelineDefinition definition(PipelineReference reference, List<StepDefinition> authored) {
         return new PipelineDefinition(reference, "Value", "Value", authored.stream().map(step -> {
             if (step.pipelineReference().isPresent()) return PipelineDefinitionStep.pipeline(step.name(), "Value", "Value",
@@ -220,6 +227,7 @@ class CensusAcceptanceTest {
         }).toList());
     }
 
+    /** Writes an isolated Block artifact and its contributed types for importer verification. */
     private Path blockPackage(Path root, String namespace, String artifact, boolean adopted) throws Exception {
         Path classes = root.resolve(artifact); Path metadata = Files.createDirectories(classes.resolve("META-INF/pipeline"));
         Files.writeString(metadata.resolve("blocks.json"), """
