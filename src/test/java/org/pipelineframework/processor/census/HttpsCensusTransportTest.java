@@ -8,6 +8,8 @@ import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
+@org.junit.jupiter.api.parallel.Isolated("Exercises real request deadlines without concurrent compiler fixture contention")
+@org.junit.jupiter.api.parallel.Execution(org.junit.jupiter.api.parallel.ExecutionMode.SAME_THREAD)
 class HttpsCensusTransportTest {
     @Test void fixedHeadersNoRedirectsAndDeadline() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);

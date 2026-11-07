@@ -16,6 +16,8 @@ import org.pipelineframework.processor.parser.ParsedPipelineDefinitionCatalog;
 import org.pipelineframework.processor.composition.*;
 import org.pipelineframework.config.CardinalitySemantics;
 
+@org.junit.jupiter.api.parallel.Isolated("Measures synchronous compiler overhead independently of concurrent javac fixtures")
+@org.junit.jupiter.api.parallel.Execution(org.junit.jupiter.api.parallel.ExecutionMode.SAME_THREAD)
 class BuildCensusTest {
     @TempDir Path temporary;
     private BuildCensusSummary summary() {
