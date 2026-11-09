@@ -148,6 +148,7 @@ public class PipelineDiscoveryPhase implements PipelineCompilationPhase {
         ctx.setModuleName(discoveryPathResolver.resolveModuleName(options));
 
         Optional<Path> configPath = discoveryConfigLoader.resolvePipelineConfigPath(options, moduleDir, diagnostics);
+        ctx.setOriginalPipelineConfig(configPath);
 
         // Check if this is a plugin host
         boolean isPluginHost = !pluginElements.isEmpty();

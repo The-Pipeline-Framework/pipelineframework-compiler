@@ -12,6 +12,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  TPF_CENSUS_ENABLED: "false"
+
 jobs:
   publish:
     runs-on: ubuntu-latest

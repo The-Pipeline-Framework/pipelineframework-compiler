@@ -134,10 +134,25 @@ public class PipelineContractMetadataGenerator {
         if (processingEnv != null) {
             javax.tools.FileObject resourceFile = processingEnv.getFiler()
                 .createResource(StandardLocation.CLASS_OUTPUT, "", CONTRACT_RESOURCE_PATH);
+            preserveClassOutputRoot(ctx, resourceFile);
             try (var writer = resourceFile.openWriter()) {
                 writer.write(PRETTY_GSON.toJson(finalContract));
             }
         }
+    }
+
+    /** Preserve the host's actual packaged-output location without new Filer resources or reads. */
+    private void preserveClassOutputRoot(PipelineCompilationContext context, javax.tools.FileObject resource) {
+        try {
+            var uri = resource.toUri();
+            if (uri == null || !"file".equalsIgnoreCase(uri.getScheme())) return;
+            var root = java.nio.file.Path.of(uri);
+            for (var ignored : java.nio.file.Path.of(CONTRACT_RESOURCE_PATH)) {
+                if (root.getParent() == null) return;
+                root = root.getParent();
+            }
+            context.setClassOutputRoot(java.util.Optional.of(root));
+        } catch (RuntimeException unavailable) { /* Optional host metadata cannot change generation. */ }
     }
 
     private List<Map<String, Object>> httpPayloadBoundaries(PipelineCompilationContext ctx) {

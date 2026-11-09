@@ -1,0 +1,230 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pipelineframework.org/census/schema/v1.json",
+  "title": "TPF build census v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "installation_id",
+    "application_instance_id",
+    "observed_at",
+    "compiler_version",
+    "contracts_version",
+    "java_major",
+    "sizes",
+    "feature_counts",
+    "platform",
+    "runtime_layout",
+    "transport"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "installation_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "application_instance_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date"
+    },
+    "compiler_version": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^(unknown|[0-9]{1,4}([.][0-9]{1,4}){1,3}(-dev)?)$"
+    },
+    "contracts_version": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^(unknown|[0-9]{1,4}([.][0-9]{1,4}){1,3}(-dev)?)$"
+    },
+    "java_major": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 999
+    },
+    "sizes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pipelines",
+        "steps",
+        "types",
+        "blocks"
+      ],
+      "properties": {
+        "pipelines": {
+          "enum": [
+            "0",
+            "1",
+            "2–5",
+            "6–10",
+            "11–25",
+            "26–50",
+            "51–100",
+            "101+",
+            "unknown"
+          ]
+        },
+        "steps": {
+          "enum": [
+            "0",
+            "1",
+            "2–5",
+            "6–10",
+            "11–25",
+            "26–50",
+            "51–100",
+            "101+",
+            "unknown"
+          ]
+        },
+        "types": {
+          "enum": [
+            "0",
+            "1",
+            "2–5",
+            "6–10",
+            "11–25",
+            "26–50",
+            "51–100",
+            "101+",
+            "unknown"
+          ]
+        },
+        "blocks": {
+          "enum": [
+            "0",
+            "1",
+            "2–5",
+            "6–10",
+            "11–25",
+            "26–50",
+            "51–100",
+            "101+",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "feature_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nested_invocation",
+        "one_to_many",
+        "many_to_one",
+        "query",
+        "command",
+        "await"
+      ],
+      "properties": {
+        "nested_invocation": {
+          "enum": [
+            "0",
+            "1",
+            "2–5",
+            "6–10",
+            "11–25",
+            "26–50",
+            "51–100",
+            "101+",
+            "unknown"
+          ]
+        },
+        "one_to_many": {
+          "enum": [
+            "0",
+            "1",
+            "2–5",
+            "6–10",
+            "11–25",
+            "26–50",
+            "51–100",
+            "101+",
+            "unknown"
+          ]
+        },
+        "many_to_one": {
+          "enum": [
+            "0",
+            "1",
+            "2–5",
+            "6–10",
+            "11–25",
+            "26–50",
+            "51–100",
+            "101+",
+            "unknown"
+          ]
+        },
+        "query": {
+          "enum": [
+            "0",
+            "1",
+            "2–5",
+            "6–10",
+            "11–25",
+            "26–50",
+            "51–100",
+            "101+",
+            "unknown"
+          ]
+        },
+        "command": {
+          "enum": [
+            "0",
+            "1",
+            "2–5",
+            "6–10",
+            "11–25",
+            "26–50",
+            "51–100",
+            "101+",
+            "unknown"
+          ]
+        },
+        "await": {
+          "enum": [
+            "0",
+            "1",
+            "2–5",
+            "6–10",
+            "11–25",
+            "26–50",
+            "51–100",
+            "101+",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "platform": {
+      "enum": [
+        "COMPUTE",
+        "FUNCTION"
+      ]
+    },
+    "runtime_layout": {
+      "enum": [
+        "MODULAR",
+        "PIPELINE_RUNTIME",
+        "MONOLITH",
+        "UNSPECIFIED"
+      ]
+    },
+    "transport": {
+      "enum": [
+        "LOCAL",
+        "REST",
+        "GRPC"
+      ]
+    }
+  }
+}

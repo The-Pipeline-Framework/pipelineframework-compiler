@@ -43,6 +43,14 @@ public class PipelineCompilationContext {
     private final Jsr269SourceInventory sourceInventory;
     private final PipelineCompilerOptions compilerOptions;
     private final PipelineCompilerDiagnostics compilerDiagnostics;
+    private boolean compilationErrors;
+    @Setter
+    private Optional<Path> originalPipelineConfig = Optional.empty();
+    @Setter
+    private Optional<Path> classOutputRoot = Optional.empty();
+
+    /** True when the compiler emitted a semantic error, including non-throwing phases. */
+    public boolean hasCompilationErrors() { return compilationErrors; }
     @Getter
     @Setter
     private ClassLoader representationProviderClassLoader;
@@ -153,8 +161,11 @@ public class PipelineCompilationContext {
         this.processingEnv = processingEnv;
         this.sourceInventory = sourceInventory == null ? Jsr269SourceInventory.empty() : sourceInventory;
         this.compilerOptions = java.util.Objects.requireNonNull(compilerOptions, "compilerOptions must not be null");
-        this.compilerDiagnostics = java.util.Objects.requireNonNull(
-            compilerDiagnostics, "compilerDiagnostics must not be null");
+        java.util.Objects.requireNonNull(compilerDiagnostics, "compilerDiagnostics must not be null");
+        this.compilerDiagnostics = (severity, message) -> {
+            if (severity == PipelineCompilerDiagnostics.Severity.ERROR) compilationErrors = true;
+            compilerDiagnostics.report(severity, message);
+        };
         this.stepModels = List.of();
         this.aspectModels = List.of();
         this.aspectsForExpansion = List.of();
