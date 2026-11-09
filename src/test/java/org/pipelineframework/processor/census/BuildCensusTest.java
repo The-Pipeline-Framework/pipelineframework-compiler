@@ -292,6 +292,46 @@ class BuildCensusTest {
             assertTrue(entered.await(2, TimeUnit.SECONDS)); release.countDown();
         }
     }
+    /** Holds the socketless state transaction open while the compiler returns from handoff. */
+    @Test void socketlessOutboxWritesOnDaemonWithoutTransport() throws Exception {
+        var host = host(CensusConfiguration.Mode.OUTBOX);
+        var entered = new CompletableFuture<Thread>();
+        var release = new CountDownLatch(1);
+        var transportCreated = new java.util.concurrent.atomic.AtomicBoolean();
+        Clock blocked = new Clock() {
+            @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(ZoneId zone) { return this; }
+            @Override public Instant instant() {
+                entered.complete(Thread.currentThread());
+                try {
+                    if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("state gate timed out");
+                    return Instant.parse("2026-10-05T12:00:00Z");
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+            }
+        };
+        try (var reporter = new BuildCensusReporter(() -> {
+            transportCreated.set(true);
+            return ignored -> false;
+        }, blocked)) {
+            assertTimeoutPreemptively(Duration.ofSeconds(2), () -> reporter.submit(host, summary()));
+            Thread worker = entered.get(5, TimeUnit.SECONDS);
+            assertTrue(worker.isDaemon());
+            assertEquals("tpf-build-census", worker.getName());
+            Path state = host.configuration().stateDirectory().resolve("state.json");
+            assertFalse(Files.exists(state));
+            release.countDown();
+            for (int retry = 0; retry < 100 && !Files.isRegularFile(state); retry++) Thread.sleep(20);
+            assertTrue(Files.isRegularFile(state), "the daemon must persist the observation");
+            assertEquals(1, JsonParser.parseString(Files.readString(state)).getAsJsonObject()
+                    .getAsJsonObject("pending").size());
+            assertFalse(transportCreated.get());
+        } finally {
+            release.countDown();
+        }
+    }
     /** Protects the retained state when another writer holds the lock or the destination is a symlink. */
     @Test void lockContentionAndSymlinksDoNotMutateState() throws Exception {
         var host = host(CensusConfiguration.Mode.REPORT); var store = new CensusStateStore(host.configuration().stateDirectory());

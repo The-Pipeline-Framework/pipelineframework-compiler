@@ -24,9 +24,13 @@ public final class BuildCensusReporter implements AutoCloseable {
         }, new ThreadPoolExecutor.AbortPolicy());
         worker.allowCoreThreadTimeOut(true);
     }
-    /** Coalesces pending observations for the same anchor and settings, dropping work when the queue is full. */
+    /** Offers hosted outbox work over local IPC and hands all retained-state work to the daemon. */
     public void submit(BuildCensusHostContext host, BuildCensusSummary summary) {
         if (host.configuration().mode() == CensusConfiguration.Mode.OFF) return;
+        if (host.configuration().mode() == CensusConfiguration.Mode.OUTBOX && host.configuration().hostSocket().isPresent()) {
+            BuildCensusOutbox.stage(new BuildCensusObservation(host, summary));
+            return;
+        }
         var key = new Key(host.originalConfiguration().toAbsolutePath().normalize(), host.configuration());
         if (pending.put(key, new Candidate(host, summary)) != null) return;
         try { worker.execute(() -> consume(key)); }

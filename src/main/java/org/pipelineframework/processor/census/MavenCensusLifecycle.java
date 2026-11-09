@@ -6,6 +6,7 @@ import org.apache.maven.execution.ExecutionEvent;
 import org.apache.maven.execution.ExecutionListener;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.MojoExecution;
+import org.apache.maven.plugin.PluginParameterExpressionEvaluator;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.pipelineframework.annotation.PipelineStep;
 
@@ -15,12 +16,15 @@ import java.lang.reflect.Proxy;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Maven build adapter, loaded explicitly as a core extension from the compiler artifact. */
 public final class MavenCensusLifecycle extends AbstractMavenLifecycleParticipant {
+    private static final String MODE = "-Atpf.census.mode";
+    private static final String ENABLED = "-Atpf.census.enabled";
     private record Registration(SessionReceiver receiver, ExecutionListener listener, ExecutionListener previous) { }
     private final ConcurrentHashMap<MavenSession, Registration> sessions = new ConcurrentHashMap<>();
 
@@ -58,13 +62,10 @@ public final class MavenCensusLifecycle extends AbstractMavenLifecycleParticipan
                 || !"maven-compiler-plugin".equals(execution.getArtifactId()) || !"compile".equals(execution.getGoal())) return;
         var source = execution.getConfiguration();
         if (source == null || !usesTpf(source, event.getProject())) return;
-        var configuredArgs = source.getChild("compilerArgs");
-        var values = configuredArgs == null ? List.<String>of() : Arrays.stream(configuredArgs.getChildren())
-                .map(Xpp3Dom::getValue).filter(java.util.Objects::nonNull).toList();
-        if (values.stream().anyMatch(value -> value.startsWith("-Atpf.census.mode")
-                && !value.equals("-Atpf.census.mode=outbox"))) return;
-        if (values.stream().anyMatch(value -> value.startsWith("-Atpf.census.enabled")
-                && !value.equalsIgnoreCase("-Atpf.census.enabled=true"))) return;
+        var values = compilerOptions(source, new PluginParameterExpressionEvaluator(event.getSession(), execution));
+        if (values.stream().anyMatch(value -> isOption(value, MODE) && !value.equals(MODE + "=outbox"))) return;
+        if (values.stream().anyMatch(value -> isOption(value, ENABLED) && !value.equalsIgnoreCase(ENABLED + "=true"))) return;
+        boolean hasMode = values.stream().anyMatch(value -> isOption(value, MODE));
         var active = receiver.start();
         if (active.isEmpty()) return;
         var configuration = new Xpp3Dom(source);
@@ -73,13 +74,46 @@ public final class MavenCensusLifecycle extends AbstractMavenLifecycleParticipan
             arguments = new Xpp3Dom("compilerArgs");
             configuration.addChild(arguments);
         }
-        for (String value : active.orElseThrow().compilerArguments()) {
-            if (values.contains(value)) continue;
-            var argument = new Xpp3Dom("arg");
-            argument.setValue(value);
-            arguments.addChild(argument);
-        }
+        if (!hasMode) appendArgument(arguments, MODE + "=outbox");
+        appendArgument(arguments, active.orElseThrow().compilerSocketArgument());
         execution.setConfiguration(configuration);
+    }
+
+    /** Reads all three compiler-plugin argument forms with Maven's parameter interpolation. */
+    private List<String> compilerOptions(Xpp3Dom configuration, PluginParameterExpressionEvaluator evaluator)
+            throws org.codehaus.plexus.component.configurator.expression.ExpressionEvaluationException {
+        var options = new ArrayList<String>();
+        var args = configuration.getChild("compilerArgs");
+        if (args != null) {
+            for (var arg : args.getChildren()) {
+                if (arg.getValue() != null && evaluator.evaluate(arg.getValue()) instanceof String value) options.add(value.strip());
+            }
+        }
+        var single = configuration.getChild("compilerArgument");
+        if (single != null && single.getValue() != null && evaluator.evaluate(single.getValue()) instanceof String value)
+            options.add(value.strip());
+        var mapped = configuration.getChild("compilerArguments");
+        if (mapped != null) {
+            for (String option : List.of(MODE, ENABLED)) {
+                var argument = mapped.getChild(option.substring(1));
+                if (argument == null) continue;
+                var value = argument.getValue();
+                options.add(value == null || value.isBlank() ? option : option + "=" + evaluator.evaluate(value));
+            }
+        }
+        return options;
+    }
+
+    /** Matches a whole javac option name, with or without a value. */
+    private boolean isOption(String value, String option) {
+        return value.equals(option) || value.startsWith(option + "=");
+    }
+
+    /** Adds one argument without changing the project's existing argument representations. */
+    private void appendArgument(Xpp3Dom arguments, String value) {
+        var argument = new Xpp3Dom("arg");
+        argument.setValue(value);
+        arguments.addChild(argument);
     }
 
     /** Recognizes explicit processor registrations and classpath service discovery. */

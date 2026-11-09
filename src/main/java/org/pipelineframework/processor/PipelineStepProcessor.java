@@ -18,8 +18,6 @@ import javax.tools.Diagnostic;
 import org.pipelineframework.annotation.PipelineOrchestrator;
 import org.pipelineframework.annotation.PipelinePlugin;
 import org.pipelineframework.annotation.PipelineStep;
-import org.pipelineframework.processor.census.BuildCensusOutbox;
-import org.pipelineframework.processor.census.CensusConfiguration;
 import org.pipelineframework.processor.util.RoleMetadataGenerator;
 
 /**
@@ -94,14 +92,8 @@ public class PipelineStepProcessor extends AbstractProcessingTool {
             if (roundEnv.processingOver()) {
                 if (!roundEnv.errorRaised()) {
                     try {
-                        pendingCensus.ifPresent(candidate -> {
-                            if (candidate.host().configuration().mode() == CensusConfiguration.Mode.OUTBOX
-                                    && candidate.host().configuration().hostSocket().isPresent()) {
-                                BuildCensusOutbox.stage(candidate);
-                            } else {
-                                CensusReporterHolder.INSTANCE.submit(candidate.host(), candidate.summary());
-                            }
-                        });
+                        pendingCensus.ifPresent(candidate ->
+                            CensusReporterHolder.INSTANCE.submit(candidate.host(), candidate.summary()));
                     } catch (RuntimeException unavailable) {
                         // Census initialization and handoff cannot alter compiler results.
                     }

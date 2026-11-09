@@ -12,7 +12,6 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Clock;
 import java.time.Duration;
-import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.IntConsumer;
@@ -57,9 +56,9 @@ public final class LocalCensusBuildHost implements AutoCloseable {
         environment.put("TPF_CENSUS_STATE_DIR", stateDirectory.toString());
     }
 
-    /** Options a build integration can pass to javac without changing the Maven process environment. */
-    public List<String> compilerArguments() {
-        return List.of("-Atpf.census.mode=outbox", "-Atpf.census.hostSocket=" + socket);
+    /** Passes the receiver address to javac without selecting the compiler's census mode. */
+    String compilerSocketArgument() {
+        return "-Atpf.census.hostSocket=" + socket;
     }
 
     /** Stages frames during compilation so Maven need not do the durable writes at exit. */

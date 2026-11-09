@@ -23,10 +23,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.UnaryOperator;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -201,6 +203,32 @@ public class CensusForkedJavacTest {
     /** Runs a Maven child with a receiver owned by the test launcher. */
     private Timing maven(String name, boolean enabled, LocalCensusBuildHost host) throws Exception {
         return maven(name, enabled, host::configure, List.of());
+    }
+
+    /** Checks the actual javac options for each Maven representation of explicit preview. */
+    @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
+    @EnabledIfSystemProperty(named = "tpf.census.senderTrials", matches = "[1-9][0-9]*")
+    void mavenHandoffPreservesExplicitPreview() throws Exception {
+        var forms = Map.of(
+                "list", "<arg>-Atpf.census.mode=preview</arg></compilerArgs>",
+                "expression", "<arg>${fixture.census.flag}</arg></compilerArgs>",
+                "single", "</compilerArgs><compilerArgument>-Atpf.census.mode=preview</compilerArgument>",
+                "map", "</compilerArgs><compilerArguments><Atpf.census.mode>preview</Atpf.census.mode></compilerArguments>");
+        var options = List.of(extensionClasspath(), "-Dtpf.census.localCollector=http://127.0.0.1:1/observations",
+                "-Dfixture.census.flag=-Atpf.census.mode=preview");
+        for (var form : forms.entrySet()) {
+            String name = "preview-" + form.getKey();
+            Path state = root.resolve(name + "-state");
+            maven(name, true, builder -> {
+                builder.environment().put("TPF_CENSUS_STATE_DIR", state.toString());
+                builder.environment().put("TPF_CENSUS_PREVIEW", root.resolve(name + ".json").toString());
+            }, options, pom -> pom.replace("</compilerArgs>", form.getValue()));
+            String timing = Files.readString(root.resolve(name).resolve("processor-timing"));
+            assertTrue(timing.endsWith("mode=preview socket=false"), () -> name + ": " + timing);
+            Path stateFile = state.resolve("state.json");
+            assertFalse(Files.exists(stateFile) && pending(stateFile), name + " must not stage an outbox observation");
+        }
     }
 
     /** Proves that the standard Maven command can finish before an independent sender is acknowledged. */
@@ -408,8 +436,17 @@ public class CensusForkedJavacTest {
     /** Measures one Maven command and its forked annotation processor. */
     private Timing maven(String name, boolean enabled, java.util.function.Consumer<ProcessBuilder> configure,
             List<String> mavenOptions) throws Exception {
+        return maven(name, enabled, configure, mavenOptions, UnaryOperator.identity());
+    }
+
+    /** Measures a forked compilation with an optional fixture POM customization. */
+    private Timing maven(String name, boolean enabled, java.util.function.Consumer<ProcessBuilder> configure,
+            List<String> mavenOptions, UnaryOperator<String> configurePom) throws Exception {
         Path project = Files.createDirectory(root.resolve(name));
         Path pom = createMavenProject(project, name);
+        String originalPom = Files.readString(pom);
+        String configuredPom = configurePom.apply(originalPom);
+        if (!configuredPom.equals(originalPom)) Files.writeString(pom, configuredPom);
         Path compilerRoot = Path.of(System.getProperty("compiler.project.basedir"));
         Path timing = project.resolve("processor-timing");
         Path log = project.resolve("maven.log");
