@@ -366,7 +366,10 @@ public class PipelineContractMetadataGenerator {
                 .map(selection -> typeId(selection.finalOutputType()))
                 .orElseGet(() -> typeId(model.outputMapping().domainType())));
             descriptor.put("runtimeClass", runtimeClass(model, ctx));
-            descriptor.put("clientClass", clientClass(model, ctx));
+            String clientClass = clientClass(model, ctx);
+            if (clientClass != null) {
+                descriptor.put("clientClass", clientClass);
+            }
             if (yamlStep != null && yamlStep.paging().isPresent()) {
                 descriptor.put("paging", Map.of(
                     "maxRecords", yamlStep.paging().orElseThrow().maxRecords()));
@@ -555,10 +558,13 @@ public class PipelineContractMetadataGenerator {
     }
 
     private static String clientClass(PipelineStepModel model, PipelineCompilationContext ctx) {
-        String suffix = model.enabledTargets().contains(GenerationTarget.DEFERRED_COMPLETION_STEP)
-            ? "DeferredCompletionStep"
-            : java.util.Objects.requireNonNullElse(ctx.getTransportMode(), PipelineTransport.GRPC).clientStepSuffix();
-        return model.servicePackage() + ".pipeline." + stripTrailingService(model.generatedName()) + suffix;
+        if (RuntimeStepClassNames.usesGeneratedClient(model, false)) {
+            return ClientStepClassNames.className(
+                model, Objects.requireNonNullElse(ctx.getTransportMode(), PipelineTransport.GRPC));
+        }
+        return model.enabledTargets().contains(GenerationTarget.LOCAL_CLIENT_STEP)
+            ? ClientStepClassNames.className(model, PipelineTransport.LOCAL)
+            : null;
     }
 
     private static Map<String, Object> deferredCompletion(
