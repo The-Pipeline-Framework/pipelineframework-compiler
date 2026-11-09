@@ -23,6 +23,7 @@ public record BuildCensusHostContext(Path originalConfiguration, CensusConfigura
         Path state = configuration.stateDirectory().toAbsolutePath().normalize();
         if (Files.exists(state)) state = state.toRealPath();
         if (resolved.equals(state.resolve("state.json")) || resolved.equals(state.resolve("state.lock"))) return Optional.empty();
+        for (Path part : resolved) if (RESERVED.contains(part.toString())) return Optional.empty();
         if (inPackagedOutput(resolved)) return Optional.empty();
         return Files.exists(resolved, LinkOption.NOFOLLOW_LINKS) ? Optional.empty() : Optional.of(resolved);
     }
@@ -32,18 +33,26 @@ public record BuildCensusHostContext(Path originalConfiguration, CensusConfigura
         Path path = configuration.stateDirectory().normalize();
         if (!path.isAbsolute() || Files.isSymbolicLink(path)) return Optional.empty();
         Path resolved = canonical(path);
-        if (resolved.equals(resolved.getRoot()) || inPackagedOutput(resolved)) return Optional.empty();
+        Path anchor = originalConfiguration.toRealPath();
+        if (anchor.startsWith(resolved) || inPackagedOutput(resolved)) return Optional.empty();
+        Path project = anchor.getParent();
+        if (resolved.startsWith(project)) {
+            for (Path part : project.relativize(resolved)) {
+                if (RESERVED.contains(part.toString())) return Optional.empty();
+            }
+        }
         return Optional.of(resolved);
     }
 
+    /** Checks canonical compiler-owned roots, including custom output directories. */
     private boolean inPackagedOutput(Path resolved) throws java.io.IOException {
-        for (Path part : resolved) if (RESERVED.contains(part.toString())) return true;
         for (Path root : packagedRoots) {
             if (resolved.startsWith(canonical(root.toAbsolutePath().normalize()))) return true;
         }
         return false;
     }
 
+    /** Resolves existing ancestors while allowing a new directory hierarchy. */
     private Path canonical(Path path) throws java.io.IOException {
         Path existing = path;
         while (!Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) existing = existing.getParent();

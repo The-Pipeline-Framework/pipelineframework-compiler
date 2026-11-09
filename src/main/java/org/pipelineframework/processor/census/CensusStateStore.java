@@ -23,8 +23,10 @@ public final class CensusStateStore {
 
     /** Stores only the approved event fields not already present in the enclosing state. */
     record Pending(String day, String compilerVersion, String contractsVersion, int javaMajor, BuildCensusSummary summary) {
+        /** Parses the persisted UTC observation day. */
         LocalDate date() { return LocalDate.parse(day); }
 
+        /** Reassembles the allowlisted wire event with its retained identities. */
         CensusEvent event(UUID installation, UUID application) {
             return new CensusEvent(installation, application, date(), compilerVersion, contractsVersion, javaMajor, summary);
         }
@@ -39,19 +41,20 @@ public final class CensusStateStore {
         }
     }
     public record Outcome(String reason, Optional<String> preview, boolean firstUse) { }
+    /** Associates a store with the installation's private directory. */
     public CensusStateStore(Path directory) { this.directory = directory; }
 
     /** Locks retained state without waiting, then previews locally or persists an eligible attempt before delivery. */
     public Outcome observe(BuildCensusHostContext host, BuildCensusSummary summary, Clock clock, CensusTransport transport) throws Exception {
         if (host.configuration().mode() == CensusConfiguration.Mode.OFF) return new Outcome("disabled", Optional.empty(), false);
-        return withState(state -> observeLocked(state, host, summary, clock, Runtime.version().feature(), transport))
+        return withState(state -> observeLocked(state, host, summary, clock, CensusArtifactVersions.current(), transport))
                 .orElseGet(() -> new Outcome("state_busy", Optional.empty(), false));
     }
 
-    /** Stages a forked compiler's report using its JVM version. */
-    boolean stageFromHost(BuildCensusHostContext host, BuildCensusSummary summary, Clock clock, int javaMajor) throws Exception {
+    /** Stages a report using versions supplied by the forked compiler. */
+    boolean stageFromHost(BuildCensusHostContext host, BuildCensusSummary summary, Clock clock, CensusArtifactVersions versions) throws Exception {
         if (host.configuration().mode() != CensusConfiguration.Mode.OUTBOX) return false;
-        return withState(state -> observeLocked(state, host, summary, clock, javaMajor, ignored -> false))
+        return withState(state -> observeLocked(state, host, summary, clock, versions, ignored -> false))
                 .map(outcome -> outcome.reason().equals("queued")).orElse(false);
     }
 
@@ -75,8 +78,9 @@ public final class CensusStateStore {
         }
     }
 
+    /** Builds an event from compiler-owned metadata while the installation lock is held. */
     private Outcome observeLocked(State state, BuildCensusHostContext host, BuildCensusSummary summary, Clock clock,
-            int javaMajor, CensusTransport transport) throws Exception {
+            CensusArtifactVersions versions, CensusTransport transport) throws Exception {
         String key = digestPath(state.salt(), host.originalConfiguration().toRealPath().toString());
         if (!state.applications().containsKey(key) && state.applications().size() >= 1024)
             return new Outcome("state_capacity", Optional.empty(), false);
@@ -84,9 +88,7 @@ public final class CensusStateStore {
         LocalDate today = LocalDate.now(clock.withZone(ZoneOffset.UTC));
         String week = today.get(WeekFields.ISO.weekBasedYear()) + "-" + today.get(WeekFields.ISO.weekOfWeekBasedYear());
         CensusEvent event = new CensusEvent(state.installation(), app.identity(), today,
-                CensusEvent.packagedVersion(CensusEvent.class, "/META-INF/tpf/compiler-version.properties"),
-                CensusEvent.packagedVersion(org.pipelineframework.annotation.PipelineStep.class, "/META-INF/tpf/contracts-version.properties"),
-                javaMajor, summary);
+                versions.compiler(), versions.contracts(), versions.javaMajor(), summary);
         String reportDigest = digest(event.reportValues());
         String reason = app.attemptedDate().equals(today.toString()) ? "already_attempted_today"
                 : app.acknowledgedDigest().equals(reportDigest) && app.acknowledgedWeek().equals(week) ? "unchanged_this_week" : "eligible";
@@ -197,16 +199,19 @@ public final class CensusStateStore {
         return true;
     }
 
+    /** Copies retained events that are still accepted by the collector. */
     private Map<String, Pending> activePending(State state, LocalDate today) {
         var pending = new TreeMap<>(state.pending());
         pending.values().removeIf(value -> !active(value, today));
         return pending;
     }
 
+    /** Limits delivery to today and yesterday in UTC. */
     private boolean active(Pending pending, LocalDate today) {
         return !pending.date().isBefore(today.minusDays(1)) && !pending.date().isAfter(today);
     }
 
+    /** Forces the outbox directory entries on platforms that support directory syncing. */
     private void syncOutboxDirectory() throws Exception {
         // The atomic state file survives JVM exit. Sync its directory entry on supporting hosts.
         if (System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) return;
@@ -247,9 +252,11 @@ public final class CensusStateStore {
         secure(file, false);
         return state;
     }
+    /** Replaces one application entry without mutating the previous state. */
     private Map<String, Application> with(Map<String, Application> source, String key, Application value) {
         Map<String, Application> next = new TreeMap<>(source); next.put(key, value); return next;
     }
+    /** Replaces the retained installation state with one complete snapshot. */
     private void write(State state) throws Exception {
         writePrivate(directory.resolve("state.json"), gson.toJson(state), true);
     }
@@ -288,6 +295,7 @@ public final class CensusStateStore {
         Mac mac = Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(HexFormat.of().parseHex(salt), "HmacSHA256"));
         return HexFormat.of().formatHex(mac.doFinal(path.getBytes(StandardCharsets.UTF_8)));
     }
+    /** Hashes the approved census projection for local deduplication. */
     private String digest(String value) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
     }

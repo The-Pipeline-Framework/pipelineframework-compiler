@@ -20,10 +20,17 @@ public record CensusConfiguration(Mode mode, Path stateDirectory, Optional<Path>
 
     /** Selects the default user state directory for an installed Maven integration. */
     static CensusConfiguration forMaven(Properties userProperties) {
-        return resolve(Map.of("tpf.census.mode", "outbox", "tpf.census.enabled",
-                userProperties.getProperty("tpf.census.enabled", "true")), System.getenv(), System.getProperties(), true);
+        return forMaven(userProperties, System.getenv(), System.getProperties());
     }
 
+    /** Uses outbox only as the Maven default, preserving explicit author modes. */
+    static CensusConfiguration forMaven(Properties userProperties, Map<String, String> environment, Properties properties) {
+        String mode = userProperties.getProperty("tpf.census.mode", environment.getOrDefault("TPF_CENSUS_MODE", "outbox"));
+        return resolve(Map.of("tpf.census.mode", mode, "tpf.census.enabled",
+                userProperties.getProperty("tpf.census.enabled", "true")), environment, properties, true);
+    }
+
+    /** Applies precedence, eligibility and private state configuration shared by compiler hosts. */
     private static CensusConfiguration resolve(Map<String, String> options, Map<String, String> environment,
             Properties properties, boolean mavenHost) {
         try {

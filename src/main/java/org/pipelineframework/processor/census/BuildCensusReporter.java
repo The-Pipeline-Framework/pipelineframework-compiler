@@ -14,6 +14,7 @@ public final class BuildCensusReporter implements AutoCloseable {
     private final ThreadPoolExecutor worker;
     private final Supplier<CensusTransport> transport;
     private final Clock clock;
+    /** Creates the shared daemon with the standard clock and lazy transport. */
     public BuildCensusReporter() { this(HttpsCensusTransport::new, Clock.systemUTC()); }
     /** Creates a worker that starts only on submission and expires when idle. */
     public BuildCensusReporter(Supplier<CensusTransport> transport, Clock clock) {
@@ -55,13 +56,20 @@ public final class BuildCensusReporter implements AutoCloseable {
                 if (destination.equals(candidate.host.previewDestination())) {
                     state.writePreview(destination.orElseThrow(), contents);
                 }
+            } else if (candidate.host.configuration().mode() == CensusConfiguration.Mode.OUTBOX) {
+                var directory = candidate.host.outboxDirectory();
+                if (directory.isPresent()) {
+                    new CensusStateStore(directory.orElseThrow()).observe(candidate.host, candidate.summary, clock, ignored -> false);
+                }
             } else {
                 state.observe(candidate.host, candidate.summary, clock, json -> transport.get().send(json));
             }
         } catch (Exception unavailable) { /* Optional census cannot alter build results. */ }
     }
+    /** Describes a suppressed preview without exposing private context. */
     private String unavailablePreview(String reason) {
         return new com.google.gson.Gson().toJson(java.util.Map.of("event_available", false, "reason", reason));
     }
-    public void close() { worker.shutdownNow(); pending.clear(); }
+    /** Discards remaining work without waiting for network delivery. */
+    @Override public void close() { worker.shutdownNow(); pending.clear(); }
 }

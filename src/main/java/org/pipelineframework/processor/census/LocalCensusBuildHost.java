@@ -128,14 +128,16 @@ public final class LocalCensusBuildHost implements AutoCloseable {
         return BuildCensusOutbox.drain(configuration(), transport);
     }
 
+    /** Checks the compiler's output roots before allowing state initialization. */
     private boolean stage(LocalCensusHandoff candidate) throws Exception {
-        var host = new BuildCensusHostContext(candidate.anchor(), configuration());
+        var host = new BuildCensusHostContext(candidate.anchor(), configuration(), candidate.packagedRoots());
         var state = host.outboxDirectory();
-        if (state.isEmpty() || !Files.isDirectory(state.orElseThrow().getParent())) return false;
+        if (state.isEmpty()) return false;
         return new CensusStateStore(state.orElseThrow())
-                .stageFromHost(host, candidate.summary(), Clock.systemUTC(), candidate.javaMajor());
+                .stageFromHost(host, candidate.summary(), Clock.systemUTC(), candidate.versions());
     }
 
+    /** Returns the local staging policy for this receiver. */
     private CensusConfiguration configuration() {
         return new CensusConfiguration(CensusConfiguration.Mode.OUTBOX, stateDirectory, Optional.empty());
     }

@@ -220,6 +220,33 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>verify-packaged-census-release-marker</id>
+                        <phase>verify</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <loadproperties prefix="census.jar">
+                                    <zipentry zipfile="${project.build.directory}/${project.build.finalName}.jar"
+                                              name="META-INF/tpf/census-release.properties"/>
+                                </loadproperties>
+                                <fail message="Compiler JAR census approval marker does not match the build policy">
+                                    <condition>
+                                        <not>
+                                            <equals arg1="${census.jar.public_reporting}" arg2="${tpf.census.release}"/>
+                                        </not>
+                                    </condition>
+                                </fail>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>${maven.compiler.plugin.version}</version>
                 <configuration>

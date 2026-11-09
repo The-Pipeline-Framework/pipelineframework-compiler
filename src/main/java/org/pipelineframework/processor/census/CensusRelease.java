@@ -28,6 +28,7 @@ final class CensusRelease {
         return Optional.empty();
     }
 
+    /** Reads the release marker from the owning artifact rather than the application classpath. */
     private static boolean approved() {
         try {
             var source = CensusRelease.class.getProtectionDomain().getCodeSource();
@@ -46,6 +47,7 @@ final class CensusRelease {
         }
     }
 
+    /** Requires an explicit true value to enable public reporting. */
     private static boolean approved(InputStream input) throws java.io.IOException {
         var properties = new Properties();
         properties.load(input);

@@ -88,8 +88,9 @@ The event covers a successful TPF compiler pass. javac can still report errors a
 annotation processing, and packaging and tests run separately.
 
 The packaged schema is `META-INF/tpf/census-v1.schema.json`; protocol/collector source lives
-in the separate [census collector repository](https://github.com/The-Pipeline-Framework/pipelineframework-census).
-It owns the accepted fields, retention policy, and collector privacy controls.
+in the census collector repository. See the [observation schema](https://github.com/The-Pipeline-Framework/pipelineframework-census/blob/dc320be0e7549abebf2912b46e0ea5c9a4642d5a/protocol/v1.schema.json)
+and [privacy runbook](https://github.com/The-Pipeline-Framework/pipelineframework-census/blob/dc320be0e7549abebf2912b46e0ea5c9a4642d5a/docs/privacy-runbook.md)
+for the accepted fields, retention policy, and collector privacy controls.
 No census dependencies or reporting code are added to generated applications or runtime paths.
 
 ### Maven integration
@@ -120,7 +121,7 @@ The extension receives bounded local messages during compilation and writes
 them to an owner-only outbox on a background thread. Maven allows at most
 125 ms for the final local flush. A separate sender starts when an eligible
 observation is pending or the local flush reaches its deadline. It checks
-retained state and makes HTTP requests only after Maven exits. If CI kills
+retained state after the Maven session ends. If CI kills
 it, the next build with the same retained state can retry. CI and container
 builds need `TPF_CENSUS_STATE_PERSISTENT=true` and genuinely retained local
 storage. Expired events are discarded.
@@ -131,7 +132,7 @@ The forked-javac probe loads the packaged Maven adapter with an approved
 release marker in a temporary JAR and routes it to a literal loopback
 collector. It leaves `TPF_CENSUS_ENABLED` unset in the reporting arm and
 sets it to `false` for the control. It verifies that acknowledgements are
-recorded after Maven exits.
+recorded independently of the Maven session.
 
 The parallel probe runs six independent modules with Maven `-T 4`, reaps the
 sender, and verifies that the next build delivers all six without recompiling.

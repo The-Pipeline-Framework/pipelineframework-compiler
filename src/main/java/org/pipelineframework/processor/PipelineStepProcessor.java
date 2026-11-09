@@ -95,7 +95,8 @@ public class PipelineStepProcessor extends AbstractProcessingTool {
                 if (!roundEnv.errorRaised()) {
                     try {
                         pendingCensus.ifPresent(candidate -> {
-                            if (candidate.host().configuration().mode() == CensusConfiguration.Mode.OUTBOX) {
+                            if (candidate.host().configuration().mode() == CensusConfiguration.Mode.OUTBOX
+                                    && candidate.host().configuration().hostSocket().isPresent()) {
                                 BuildCensusOutbox.stage(candidate);
                             } else {
                                 CensusReporterHolder.INSTANCE.submit(candidate.host(), candidate.summary());

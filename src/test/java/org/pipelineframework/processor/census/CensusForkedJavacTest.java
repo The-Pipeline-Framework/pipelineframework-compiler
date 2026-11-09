@@ -38,7 +38,9 @@ public class CensusForkedJavacTest {
     private record Timing(long wall, long finalRound) { }
 
     /** Verifies exit-safe handoff and optionally records a larger paired timing sample. */
-    @Test void forkedJavacLeavesReportForHost() throws Exception {
+    @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
+    void forkedJavacLeavesReportForHost() throws Exception {
         writeFixture(root);
         var receipt = new AtomicInteger();
         var requests = new AtomicInteger();
@@ -58,12 +60,16 @@ public class CensusForkedJavacTest {
             for (int i = 0; i < trials + warmups; i++) {
                 Path state = root.resolve("state-" + i);
                 Timing off, queued;
-                if (i % 2 == 0) {
-                    off = javac(false, state);
-                    queued = javac(true, state);
-                } else {
-                    queued = javac(true, state);
-                    off = javac(false, state);
+                try (var host = new LocalCensusBuildHost(state)) {
+                    if (i % 2 == 0) {
+                        off = javac(false, state, host);
+                        queued = javac(true, state, host);
+                    } else {
+                        queued = javac(true, state, host);
+                        off = javac(false, state, host);
+                    }
+                    assertFalse(Files.exists(state));
+                    assertEquals(1, host.collect());
                 }
                 assertEquals(i, requests.get(), "javac must not send the report");
                 assertTrue(Files.isRegularFile(state.resolve("state.json")), "pending state must survive javac exit");
@@ -99,6 +105,7 @@ public class CensusForkedJavacTest {
         }
     }
 
+    /** Writes a minimal application with recognisable private test values. */
     private void writeFixture(Path directory) throws Exception {
         Files.writeString(directory.resolve("pipeline.yaml"), """
                 version: 1
@@ -119,6 +126,7 @@ public class CensusForkedJavacTest {
                 """);
     }
 
+    /** Creates a loopback collector that can delay or reject acknowledgements. */
     private HttpServer collector(AtomicInteger receipt, AtomicInteger requests, int delay) throws Exception {
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/unavailable", request -> {
@@ -190,6 +198,7 @@ public class CensusForkedJavacTest {
         }
     }
 
+    /** Runs a Maven child with a receiver owned by the test launcher. */
     private Timing maven(String name, boolean enabled, LocalCensusBuildHost host) throws Exception {
         return maven(name, enabled, host::configure, List.of());
     }
@@ -206,6 +215,7 @@ public class CensusForkedJavacTest {
         for (int i = 0; i < trials; i++) {
             Path state = root.resolve("sender-state-" + i);
             var buildExited = new java.util.concurrent.CountDownLatch(1);
+            var arrived = new java.util.concurrent.CountDownLatch(1);
             var received = new java.util.concurrent.CountDownLatch(1);
             var receipts = new AtomicInteger();
             var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -217,6 +227,7 @@ public class CensusForkedJavacTest {
                         request.sendResponseHeaders(400, -1);
                         return;
                     }
+                    arrived.countDown();
                     if (buildExited.await(4, TimeUnit.SECONDS)) {
                         receipts.incrementAndGet();
                         request.sendResponseHeaders(204, -1);
@@ -240,6 +251,7 @@ public class CensusForkedJavacTest {
                 Timing on = maven("sender-on-" + i, true, configure, extensionOption);
                 assertEquals(0, receipts.get(), "the collector cannot acknowledge before Maven exits");
                 buildExited.countDown();
+                assertTrue(arrived.await(5, TimeUnit.SECONDS), "the sender must reach the collector");
                 assertTrue(received.await(5, TimeUnit.SECONDS), "the separate sender must deliver after Maven exits; "
                         + "state exists=" + Files.exists(state) + "\n" + Files.readString(root.resolve("sender-on-" + i + "/maven.log"))
                         + Files.readString(root.resolve("sender-on-" + i + "/processor-timing")));
@@ -261,6 +273,7 @@ public class CensusForkedJavacTest {
                 trials, trials, percentile(rounds, .50), percentile(rounds, .95), percentile(wall, .50), percentile(wall, .95));
     }
 
+    /** Checks whether the sender still has a locally retained observation. */
     private boolean pending(Path state) throws Exception {
         return !JsonParser.parseString(Files.readString(state)).getAsJsonObject().getAsJsonObject("pending").isEmpty();
     }
@@ -347,6 +360,7 @@ public class CensusForkedJavacTest {
         }
     }
 
+    /** Runs an offline reactor with explicit disposable or retained CI settings. */
     private void runCiMaven(Path pom, Path state, List<String> options, boolean retained, String name) throws Exception {
         Path compilerRoot = Path.of(System.getProperty("compiler.project.basedir"));
         var command = new ArrayList<>(List.of(compilerRoot.resolve("mvnw").toString(), "-o", "-B", "-f", pom.toString(),
@@ -391,6 +405,7 @@ public class CensusForkedJavacTest {
                 Path.of(org.pipelineframework.annotation.PipelineStep.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toString()));
     }
 
+    /** Measures one Maven command and its forked annotation processor. */
     private Timing maven(String name, boolean enabled, java.util.function.Consumer<ProcessBuilder> configure,
             List<String> mavenOptions) throws Exception {
         Path project = Files.createDirectory(root.resolve(name));
@@ -430,6 +445,7 @@ public class CensusForkedJavacTest {
         }
     }
 
+    /** Creates an independent Maven module with its own generated-output directory. */
     private Path createMavenProject(Path project, String name) throws Exception {
         Path source = Files.createDirectory(project.resolve("source"));
         writeFixture(source);
@@ -458,12 +474,13 @@ public class CensusForkedJavacTest {
         return pom;
     }
 
+    /** Escapes literal classpaths and paths embedded in a fixture POM. */
     private String xml(String value) {
         return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     /** Times the actual process lifecycle with identical compiler inputs in both arms. */
-    private Timing javac(boolean queue, Path state) throws Exception {
+    private Timing javac(boolean queue, Path state, LocalCensusBuildHost host) throws Exception {
         var name = state.getFileName() + (queue ? "-outbox" : "-off");
         Path output = Files.createDirectories(root.resolve(name));
         Path log = output.resolve("javac.log");
@@ -477,6 +494,7 @@ public class CensusForkedJavacTest {
                 "-Apipeline.config=" + root.resolve("pipeline.yaml"), "-Apipeline.orchestrator.generate=true",
                 root.resolve("Service.java").toString());
         var builder = new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(log.toFile());
+        host.configure(builder);
         builder.environment().put("TPF_CENSUS_ENABLED", Boolean.toString(queue));
         builder.environment().put("TPF_CENSUS_MODE", "outbox");
         builder.environment().put("TPF_CENSUS_STATE_PERSISTENT", "true");
@@ -505,11 +523,13 @@ public class CensusForkedJavacTest {
     @SupportedAnnotationTypes("*")
     @SupportedSourceVersion(SourceVersion.RELEASE_21)
     public static class TimingProcessor extends PipelineStepProcessor {
+        /** Exposes the production processor options from the timing fixture. */
         @Override
         public Set<String> getSupportedOptions() {
             return Set.of(PipelineStepProcessor.class.getAnnotation(SupportedOptions.class).value());
         }
 
+        /** Measures the final callback and leaves earlier rounds untouched. */
         @Override
         public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment round) {
             if (!round.processingOver()) return super.process(annotations, round);

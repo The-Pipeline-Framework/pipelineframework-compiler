@@ -23,6 +23,10 @@ jobs:
           java-version: '21'
           cache: maven
           cache-path: ${{ github.workspace }}/.m2/repository
+      - name: Verify approved census marker in the packaged JAR
+        run: |
+          ./mvnw clean verify -DskipTests -Dtpf.census.release=true \
+            -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2/repository"
       - name: Verify
         run: |
           ./mvnw clean verify -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2/repository" \

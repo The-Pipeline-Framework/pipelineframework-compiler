@@ -138,21 +138,22 @@ class BuildCensusTest {
     @Test
     @org.junit.jupiter.api.condition.EnabledOnOs({org.junit.jupiter.api.condition.OS.LINUX, org.junit.jupiter.api.condition.OS.MAC})
     void localHostOwnsDurableStagingAndMissingHostDropsHandoff() throws Exception {
-        var standalone = host(CensusConfiguration.Mode.OUTBOX);
-        var state = standalone.configuration().stateDirectory();
+        Path project = Files.createDirectory(temporary.resolve("project"));
+        Path anchor = Files.writeString(project.resolve("pipeline.yaml"), "private");
+        var state = temporary.resolve("unrelated/build/state");
         BuildCensusObservation observation;
         try (var launcher = new LocalCensusBuildHost(state)) {
             var build = new ProcessBuilder();
             launcher.configure(build);
             Path socket = Path.of(build.environment().get("TPF_CENSUS_HOST_SOCKET"));
             var configuration = new CensusConfiguration(CensusConfiguration.Mode.OUTBOX, state, Optional.empty(), Optional.of(socket));
-            observation = new BuildCensusObservation(new BuildCensusHostContext(standalone.originalConfiguration(), configuration), summary());
+            observation = new BuildCensusObservation(new BuildCensusHostContext(anchor, configuration), summary());
             BuildCensusOutbox.stage(observation);
             assertFalse(Files.exists(state));
             assertEquals(1, launcher.collect());
             assertTrue(Files.isRegularFile(state.resolve("state.json")));
             assertEquals(1, launcher.drain(json -> {
-                assertFalse(json.contains(standalone.originalConfiguration().toString()));
+                assertFalse(json.contains(anchor.toString()));
                 return true;
             }));
         }
@@ -160,8 +161,84 @@ class BuildCensusTest {
         var missing = new CensusConfiguration(CensusConfiguration.Mode.OUTBOX, unused, Optional.empty(),
                 observation.host().configuration().hostSocket());
         BuildCensusOutbox.stage(new BuildCensusObservation(
-                new BuildCensusHostContext(standalone.originalConfiguration(), missing), summary()));
+                new BuildCensusHostContext(anchor, missing), summary()));
         assertFalse(Files.exists(unused));
+    }
+
+    /** Keeps compiler versions and output paths local to the handoff and enforces custom output roots. */
+    @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs({org.junit.jupiter.api.condition.OS.LINUX, org.junit.jupiter.api.condition.OS.MAC})
+    void handoffUsesCompilerVersionsAndRejectsCustomOutput() throws Exception {
+        Path anchor = host(CensusConfiguration.Mode.OUTBOX).originalConfiguration();
+        Path custom = temporary.resolve("arbitrary-output");
+        var versions = new CensusArtifactVersions("99.1.2", "98.2.3", 22);
+        var handoff = new LocalCensusHandoff(anchor, Set.of(custom), summary(), versions);
+        try (var receiver = new LocalCensusBuildHost(custom.resolve("new/state"))) {
+            var build = new ProcessBuilder();
+            receiver.configure(build);
+            handoff.offer(Path.of(build.environment().get("TPF_CENSUS_HOST_SOCKET")));
+            assertEquals(0, receiver.collect());
+            assertFalse(Files.exists(custom));
+        }
+        try (var receiver = new LocalCensusBuildHost(temporary.resolve("new/state"))) {
+            var build = new ProcessBuilder();
+            receiver.configure(build);
+            handoff.offer(Path.of(build.environment().get("TPF_CENSUS_HOST_SOCKET")));
+            assertEquals(1, receiver.collect());
+            assertEquals(1, receiver.drain(json -> {
+                var event = JsonParser.parseString(json).getAsJsonObject();
+                assertEquals(versions.compiler(), event.get("compiler_version").getAsString());
+                assertEquals(versions.contracts(), event.get("contracts_version").getAsString());
+                assertEquals(versions.javaMajor(), event.get("java_major").getAsInt());
+                assertFalse(json.contains(custom.toString()));
+                return true;
+            }));
+        }
+    }
+
+    /** Treats outbox as the Maven default without overriding an author-selected mode. */
+    @Test void mavenModePreservesExplicitPreviewAndOff() {
+        var environment = Map.of("TPF_CENSUS_MODE", "preview", "TPF_CENSUS_PREVIEW", temporary.resolve("preview.json").toString(),
+                "TPF_CENSUS_STATE_PERSISTENT", "true");
+        var properties = new Properties();
+        properties.setProperty("user.home", temporary.toString());
+        assertEquals(CensusConfiguration.Mode.PREVIEW, CensusConfiguration.forMaven(new Properties(), environment, properties).mode());
+        assertEquals(CensusConfiguration.Mode.OFF, CensusConfiguration.forMaven(new Properties(),
+                Map.of("TPF_CENSUS_MODE", "off"), properties).mode());
+        assertEquals(CensusConfiguration.Mode.OUTBOX, CensusConfiguration.forMaven(new Properties(),
+                Map.of("TPF_CENSUS_STATE_PERSISTENT", "true"), properties).mode());
+    }
+
+    /** Delivers a completed session while the launcher JVM is still alive, as with Maven daemons. */
+    @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs({org.junit.jupiter.api.condition.OS.LINUX, org.junit.jupiter.api.condition.OS.MAC})
+    void senderDoesNotWaitForLauncherJvmExit() throws Exception {
+        var host = host(CensusConfiguration.Mode.OUTBOX);
+        var state = host.configuration().stateDirectory();
+        var store = new CensusStateStore(state);
+        assertEquals("queued", store.observe(host, summary(), Clock.systemUTC(), ignored -> fail("Staging sent a request")).reason());
+        var received = new CountDownLatch(1);
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/observations", exchange -> {
+            try (exchange) {
+                exchange.getRequestBody().readAllBytes();
+                exchange.sendResponseHeaders(204, -1);
+                received.countDown();
+            }
+        });
+        server.start();
+        try {
+            LocalCensusSender.launchForMaven(state, System.getProperty("java.class.path"),
+                    java.net.URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/observations"));
+            assertTrue(received.await(5, TimeUnit.SECONDS));
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (System.nanoTime() < deadline && !JsonParser.parseString(Files.readString(state.resolve("state.json")))
+                    .getAsJsonObject().getAsJsonObject("pending").isEmpty()) Thread.sleep(20);
+            assertTrue(JsonParser.parseString(Files.readString(state.resolve("state.json")))
+                    .getAsJsonObject().getAsJsonObject("pending").isEmpty());
+        } finally {
+            server.stop(0);
+        }
     }
     /** Checks that inspection exposes a candidate locally without sending it or revealing the source path. */
     @Test void previewUsesSamePayloadAndNeverCallsTransport() throws Exception {
