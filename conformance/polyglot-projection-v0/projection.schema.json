@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:tpf:research:polyglot-projection:0",
+  "$id": "urn:tpf:research:polyglot-projection:profiles:1",
   "title": "Closed research artifact shape, not a production execution contract",
   "type": "object",
   "properties": {
@@ -8,7 +8,10 @@
       "const": 1
     },
     "profile": {
-      "const": "tpf-polyglot-probe/0"
+      "enum": [
+        "tpf-polyglot-probe/0",
+        "tpf-polyglot-unary-policy/1"
+      ]
     },
     "kind": {
       "const": "compiler-projection-probe"
@@ -191,6 +194,17 @@
         "semanticModelJarSha256"
       ],
       "additionalProperties": false
+    },
+    "policy": {
+      "const": {
+        "failureMapping": "structured-failure/1",
+        "retryOwner": "LOCAL_SHELL",
+        "resultMapping": "explicit-value/1",
+        "cancellation": "first-accepted-terminal/1",
+        "context": "explicit-snapshot/1",
+        "recovery": "REJECT",
+        "legacyPolicy": "REJECT"
+      }
     }
   },
   "required": [
@@ -204,5 +218,34 @@
     "contextKeys",
     "provenance"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "profile": {
+            "const": "tpf-polyglot-unary-policy/1"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "policy"
+        ],
+        "properties": {
+          "steps": {
+            "minItems": 3,
+            "maxItems": 3
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "policy"
+          ]
+        }
+      }
+    }
+  ]
 }

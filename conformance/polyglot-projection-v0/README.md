@@ -126,6 +126,55 @@ fractions and near integers such as `2.0000000000000001` reject. This probe's DS
 admission requires an explicit integer `version: 3` and explicit LOCAL/COMPUTE;
 it never relies on general-loader transport/platform fallbacks.
 
+## Generate the explicit unary policy binding
+
+The same producer also supports the candidate `tpf-polyglot-unary-policy/1`
+profile from [contracts #52](https://github.com/The-Pipeline-Framework/pipelineframework-contracts/issues/52).
+Select it in [policy-bindings.json](fixtures/policy-bindings.json). This is an
+explicit research binding choice, not new retry syntax in the DSL.
+
+The emitted `policy` object names the failure mapping, single retry owner, result
+mapping, cancellation ordering and explicit context binding. It rejects independent
+legacy policy and recovery. A consumer must admit these requirements before calling
+business code. An unfamiliar profile or policy must fail; the consumer cannot fall
+back to the v0 interpretation.
+
+```sh
+python3 conformance/polyglot-projection-v0/run.py --skip-resolve --projection-only \
+  --bindings conformance/polyglot-projection-v0/fixtures/policy-bindings.json \
+  --output conformance/polyglot-projection-v0/generated-policy/baseline
+
+# Same functions, but change their order using the authored DSL.
+python3 conformance/polyglot-projection-v0/run.py --skip-resolve --projection-only \
+  --dsl conformance/polyglot-projection-v0/fixtures/changed-order.yaml \
+  --bindings conformance/polyglot-projection-v0/fixtures/policy-bindings.json \
+  --output conformance/polyglot-projection-v0/generated-policy/changed-order
+
+# Keep the DSL order and give B one retry through the explicit research binding.
+python3 conformance/polyglot-projection-v0/run.py --skip-resolve --projection-only \
+  --bindings conformance/polyglot-projection-v0/fixtures/policy-downstream-retry-bindings.json \
+  --output conformance/polyglot-projection-v0/generated-policy/downstream-retry
+```
+
+The generated order changes A→B→C to B→A→C; the generated budgets change B from
+zero to one retry. Neither alteration comes from handwritten consumer metadata.
+The examples-owned live binding proof consumes these three packages and uses the
+existing Java executor alongside actual Node/Python function calls. It owns execution
+qualification; this producer proves generation, declaration and rejection behaviour.
+`--projection-only` deliberately skips the older v0 Java reference model.
+
+This v1 executable binding is closed to three linear steps over one required,
+non-null `value:int32` record. Additional `PresenceProbe` declarations continue to
+exercise generated type syntax, but are not executable nullable whole-result support.
+Unsupported executable shapes fail during generation. These experimental limits do
+not narrow the eventual streaming, Connector or Await requirements.
+
+The v0 profile retains its original semantics and document shape: it has no `policy`
+object. Regeneration changes its generator-source digest as expected, without
+retrofitting v1 settlement rules into historical v0 observations. The existing schema
+checks both profiles and requires the policy object only for v1. CI reproduces all
+three v1 packages byte for byte and rejects missing or altered policy declarations.
+
 ## Boundaries and provenance
 
 Supported here: records of scalar `int32`, required/optional and non-null/nullable

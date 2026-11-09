@@ -39,6 +39,7 @@ import org.pipelineframework.config.template.PipelineTemplateTypeReference;
  */
 public final class PolyglotProjectionProbe {
     private static final String PROFILE = "tpf-polyglot-probe/0";
+    private static final String POLICY_PROFILE = "tpf-polyglot-unary-policy/1";
     private static final String CONTRACTS_VERSION = "26.11.1";
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z][A-Za-z0-9_]*");
     private static final Pattern PIPELINE_ID = Pattern.compile("[a-z][a-z0-9-]*");
@@ -80,8 +81,17 @@ public final class PolyglotProjectionProbe {
         }
     }
     record Binding(String step, String handler, String inputType, String outputType, int retryLimit) { }
-    record Bindings(String pipelineId, List<Binding> handlers) {
+    record Bindings(String profile, String pipelineId, List<Binding> handlers) {
         Bindings { handlers = List.copyOf(handlers); }
+    }
+
+    /** Versioned selection, not configurable flags that can silently weaken a profile. */
+    record Policy(String failureMapping, String retryOwner, String resultMapping, String cancellation,
+                  String context, String recovery, String legacyPolicy) {
+        static Policy unary() {
+            return new Policy("structured-failure/1", "LOCAL_SHELL", "explicit-value/1",
+                "first-accepted-terminal/1", "explicit-snapshot/1", "REJECT", "REJECT");
+        }
     }
 
     public static void main(String[] args) throws Exception {
@@ -120,7 +130,11 @@ public final class PolyglotProjectionProbe {
             digest(Files.readAllBytes(dsl)), digest(Files.readAllBytes(bindingsFile)), generatorTreeHash,
             CONTRACTS_VERSION, jarDigest(PipelineTemplateConfigLoader.class), jarDigest(PipelineTemplateConfig.class)));
         // Build everything before writing. A rejected input never leaves a partially generated artifact.
-        String encoded = json.writerWithDefaultPrettyPrinter().writeValueAsString(projection) + "\n";
+        com.fasterxml.jackson.databind.node.ObjectNode document = json.valueToTree(projection);
+        // The v0 document shape remains unchanged. A v1 binding must explicitly admit
+        // every selected policy; copying just the step order is insufficient.
+        if (POLICY_PROFILE.equals(projection.profile())) document.set("policy", json.valueToTree(Policy.unary()));
+        String encoded = json.writerWithDefaultPrettyPrinter().writeValueAsString(document) + "\n";
         String typescript = new NativeModelEmitter().typescript(projection);
         String python = new NativeModelEmitter().python(projection);
         Files.createDirectories(output);
@@ -211,7 +225,19 @@ public final class PolyglotProjectionProbe {
         }
         String output = required(model.outputContract(), "pipeline output contract");
         if (!model.typeModel().isAssignable(preceding, output)) throw reject("INCOMPATIBLE_LINK", "pipeline output");
-        return new Projection(1, PROFILE, "compiler-projection-probe", new Pipeline(
+        if (POLICY_PROFILE.equals(bindings.profile())) {
+            // These live adapters qualify a closed three-step, non-null record path.
+            // PresenceProbe declarations remain useful type-generation evidence but do
+            // not imply a nullable whole-result or arbitrary payload codec is executable.
+            Type inputType = types.stream().filter(type -> type.id().equals(model.inputContract()))
+                .findFirst().orElseThrow(() -> reject("UNSUPPORTED_TYPE", "missing executable record"));
+            if (steps.size() != 3 || !inputType.fields().equals(List.of(new Field("value", "int32", "REQUIRED", "NON_NULL")))
+                || !output.equals(inputType.id()) || steps.stream().anyMatch(step ->
+                    !step.inputType().equals(inputType.id()) || !step.outputType().equals(inputType.id()))) {
+                throw reject("UNSUPPORTED_POLICY", "unary policy binding requires three steps over one non-null value:int32 record");
+            }
+        }
+        return new Projection(1, bindings.profile(), "compiler-projection-probe", new Pipeline(
             model.appName(), model.inputContract(), output, model.transport(), model.platform().name(), "DIRECT"),
             List.of("pure", "linear", "unary", "local", "retry", "cancellation", "context"), types, steps,
             List.of("executionId", "traceId"), provenance);
@@ -242,7 +268,7 @@ public final class PolyglotProjectionProbe {
         }
         exactJsonKeys(root, Set.of("schemaVersion", "profile", "pipelineId", "handlers"), "bindings");
         if (exactInteger(root.path("schemaVersion"), "BINDING_PROFILE") != 1
-            || !PROFILE.equals(root.path("profile").textValue())) {
+            || !Set.of(PROFILE, POLICY_PROFILE).contains(root.path("profile").asText())) {
             throw reject("BINDING_PROFILE", "requires exact schemaVersion 1 and known profile");
         }
         String pipelineId = jsonString(root, "pipelineId");
@@ -259,7 +285,7 @@ public final class PolyglotProjectionProbe {
             handlers.add(new Binding(jsonString(handler, "step"), symbol, jsonString(handler, "inputType"),
                 jsonString(handler, "outputType"), retry));
         }
-        return new Bindings(pipelineId, handlers);
+        return new Bindings(root.path("profile").textValue(), pipelineId, handlers);
     }
 
     private static Map<?, ?> yamlMap(Object value, String at) {

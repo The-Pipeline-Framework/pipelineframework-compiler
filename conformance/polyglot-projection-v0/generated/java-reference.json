@@ -106,6 +106,6 @@
   } ],
   "language" : "java",
   "profile" : "tpf-polyglot-probe/0",
-  "projectionSha256" : "fc8f31fd3b89b7cf85cfa50769d6775a372a8373c98405f2551456531a7e047a",
+  "projectionSha256" : "3b41d30e76bf6b0122ec20191556e7bed69f3620ff20c878b690ccffa6229cec",
   "scenariosSha256" : "aa3da5ea64b045d4dc818ce9daa5b357b074894e2183dbaa12ae8342d23d2033"
 }

@@ -238,6 +238,65 @@ class ProjectionTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.rejected("BINDING_PROFILE", bindings=json.dumps(self.bindings).replace('"schemaVersion": 1', '"schemaVersion": ' + token))
 
+    def test_policy_profile_generates_real_order_budget_and_binding_requirements(self):
+        schema = Draft202012Validator(json.loads((run.HERE / "projection.schema.json").read_text()))
+        expected_policy = {
+            "failureMapping": "structured-failure/1", "retryOwner": "LOCAL_SHELL",
+            "resultMapping": "explicit-value/1", "cancellation": "first-accepted-terminal/1",
+            "context": "explicit-snapshot/1", "recovery": "REJECT", "legacyPolicy": "REJECT",
+        }
+        # Only authored DSL controls order; only explicit research bindings control budgets.
+        for name, dsl_name, binding_name, order, budgets in (
+            ("baseline", "pipeline.yaml", "policy-bindings.json", ["A", "B", "C"], [2, 0, 0]),
+            ("changed-order", "changed-order.yaml", "policy-bindings.json", ["B", "A", "C"], [0, 2, 0]),
+            ("downstream-retry", "pipeline.yaml", "policy-downstream-retry-bindings.json", ["A", "B", "C"], [2, 1, 0]),
+        ):
+            with self.subTest(name=name):
+                result, output = self.invoke(yaml=(run.HERE / "fixtures" / dsl_name).read_text(),
+                                            bindings=(run.HERE / "fixtures" / binding_name).read_text())
+                self.assertEqual(0, result.returncode, result.stderr)
+                projection = json.loads((output / "projection.json").read_text())
+                self.assertEqual("tpf-polyglot-unary-policy/1", projection["profile"])
+                self.assertEqual(expected_policy, projection["policy"])
+                self.assertEqual(order, [step["id"] for step in projection["steps"]])
+                self.assertEqual(budgets, [step["retryLimit"] for step in projection["steps"]])
+                schema.validate(projection)
+                for artifact in ("projection.json", "models.ts", "models.py", "SHA256SUMS"):
+                    self.assertEqual((run.HERE / "generated-policy" / name / artifact).read_bytes(),
+                                     (output / artifact).read_bytes(), artifact)
+                for key in expected_policy:
+                    bad = copy.deepcopy(projection)
+                    bad["policy"][key] = "unsupported"
+                    with self.assertRaises(ValidationError):
+                        schema.validate(bad)
+                del projection["policy"]
+                with self.assertRaises(ValidationError):
+                    schema.validate(projection)
+        baseline = json.loads((run.HERE / "generated/projection.json").read_text())
+        self.assertNotIn("policy", baseline, "v0 must not silently acquire v1 settlement semantics")
+        baseline["policy"] = expected_policy
+        with self.assertRaises(ValidationError):
+            schema.validate(baseline)
+
+    def test_policy_profile_rejects_unsupported_execution_shapes_and_overrides(self):
+        bindings = json.loads((run.HERE / "fixtures/policy-bindings.json").read_text())
+        for field in ("[value?, int32]", "[value, int32?]", "[differentName, int32]"):
+            with self.subTest(field=field):
+                changed = self.yaml.replace(
+                    "{ name: value, type: int32, presence: required, nullability: non_null }", field)
+                self.rejected("UNSUPPORTED_POLICY", yaml=changed, bindings=bindings)
+        for key, value in (("recovery", True), ("retryOwner", "LEGACY"), ("policy", {})):
+            bad = copy.deepcopy(bindings)
+            bad[key] = value
+            self.rejected("UNSUPPORTED", bindings=bad)
+        bad = copy.deepcopy(bindings)
+        bad["handlers"][0]["recoverOnFailure"] = True
+        self.rejected("UNSUPPORTED", bindings=bad)
+        # Missing B cannot be silently converted to a shorter admitted policy profile.
+        changed = "\n".join(line for line in self.yaml.splitlines() if "name: B," not in line)
+        bindings["handlers"].pop(1)
+        self.rejected("UNSUPPORTED_POLICY", yaml=changed, bindings=bindings)
+
     def test_binding_profile_unknown_policy_and_duplicate_json_keys(self):
         bindings = copy.deepcopy(self.bindings)
         bindings["profile"] = "unknown-profile"

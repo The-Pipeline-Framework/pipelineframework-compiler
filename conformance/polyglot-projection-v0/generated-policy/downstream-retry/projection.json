@@ -1,0 +1,83 @@
+{
+  "schemaVersion" : 1,
+  "profile" : "tpf-polyglot-unary-policy/1",
+  "kind" : "compiler-projection-probe",
+  "pipeline" : {
+    "id" : "polyglot-abc",
+    "inputType" : "ProbeValue",
+    "outputType" : "ProbeValue",
+    "transport" : "LOCAL",
+    "platform" : "COMPUTE",
+    "execution" : "DIRECT"
+  },
+  "requiredCapabilities" : [ "pure", "linear", "unary", "local", "retry", "cancellation", "context" ],
+  "types" : [ {
+    "id" : "PresenceProbe",
+    "fields" : [ {
+      "name" : "requiredValue",
+      "type" : "int32",
+      "presence" : "REQUIRED",
+      "nullability" : "NON_NULL"
+    }, {
+      "name" : "nullableValue",
+      "type" : "int32",
+      "presence" : "REQUIRED",
+      "nullability" : "NULLABLE"
+    }, {
+      "name" : "optionalValue",
+      "type" : "int32",
+      "presence" : "OPTIONAL",
+      "nullability" : "NON_NULL"
+    }, {
+      "name" : "optionalNullableValue",
+      "type" : "int32",
+      "presence" : "OPTIONAL",
+      "nullability" : "NULLABLE"
+    } ]
+  }, {
+    "id" : "ProbeValue",
+    "fields" : [ {
+      "name" : "value",
+      "type" : "int32",
+      "presence" : "REQUIRED",
+      "nullability" : "NON_NULL"
+    } ]
+  } ],
+  "steps" : [ {
+    "id" : "A",
+    "inputType" : "ProbeValue",
+    "outputType" : "ProbeValue",
+    "handler" : "a",
+    "retryLimit" : 2
+  }, {
+    "id" : "B",
+    "inputType" : "ProbeValue",
+    "outputType" : "ProbeValue",
+    "handler" : "b",
+    "retryLimit" : 1
+  }, {
+    "id" : "C",
+    "inputType" : "ProbeValue",
+    "outputType" : "ProbeValue",
+    "handler" : "c",
+    "retryLimit" : 0
+  } ],
+  "contextKeys" : [ "executionId", "traceId" ],
+  "provenance" : {
+    "dslSha256" : "6d57faf58e5ae83c83e37d6d9686e5fc2a82e921fa967cea978182a5b0b30bfe",
+    "bindingsSha256" : "d3c4482f66126e4c22343f15aabd5a8f845eb63ab2c4f7a5219780a1a1567622",
+    "generatorTreeSha256" : "6fb8559bfb79fd9aca72a9e50025029584b6068ac4620b86ec79abb9a91f426f",
+    "contractsVersion" : "26.11.1",
+    "dslJarSha256" : "e40c48f95c03c7ce9982531d041cd61418f4029dffd25a082876c9901037ae82",
+    "semanticModelJarSha256" : "3162f934eb946af2b027f4684cbf72b6eb4ce838e8dd0b5f2356d2f3eeced01a"
+  },
+  "policy" : {
+    "failureMapping" : "structured-failure/1",
+    "retryOwner" : "LOCAL_SHELL",
+    "resultMapping" : "explicit-value/1",
+    "cancellation" : "first-accepted-terminal/1",
+    "context" : "explicit-snapshot/1",
+    "recovery" : "REJECT",
+    "legacyPolicy" : "REJECT"
+  }
+}
