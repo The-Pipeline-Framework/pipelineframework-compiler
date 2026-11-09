@@ -81,6 +81,88 @@ class BuildCensusTest {
         assertThrows(Exception.class, () -> store.observe(host, summary(), clock("2026-10-06"), failure));
         assertEquals(2, attempts.get());
     }
+
+    /** Exercises retries, local deduplication and expiry without allowing javac to call transport. */
+    @Test void outboxKeepsOnePendingEventUntilAcknowledgedOrExpired() throws Exception {
+        var host = host(CensusConfiguration.Mode.OUTBOX);
+        var store = new CensusStateStore(host.configuration().stateDirectory());
+        CensusTransport forbidden = ignored -> fail("Compiler staging must not call transport");
+        var monday = clock("2026-10-05");
+        var tuesday = clock("2026-10-06");
+        var wednesday = clock("2026-10-07");
+        assertEquals("queued", store.observe(host, summary(), monday, forbidden).reason());
+        assertEquals("already_queued_today", store.observe(host, summary(), monday, forbidden).reason());
+        var attempts = new ArrayList<String>();
+        assertEquals(0, store.drain(monday, json -> { attempts.add(json); return false; }));
+        assertEquals(1, store.drain(tuesday, json -> { attempts.add(json); return true; }));
+        assertEquals(2, attempts.size());
+        assertEquals(attempts.getFirst(), attempts.getLast(), "Retry keeps the exact observation");
+        assertEquals("unchanged_this_week", store.observe(host, summary(), tuesday, forbidden).reason());
+        var changed = new BuildCensusSummary(summary().sizes(), summary().featureCounts(), summary().transport(),
+                BuildCensusSummary.Platform.FUNCTION, summary().runtimeLayout());
+        assertEquals("queued", store.observe(host, changed, tuesday, forbidden).reason());
+        assertEquals(0, store.drain(clock("2026-10-08"), forbidden), "Expired observations are never sent");
+        assertEquals(0, store.drain(wednesday, forbidden), "Expired entries are removed from disk");
+    }
+
+    /** A blocked sender must release the state lock and must not clear a replacement observation. */
+    @Test void outboxSenderDoesNotLockCompilerOrAcknowledgeReplacement() throws Exception {
+        var host = host(CensusConfiguration.Mode.OUTBOX);
+        var store = new CensusStateStore(host.configuration().stateDirectory());
+        CensusTransport forbidden = ignored -> fail("Compiler staging must not call transport");
+        var monday = clock("2026-10-05");
+        var tuesday = clock("2026-10-06");
+        assertEquals("queued", store.observe(host, summary(), monday, forbidden).reason());
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var sender = executor.submit(() -> store.drain(monday, json -> {
+                entered.countDown();
+                return release.await(5, TimeUnit.SECONDS);
+            }));
+            try {
+                assertTrue(entered.await(5, TimeUnit.SECONDS));
+                assertEquals("queued", store.observe(host, summary(), tuesday, forbidden).reason());
+            } finally {
+                release.countDown();
+            }
+            assertEquals(0, sender.get(5, TimeUnit.SECONDS));
+        }
+        assertEquals(1, store.drain(tuesday, json -> {
+            assertEquals("2026-10-06", JsonParser.parseString(json).getAsJsonObject().get("observed_at").getAsString());
+            return true;
+        }));
+    }
+
+    /** Host mode stages only after collection and never falls back to a compiler disk write. */
+    @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs({org.junit.jupiter.api.condition.OS.LINUX, org.junit.jupiter.api.condition.OS.MAC})
+    void localHostOwnsDurableStagingAndMissingHostDropsHandoff() throws Exception {
+        var standalone = host(CensusConfiguration.Mode.OUTBOX);
+        var state = standalone.configuration().stateDirectory();
+        BuildCensusObservation observation;
+        try (var launcher = new LocalCensusBuildHost(state)) {
+            var build = new ProcessBuilder();
+            launcher.configure(build);
+            Path socket = Path.of(build.environment().get("TPF_CENSUS_HOST_SOCKET"));
+            var configuration = new CensusConfiguration(CensusConfiguration.Mode.OUTBOX, state, Optional.empty(), Optional.of(socket));
+            observation = new BuildCensusObservation(new BuildCensusHostContext(standalone.originalConfiguration(), configuration), summary());
+            BuildCensusOutbox.stage(observation);
+            assertFalse(Files.exists(state));
+            assertEquals(1, launcher.collect());
+            assertTrue(Files.isRegularFile(state.resolve("state.json")));
+            assertEquals(1, launcher.drain(json -> {
+                assertFalse(json.contains(standalone.originalConfiguration().toString()));
+                return true;
+            }));
+        }
+        Path unused = temporary.resolve("unused");
+        var missing = new CensusConfiguration(CensusConfiguration.Mode.OUTBOX, unused, Optional.empty(),
+                observation.host().configuration().hostSocket());
+        BuildCensusOutbox.stage(new BuildCensusObservation(
+                new BuildCensusHostContext(standalone.originalConfiguration(), missing), summary()));
+        assertFalse(Files.exists(unused));
+    }
     /** Checks that inspection exposes a candidate locally without sending it or revealing the source path. */
     @Test void previewUsesSamePayloadAndNeverCallsTransport() throws Exception {
         var host = host(CensusConfiguration.Mode.PREVIEW);

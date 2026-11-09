@@ -5,6 +5,8 @@ import java.util.*;
 
 /** Local-only host data. Must never enter the event serializer. */
 public record BuildCensusHostContext(Path originalConfiguration, CensusConfiguration configuration, Set<Path> packagedRoots) {
+    private static final Set<String> RESERVED = Set.of("src", "resources", "classes", "test-classes", "target", "build",
+            "generated-sources", "generated-test-sources", "META-INF");
     public BuildCensusHostContext(Path originalConfiguration, CensusConfiguration configuration) {
         this(originalConfiguration, configuration, Set.of());
     }
@@ -21,16 +23,30 @@ public record BuildCensusHostContext(Path originalConfiguration, CensusConfigura
         Path state = configuration.stateDirectory().toAbsolutePath().normalize();
         if (Files.exists(state)) state = state.toRealPath();
         if (resolved.equals(state.resolve("state.json")) || resolved.equals(state.resolve("state.lock"))) return Optional.empty();
-        Set<String> reserved = Set.of("src", "resources", "classes", "test-classes", "target", "build",
-                "generated-sources", "generated-test-sources", "META-INF");
-        for (Path part : resolved) if (reserved.contains(part.toString())) return Optional.empty();
-        for (Path root : packagedRoots) {
-            Path path = root.toAbsolutePath().normalize();
-            Path existing = path;
-            while (!Files.exists(existing)) existing = existing.getParent();
-            Path canonical = existing.toRealPath().resolve(existing.relativize(path)).normalize();
-            if (resolved.startsWith(canonical)) return Optional.empty();
-        }
+        if (inPackagedOutput(resolved)) return Optional.empty();
         return Files.exists(resolved, LinkOption.NOFOLLOW_LINKS) ? Optional.empty() : Optional.of(resolved);
+    }
+
+    /** Resolves the private outbox directory without allowing source or packaged output. */
+    Optional<Path> outboxDirectory() throws java.io.IOException {
+        Path path = configuration.stateDirectory().normalize();
+        if (!path.isAbsolute() || Files.isSymbolicLink(path)) return Optional.empty();
+        Path resolved = canonical(path);
+        if (resolved.equals(resolved.getRoot()) || inPackagedOutput(resolved)) return Optional.empty();
+        return Optional.of(resolved);
+    }
+
+    private boolean inPackagedOutput(Path resolved) throws java.io.IOException {
+        for (Path part : resolved) if (RESERVED.contains(part.toString())) return true;
+        for (Path root : packagedRoots) {
+            if (resolved.startsWith(canonical(root.toAbsolutePath().normalize()))) return true;
+        }
+        return false;
+    }
+
+    private Path canonical(Path path) throws java.io.IOException {
+        Path existing = path;
+        while (!Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) existing = existing.getParent();
+        return existing.toRealPath().resolve(existing.relativize(path)).normalize();
     }
 }

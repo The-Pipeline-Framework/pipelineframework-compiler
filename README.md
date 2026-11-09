@@ -70,8 +70,8 @@ dependency.
 
 ## Build census
 
-The compiler owns build-only census projection and a bounded daemon reporting shell.
-Public reporting is release-gated off; local preview is available with javac options
+The compiler owns build-only census projection. The Maven integration owns
+retained state and delivery. Local preview is available with javac options
 `-Atpf.census.mode=preview` and `-Atpf.census.preview=/private/census-preview.json`.
 Opt out with `TPF_CENSUS_ENABLED=false`, JVM property `tpf.census.enabled=false`,
 or processor option `-Atpf.census.enabled=false`. Any disabling source wins, including
@@ -88,7 +88,65 @@ The event covers a successful TPF compiler pass. javac can still report errors a
 annotation processing, and packaging and tests run separately.
 
 The packaged schema is `META-INF/tpf/census-v1.schema.json`; protocol/collector source lives
-in the separate `pipelineframework-census` repository. See the canonical
-[compilation guidance](https://github.com/The-Pipeline-Framework/pipelineframework/blob/1b531d775e0edae0742265196b5defcb51121bfa/docs/develop/pipeline-compilation/generated-artifacts.md#build-census)
-for inspected fields, identity, state directories, delivery limitations, and privacy controls.
+in the separate [census collector repository](https://github.com/The-Pipeline-Framework/pipelineframework-census).
+It owns the accepted fields, retention policy, and collector privacy controls.
 No census dependencies or reporting code are added to generated applications or runtime paths.
+
+### Maven integration
+
+Maven 3.9 with JDK 21 or later on Linux or macOS can load the compiler as a
+core extension. Add it to the application's `.mvn/extensions.xml` alongside
+any existing extensions. Use the exact compiler version used by the application.
+The extension does not replace the existing annotation processor configuration.
+
+```xml
+<extensions>
+  <extension>
+    <groupId>org.pipelineframework</groupId>
+    <artifactId>pipelineframework-compiler</artifactId>
+    <version>26.11.2</version>
+  </extension>
+</extensions>
+```
+
+For an approved release, reporting is on by default for eligible builds using
+the extension. Leave `TPF_CENSUS_ENABLED` unset to use that default, or set
+`TPF_CENSUS_ENABLED=false` to disable it. The tagged compiler release workflow
+embeds the public reporting gate only after `TPF_CENSUS_PUBLIC_RELEASE_APPROVED`
+is set to `true` by the release owner. Snapshots and ordinary builds leave the
+gate off. Standalone javac has local preview but no automatic delivery.
+
+The extension receives bounded local messages during compilation and writes
+them to an owner-only outbox on a background thread. Maven allows at most
+125 ms for the final local flush. A separate sender starts when an eligible
+observation is pending or the local flush reaches its deadline. It checks
+retained state and makes HTTP requests only after Maven exits. If CI kills
+it, the next build with the same retained state can retry. CI and container
+builds need `TPF_CENSUS_STATE_PERSISTENT=true` and genuinely retained local
+storage. Expired events are discarded.
+
+### Verification
+
+The forked-javac probe loads the packaged Maven adapter with an approved
+release marker in a temporary JAR and routes it to a literal loopback
+collector. It leaves `TPF_CENSUS_ENABLED` unset in the reporting arm and
+sets it to `false` for the control. It verifies that acknowledgements are
+recorded after Maven exits.
+
+The parallel probe runs six independent modules with Maven `-T 4`, reaps the
+sender, and verifies that the next build delivers all six without recompiling.
+It also checks that disposable CI creates no state.
+
+```sh
+TPF_CENSUS_ENABLED=false ./mvnw -Dmaven.repo.local="$PWD/.m2/repository" \
+  -Dtest=CensusForkedJavacTest -Dtpf.census.senderTrials=10 -Dtpf.census.parallel=true test
+```
+
+The nested builds use a warmed Maven repository in offline mode. CI runs
+these probes with a smaller timing sample. The production endpoint is never
+used by the probes.
+
+On Apple silicon with JDK 21 and Maven 3.9.11, ten paired forked builds all
+delivered after exit. The median added Maven wall time was 19 ms, down from
+501 ms in the prototype. The paired p95 was 184 ms and the javac final-round
+p95 was 3.68 ms. These are fixture measurements on one machine.

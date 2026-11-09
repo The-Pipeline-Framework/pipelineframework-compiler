@@ -4,12 +4,28 @@ import java.nio.file.*;
 import java.util.*;
 
 /** Shared build-frontend policy. The release artifact is preview-only until public rollout is approved. */
-public record CensusConfiguration(Mode mode, Path stateDirectory, Optional<Path> previewFile) {
-    public enum Mode { OFF, PREVIEW, REPORT }
-    public static final boolean PUBLIC_REPORTING_RELEASED = false;
-    public CensusConfiguration { Objects.requireNonNull(mode); Objects.requireNonNull(stateDirectory); Objects.requireNonNull(previewFile); }
+public record CensusConfiguration(Mode mode, Path stateDirectory, Optional<Path> previewFile, Optional<Path> hostSocket) {
+    public enum Mode { OFF, PREVIEW, OUTBOX, REPORT }
+    public CensusConfiguration(Mode mode, Path stateDirectory, Optional<Path> previewFile) {
+        this(mode, stateDirectory, previewFile, Optional.empty());
+    }
+    public CensusConfiguration {
+        Objects.requireNonNull(mode); Objects.requireNonNull(stateDirectory);
+        Objects.requireNonNull(previewFile); Objects.requireNonNull(hostSocket);
+    }
     /** Resolves opt-outs before preview or reporting and requires retained state on known disposable hosts. */
     public static CensusConfiguration resolve(Map<String, String> options, Map<String, String> environment, Properties properties) {
+        return resolve(options, environment, properties, false);
+    }
+
+    /** Selects the default user state directory for an installed Maven integration. */
+    static CensusConfiguration forMaven(Properties userProperties) {
+        return resolve(Map.of("tpf.census.mode", "outbox", "tpf.census.enabled",
+                userProperties.getProperty("tpf.census.enabled", "true")), System.getenv(), System.getProperties(), true);
+    }
+
+    private static CensusConfiguration resolve(Map<String, String> options, Map<String, String> environment,
+            Properties properties, boolean mavenHost) {
         try {
             Path home = Path.of(properties.getProperty("user.home", "."));
             String os = properties.getProperty("os.name", "").toLowerCase(Locale.ROOT);
@@ -32,10 +48,19 @@ public record CensusConfiguration(Mode mode, Path stateDirectory, Optional<Path>
                     || environment.containsKey("container") || Files.exists(Path.of("/.dockerenv")) || Files.exists(Path.of("/run/.containerenv"));
             Mode mode = disabled || ephemeral && !"true".equalsIgnoreCase(environment.get("TPF_CENSUS_STATE_PERSISTENT"))
                     ? Mode.OFF : requested.equals("preview") ? Mode.PREVIEW
-                    : requested.equals("report") && PUBLIC_REPORTING_RELEASED ? Mode.REPORT : Mode.OFF;
+                    : requested.equals("outbox") && state.isAbsolute()
+                            && (mavenHost || options.containsKey("tpf.census.hostSocket")
+                            || environment.containsKey("TPF_CENSUS_STATE_DIR")) ? Mode.OUTBOX : Mode.OFF;
             Optional<Path> preview = Optional.ofNullable(options.getOrDefault("tpf.census.preview", environment.get("TPF_CENSUS_PREVIEW"))).map(Path::of);
             if (mode == Mode.PREVIEW && preview.isEmpty()) mode = Mode.OFF;
-            return new CensusConfiguration(mode, state, preview);
+            Optional<Path> hostSocket = Optional.empty();
+            if (mode == Mode.OUTBOX) {
+                String socket = options.getOrDefault("tpf.census.hostSocket", environment.get("TPF_CENSUS_HOST_SOCKET"));
+                if (socket == null && options.containsKey("tpf.census.hostSocket"))
+                    return new CensusConfiguration(Mode.OFF, state, Optional.empty());
+                hostSocket = Optional.ofNullable(socket).map(Path::of);
+            }
+            return new CensusConfiguration(mode, state, preview, hostSocket);
         } catch (RuntimeException invalid) {
             return new CensusConfiguration(Mode.OFF, Path.of("."), Optional.empty());
         }

@@ -127,6 +127,7 @@ public class CensusCompilationTest {
                     "-proc:only", "-classpath", System.getProperty("java.class.path"),
                     "-processor", "org.pipelineframework.processor.PipelineStepProcessor",
                     "-s", generated.toString(), "-d", classes.toString(),
+                    "-Apipeline.generatedSourcesDir=" + generated.resolve("generated-sources/pipeline"),
                     "-Apipeline.config=" + root.resolve("pipeline.yaml"),
                     "-Apipeline.orchestrator.generate=" + !mode.equals("service"),
                     "-Atpf.census.mode=preview", "-Atpf.census.preview=" + preview),

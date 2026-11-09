@@ -1,0 +1,9 @@
+<component-set>
+  <components>
+    <component>
+      <role>org.apache.maven.AbstractMavenLifecycleParticipant</role>
+      <role-hint>tpf-build-census</role-hint>
+      <implementation>org.pipelineframework.processor.census.MavenCensusLifecycle</implementation>
+    </component>
+  </components>
+</component-set>
