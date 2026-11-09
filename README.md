@@ -72,11 +72,12 @@ dependency.
 
 The compiler owns build-only census projection and a bounded daemon reporting shell.
 Public reporting is release-gated off; local preview is available with javac options
-`-Atpf.telemetry.mode=preview` and `-Atpf.telemetry.preview=/private/census-preview.json`.
-Opt out with `TPF_TELEMETRY_DISABLED=true`, JVM property `tpf.telemetry.disabled=true`,
-or processor option `-Atpf.telemetry.disabled=true`. Any disabling source wins, including
-invalid values. Known CI/container environments require explicitly retained state through
-`TPF_TELEMETRY_STATE_PERSISTENT=true` even for preview.
+`-Atpf.census.mode=preview` and `-Atpf.census.preview=/private/census-preview.json`.
+Opt out with `TPF_CENSUS_ENABLED=false`, JVM property `tpf.census.enabled=false`,
+or processor option `-Atpf.census.enabled=false`. Any disabling source wins, including
+invalid values. Use `TPF_CENSUS_STATE_DIR` to select a managed state directory.
+Known CI/container environments require `TPF_CENSUS_STATE_PERSISTENT=true` and
+retained storage even for preview.
 
 Choose a fresh preview filename outside source and packaged output. Existing files are
 never replaced; preview requires an identifiable compiler output directory. Resolved

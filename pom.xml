@@ -234,7 +234,7 @@
                 <configuration>
                     <argLine>@{argLine} --enable-preview</argLine>
                     <systemPropertyVariables>
-                        <tpf.telemetry.disabled>true</tpf.telemetry.disabled>
+                        <tpf.census.enabled>false</tpf.census.enabled>
                         <compiler.project.basedir>${project.basedir}</compiler.project.basedir>
                     </systemPropertyVariables>
                 </configuration>

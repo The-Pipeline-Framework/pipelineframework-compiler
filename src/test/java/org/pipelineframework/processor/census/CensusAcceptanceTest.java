@@ -92,10 +92,10 @@ class CensusAcceptanceTest {
     @Test void knownJenkinsBuildNeedsRetainedStateEvenForInspection() {
         Properties properties = new Properties();
         properties.setProperty("user.home", directory.toString()); properties.setProperty("os.name", "Mac OS X");
-        var options = Map.of("tpf.telemetry.mode", "preview", "tpf.telemetry.preview", directory.resolve("preview.json").toString());
+        var options = Map.of("tpf.census.mode", "preview", "tpf.census.preview", directory.resolve("preview.json").toString());
         var environment = new HashMap<>(Map.of("JENKINS_URL", "https://jenkins.invalid", "BUILD_ID", "123"));
         assertEquals(CensusConfiguration.Mode.OFF, CensusConfiguration.resolve(options, environment, properties).mode());
-        environment.put("TPF_TELEMETRY_STATE_PERSISTENT", "true");
+        environment.put("TPF_CENSUS_STATE_PERSISTENT", "true");
         assertEquals(CensusConfiguration.Mode.PREVIEW, CensusConfiguration.resolve(options, environment, properties).mode());
     }
 

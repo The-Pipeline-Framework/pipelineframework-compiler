@@ -58,7 +58,7 @@ public final class CensusStateStore {
                 if (!reason.equals("eligible")) return new Outcome(reason, Optional.empty(), false);
                 Application attempted = new Application(app.identity(), today.toString(), app.acknowledgedDigest(), app.acknowledgedWeek());
                 boolean firstUse = !state.noticeShown();
-                if (firstUse) System.err.println("TPF build census: minimal build statistics enabled. Disable with TPF_TELEMETRY_DISABLED=true. Inspect: https://pipelineframework.org/develop/pipeline-compilation/generated-artifacts#build-census");
+                if (firstUse) System.err.println("TPF build census: minimal build statistics enabled. Disable with TPF_CENSUS_ENABLED=false. Inspect: https://pipelineframework.org/develop/pipeline-compilation/generated-artifacts#build-census");
                 state = new State(state.installation(), state.salt(), true, with(state.applications(), key, attempted));
                 write(state);
                 // A forced file plus an atomic rename is not enough after a power loss.

@@ -52,9 +52,9 @@ import org.pipelineframework.processor.util.RoleMetadataGenerator;
     "pipeline.rest.naming.strategy", // Optional: REST naming strategy (LEGACY|RESOURCEFUL)
     "pipeline.mapper.fallback.enabled", // Optional: enables delegated mapper fallback engine
     "pipeline.parallelism", // Optional: parallelism mode (PARALLEL|SEQUENTIAL|AUTO)
-    "tpf.telemetry.disabled",
-    "tpf.telemetry.mode",
-    "tpf.telemetry.preview",
+    "tpf.census.enabled",
+    "tpf.census.mode",
+    "tpf.census.preview",
     "pipeline.codegen.rendererProfile" // Optional: renderer profile selection (quarkus|spring)
 })
 @SupportedSourceVersion(SourceVersion.RELEASE_21)

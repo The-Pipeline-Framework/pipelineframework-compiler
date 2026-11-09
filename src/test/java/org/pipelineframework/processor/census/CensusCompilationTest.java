@@ -76,13 +76,13 @@ public class CensusCompilationTest {
     /** Runs the production processor or state probe in a subprocess with controlled census settings. */
     private void runHost(String mode) throws Exception {
         var command = List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-Dtpf.telemetry.disabled=false", "-Duser.home=" + temporary,
+                "-Dtpf.census.enabled=true", "-Duser.home=" + temporary,
                 "-cp", System.getProperty("java.class.path"), getClass().getName(), temporary.toString(), mode);
         ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true)
                 .redirectOutput(temporary.resolve(mode + ".log").toFile());
-        builder.environment().remove("TPF_TELEMETRY_DISABLED");
-        builder.environment().put("TPF_TELEMETRY_STATE_PERSISTENT", "true");
-        builder.environment().put("TPF_TELEMETRY_STATE_DIR", temporary.resolve("state").toString());
+        builder.environment().remove("TPF_CENSUS_ENABLED");
+        builder.environment().put("TPF_CENSUS_STATE_PERSISTENT", "true");
+        builder.environment().put("TPF_CENSUS_STATE_DIR", temporary.resolve("state").toString());
         Process process = builder.start();
         try {
             assertTimeoutPreemptively(Duration.ofSeconds(20), () -> assertEquals(0, process.waitFor(),
@@ -129,7 +129,7 @@ public class CensusCompilationTest {
                     "-s", generated.toString(), "-d", classes.toString(),
                     "-Apipeline.config=" + root.resolve("pipeline.yaml"),
                     "-Apipeline.orchestrator.generate=" + !mode.equals("service"),
-                    "-Atpf.telemetry.mode=preview", "-Atpf.telemetry.preview=" + preview),
+                    "-Atpf.census.mode=preview", "-Atpf.census.preview=" + preview),
                     Collections.emptyList(), manager.getJavaFileObjects(root.resolve("Service.java"))).call();
             if (compiled == mode.equals("invalid")) throw new IllegalStateException("Unexpected compiler result for " + mode);
         }
