@@ -1,11 +1,10 @@
-import { spawnSync } from 'node:child_process';
 import { lstatSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import {
   checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, inputPaths, profile, readRegularFile,
-  receiptFile, requireCondition, sha256, sourceIdentity, validDigest, validRepository, validSha, workflow, workflowPath,
+  receiptFile, requireCondition, run, sha256, sourceIdentity, validDigest, validRepository, validSha, workflow, workflowPath,
 } from './node-generation-common.mjs';
 
 function ghApi(endpoint, body) {
@@ -98,14 +97,31 @@ function committedInputs(cwd, sha, project) {
   return gitInputs(cwd, sha, project);
 }
 
+export function watchRun(repository, id, {
+  execute = run,
+  pause = milliseconds => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds),
+} = {}) {
+  // Dispatch may return the run ID before the Actions read endpoint can see it.
+  const endpoint = `repos/${repository}/actions/runs/${id}?exclude_pull_requests=true`;
+  for (const delay of [1000, 2000, 4000, 8000, 0]) {
+    const probe = execute('gh', ['api', '--hostname', 'github.com', '--include', '--silent', endpoint],
+      { timeout: 10_000 });
+    if (probe.status === 0) break;
+    requireCondition(/^HTTP\/\S+ 404\b/.test(probe.stdout?.toString() ?? ''),
+      `Could not read generation run ${id}: ${probe.error?.message ?? probe.stderr?.toString().trim()}`);
+    requireCondition(delay > 0,
+      `Generation run ${id} is not visible yet. Check the linked GitHub Actions run before dispatching again.`);
+    pause(delay);
+  }
+  const watched = execute('gh', ['run', 'watch', '--repo', `github.com/${repository}`, id, '--interval', '10'], {
+    stdio: 'inherit', timeout: 30 * 60 * 1000,
+  });
+  requireCondition(watched.status === 0, 'Could not watch the generation run. Check its GitHub Actions page.');
+}
+
 export function generateRemote([repository, ref, sourceSha, compilerSha, outputArg, project = '.'], {
   api = ghApi,
-  watch = (repository, id) => {
-    const watched = spawnSync('gh', ['run', 'watch', '--repo', `github.com/${repository}`, id, '--interval', '10'], {
-      stdio: 'inherit', timeout: 30 * 60 * 1000,
-    });
-    requireCondition(watched.status === 0, 'Could not watch the generation run. Check its GitHub Actions page.');
-  },
+  watch = watchRun,
   download = (repository, id, destination) => checked('gh', [
     'run', 'download', '--repo', `github.com/${repository}`, id, '--name', `tpf-node-generation-${id}-1`, '--dir', destination,
   ]),
