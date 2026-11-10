@@ -10,6 +10,6 @@ types:
   SecondValue: { fields: [[value, int32]] }
   OutputValue: { fields: [[value, int32]] }
 steps:
-  - { name: A, cardinality: ONE_TO_ONE, input: InputValue, output: FirstValue }
-  - { name: B, cardinality: ONE_TO_ONE, input: FirstValue, output: SecondValue }
+  - { name: B, cardinality: ONE_TO_ONE, input: InputValue, output: FirstValue }
+  - { name: A, cardinality: ONE_TO_ONE, input: FirstValue, output: SecondValue }
   - { name: C, cardinality: ONE_TO_ONE, input: SecondValue, output: OutputValue }
