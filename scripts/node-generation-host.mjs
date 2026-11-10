@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, inputNames, profile,
+  checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, profile,
   readRegularFile, receiptFile, requireCondition, run, sha256, sourceIdentity, validRepository, validSha,
 } from './node-generation-common.mjs';
 
@@ -42,22 +42,31 @@ function generate(output, temporary, compilerSha, inputs, log) {
     contractsVersion, dependencies,
   };
 
-  const stagedInputs = inputs.map(({ bytes }, i) => {
-    const path = join(temporary, inputNames[i]);
-    writeFileSync(path, bytes, { flag: 'wx' });
-    return path;
-  });
+  // Keep authored paths separate from host files and generated output, even for
+  // application directories named "generated". Only committed Git blobs are staged.
+  const stagingRoot = join(temporary, 'source');
+  const stagedInputs = stageGitInputs(stagingRoot, inputs);
   const generated = join(temporary, 'generated');
   const java = process.env.JAVA_HOME ? join(process.env.JAVA_HOME, 'bin', 'java') : 'java';
   // Keep Maven progress in the log only when the compiler build itself fails.
   log.length = 0;
   runWithDiagnostics(java, ['--enable-preview', '-cp', [jar, ...classpathEntries].join(delimiter),
-    'org.pipelineframework.compiler.node.NodeLocalCompiler', ...stagedInputs, generated], temporary, log);
+    'org.pipelineframework.compiler.node.NodeLocalCompiler', ...stagedInputs, generated], stagingRoot, log);
   requireCondition(readdirSync(generated).sort().join(' ') === generatedFiles.join(' '),
     'Compiler emitted an unexpected set of files.');
   const files = Object.fromEntries(generatedFiles.map(name => [name, readRegularFile(join(generated, name))]));
   for (const [name, bytes] of Object.entries(files)) writeFileSync(join(output, name), bytes, { flag: 'wx' });
   return { compiler, files };
+}
+
+/** Preserve repository-relative names so compiler diagnostics point at authored files. */
+export function stageGitInputs(stagingRoot, inputs) {
+  return inputs.map(({ path, bytes }) => {
+    const staged = join(stagingRoot, path);
+    mkdirSync(dirname(staged), { recursive: true });
+    writeFileSync(staged, bytes, { flag: 'wx' });
+    return path;
+  });
 }
 
 function main() {
@@ -104,9 +113,11 @@ function main() {
   }, null, 2) + '\n', { flag: 'wx' });
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error.message);
-  process.exitCode = 1;
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
 }

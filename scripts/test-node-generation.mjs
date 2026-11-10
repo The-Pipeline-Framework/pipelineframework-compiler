@@ -7,6 +7,7 @@ import {
   checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, profile,
   receiptFile, sha256, sourceIdentity, workflowPath,
 } from './node-generation-common.mjs';
+import { stageGitInputs } from './node-generation-host.mjs';
 import { generateRemote } from './remote-node-generation.mjs';
 
 const repository = 'owner/app';
@@ -210,6 +211,34 @@ test('rechecks run and local source after download', async t => {
       };
       assert.throws(() => generateRemote(data.args, data.mock), error);
       absent(data.output);
+    });
+  }
+});
+
+
+test('stages committed Git blobs at authored paths, including nested projects', async t => {
+  for (const project of ['.', 'apps/invoice', 'generated']) {
+    await t.test(project, t => {
+      const { cwd } = fixture(t);
+      const git = (...args) => checked('git', args, { cwd }).toString().trim();
+      const directory = join(cwd, project);
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(join(directory, 'pipeline.yaml'), 'version: 3\n');
+      writeFileSync(join(directory, 'native-bindings.json'), '{}\n');
+      git('add', '--', '.');
+      git('-c', 'user.name=Generation test', '-c', 'user.email=test@example.invalid',
+        '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'Project inputs');
+      const revision = git('rev-parse', 'HEAD');
+      // Working-tree edits must not enter the staged compiler snapshot.
+      writeFileSync(join(directory, 'pipeline.yaml'), 'uncommitted: true\n');
+      const inputs = gitInputs(cwd, revision, project);
+      const stagingRoot = join(cwd, 'host', 'source');
+      const paths = stageGitInputs(stagingRoot, inputs);
+      const prefix = project === '.' ? '' : `${project}/`;
+      assert.deepEqual(paths, [`${prefix}pipeline.yaml`, `${prefix}native-bindings.json`]);
+      assert.equal(readFileSync(join(stagingRoot, paths[0]), 'utf8'), 'version: 3\n');
+      assert.equal(readFileSync(join(stagingRoot, paths[1]), 'utf8'), '{}\n');
+      assert.deepEqual(readdirSync(join(cwd, 'host')), ['source']);
     });
   }
 });
