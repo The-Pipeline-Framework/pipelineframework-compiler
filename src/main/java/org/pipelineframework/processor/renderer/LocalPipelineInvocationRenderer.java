@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import javax.lang.model.element.Modifier;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.FieldSpec;
@@ -151,14 +152,31 @@ public final class LocalPipelineInvocationRenderer {
             }
             return type;
         }
-        List<PipelineStepModel> available = "$root".equals(parent.target().logicalId()) ? ctx.getStepModels()
-            : ctx.getLocalDefinitionStepModels().getOrDefault(parent.target().logicalId(), List.of());
-        PipelineStepModel model = available.stream()
-            .filter(candidate -> matchesAuthoredStep(candidate, child.localStepId()))
-            .findFirst().orElseThrow(() -> new IllegalStateException("No generated child step model for '"
+        List<PipelineStepModel> available = new GeneratedExecutionOrderResolver().executionModels(ctx, parent.target());
+        PipelineStepModel model = findAuthoredStepModel(available, child.localStepId())
+            .orElseThrow(() -> new IllegalStateException("No generated child step model for '"
                 + child.localStepId() + "' in definition '" + parent.target().logicalId()
                 + "'. Available models: " + available.stream().map(PipelineStepModel::serviceName).toList()));
         return ClassName.bestGuess(ClientStepClassNames.className(model, ctx.getTransportMode()));
+    }
+
+    static Optional<PipelineStepModel> findAuthoredStepModel(List<PipelineStepModel> models, String authoredStepName) {
+        List<PipelineStepModel> matches = models.stream()
+            .filter(model -> !model.sideEffect())
+            .filter(model -> matchesAuthoredStep(model, authoredStepName))
+            .toList();
+        // Connector and dynamic selections carry exact authored identity. Prefer them over
+        // ordinary models matched by their generated name.
+        List<PipelineStepModel> exact = matches.stream()
+            .filter(model -> model.connectorOperationSelection().isPresent() || model.dynamicOperationSelection().isPresent())
+            .toList();
+        List<PipelineStepModel> owners = exact.isEmpty() ? matches : exact;
+        if (owners.size() > 1) {
+            throw new IllegalStateException("Multiple generated step models match authored step '" + authoredStepName
+                + "': " + owners.stream().map(model -> model.serviceClassName().canonicalName()).toList()
+                + ". Use distinct step names.");
+        }
+        return owners.stream().findFirst();
     }
 
     static boolean matchesAuthoredStep(PipelineStepModel candidate, String authoredStepName) {
@@ -184,9 +202,9 @@ public final class LocalPipelineInvocationRenderer {
                 classes.add(invocationTypes.get(binding.invocationLocation()).canonicalName());
                 continue;
             }
-            PipelineStepModel model = ctx.getStepModels().stream()
-                .filter(candidate -> candidate.serviceName().equals(toYamlServiceName(root.name())))
-                .findFirst().orElseThrow(() -> new IllegalStateException("No generated root step model for '" + root.name() + "'."));
+            PipelineStepModel model = findAuthoredStepModel(new GeneratedExecutionOrderResolver()
+                .executionModels(ctx, new PipelineReference("$root")), root.name())
+                .orElseThrow(() -> new IllegalStateException("No generated root step model for '" + root.name() + "'."));
             classes.add(RuntimeStepClassNames.className(
                 model, ctx.getTransportMode(), ctx.isOrchestratorGenerated()));
         }
