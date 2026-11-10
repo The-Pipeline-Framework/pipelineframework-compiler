@@ -50,6 +50,7 @@
         <maven.gpg.plugin.version>3.2.8</maven.gpg.plugin.version>
         <central.publishing.plugin.version>0.9.0</central.publishing.plugin.version>
         <gpg.skip>true</gpg.skip>
+        <tpf.census.release>false</tpf.census.release>
     </properties>
 
     <repositories>
@@ -66,6 +67,12 @@
     </repositories>
 
     <dependencies>
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-core</artifactId>
+            <version>3.9.11</version>
+            <scope>provided</scope>
+        </dependency>
         <dependency>
             <groupId>org.pipelineframework</groupId>
             <artifactId>pipelineframework-api</artifactId>
@@ -206,7 +213,38 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource><directory>src/main/resources</directory><filtering>false</filtering></resource>
+            <resource><directory>src/main/build-metadata</directory><filtering>true</filtering></resource>
+        </resources>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>verify-packaged-census-release-marker</id>
+                        <phase>verify</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <loadproperties prefix="census.jar">
+                                    <zipentry zipfile="${project.build.directory}/${project.build.finalName}.jar"
+                                              name="META-INF/tpf/census-release.properties"/>
+                                </loadproperties>
+                                <fail message="Compiler JAR census approval marker does not match the build policy">
+                                    <condition>
+                                        <not>
+                                            <equals arg1="${census.jar.public_reporting}" arg2="${tpf.census.release}"/>
+                                        </not>
+                                    </condition>
+                                </fail>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -230,6 +268,7 @@
                 <configuration>
                     <argLine>@{argLine} --enable-preview</argLine>
                     <systemPropertyVariables>
+                        <tpf.census.enabled>false</tpf.census.enabled>
                         <compiler.project.basedir>${project.basedir}</compiler.project.basedir>
                     </systemPropertyVariables>
                 </configuration>

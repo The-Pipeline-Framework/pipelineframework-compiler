@@ -690,6 +690,77 @@ class PipelineContractMetadataGeneratorTest {
         }
     }
 
+    @Test
+    void contractNamesTheDirectServiceWithoutInventingAClientClass() throws IOException {
+        Path output = tempDir.resolve("direct-service-class");
+        var processing = processingEnv(output, Map.of());
+        var context = new PipelineCompilationContext(
+            processing, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        context.setModuleName("orchestrator-svc");
+        context.setPlatformMode(PlatformMode.COMPUTE);
+        context.setTransportMode(PipelineTransport.LOCAL);
+        context.setStepModels(List.of(step("ProcessDirectService", "Input", "Output",
+            StreamingShape.UNARY_UNARY, Set.of())));
+
+        new PipelineContractMetadataGenerator(processing).writePipelineContract(context);
+
+        var descriptor = readContract(output).getAsJsonArray("steps").get(0).getAsJsonObject();
+        assertEquals("org.example.restaurant.service.ProcessDirectService", descriptor.get("runtimeClass").getAsString());
+        assertFalse(descriptor.has("clientClass"));
+    }
+
+    @Test
+    void contractNamesTheLocalClientInARestModule() throws IOException {
+        Path output = tempDir.resolve("rest-module-local-client");
+        var processing = processingEnv(output, Map.of());
+        var context = new PipelineCompilationContext(
+            processing, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        context.setModuleName("orchestrator-svc");
+        context.setPlatformMode(PlatformMode.COMPUTE);
+        context.setTransportMode(PipelineTransport.REST);
+        context.setStepModels(List.of(step("ProcessDelegatedService", "Input", "Output",
+            StreamingShape.UNARY_UNARY, Set.of(GenerationTarget.LOCAL_CLIENT_STEP))));
+
+        new PipelineContractMetadataGenerator(processing).writePipelineContract(context);
+
+        var descriptor = readContract(output).getAsJsonArray("steps").get(0).getAsJsonObject();
+        assertEquals("org.example.restaurant.pipeline.ProcessDelegatedLocalClientStep",
+            descriptor.get("clientClass").getAsString());
+    }
+
+    @Test
+    void contractNamesTheGeneratedClientForEachExecutionRole() throws IOException {
+        Path output = tempDir.resolve("generated-client-classes");
+        var processing = processingEnv(output, Map.of());
+        var context = new PipelineCompilationContext(
+            processing, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        context.setModuleName("orchestrator-svc");
+        context.setPlatformMode(PlatformMode.COMPUTE);
+        context.setTransportMode(PipelineTransport.LOCAL);
+        context.setStepModels(List.of(
+            step("ProcessInternalService", "Input", "Intermediate", StreamingShape.UNARY_UNARY,
+                Set.of(GenerationTarget.LOCAL_CLIENT_STEP)),
+            step("ProcessCommandService", "Intermediate", "CommandOutput", StreamingShape.UNARY_UNARY,
+                Set.of(GenerationTarget.COMMAND_CLIENT_STEP)),
+            step("ProcessQueryService", "CommandOutput", "QueryOutput", StreamingShape.UNARY_UNARY,
+                Set.of(GenerationTarget.QUERY_CLIENT_STEP)),
+            step("ProcessDynamicService", "QueryOutput", "PendingRestaurantApproval", StreamingShape.UNARY_UNARY,
+                Set.of(GenerationTarget.DYNAMIC_OPERATION_CLIENT_STEP)),
+            deferredStep()));
+
+        new PipelineContractMetadataGenerator(processing).writePipelineContract(context);
+
+        String base = "org.example.restaurant.pipeline.";
+        var names = readContract(output).getAsJsonArray("steps").asList().stream()
+            .map(step -> step.getAsJsonObject().get("clientClass").getAsString()).toList();
+        assertEquals(List.of(
+            base + "ProcessInternalLocalClientStep",
+            base + "ProcessCommandCommandClientStep",
+            base + "ProcessQueryQueryClientStep",
+            base + "ProcessDynamicDynamicOperationClientStep",
+            base + "ProcessAwaitRestaurantDecisionDeferredCompletionStep"), names);
+    }
+
     private void writeMetadata(Path pipelineYaml, Path outputDir) throws IOException {
         writeMetadata(pipelineYaml, outputDir, Map.of());
     }

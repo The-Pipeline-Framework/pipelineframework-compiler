@@ -12,6 +12,9 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  TPF_CENSUS_ENABLED: "false"
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -35,8 +38,13 @@ jobs:
           test "${GITHUB_REF_NAME#v}" = "$VERSION"
           case "$VERSION" in *-SNAPSHOT) exit 1;; esac
       - name: Verify and publish
-        run: ./mvnw -B clean deploy --no-transfer-progress -Dgpg.skip=false -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2/repository"
+        run: |
+          census=false
+          if [ "$CENSUS_RELEASE_APPROVED" = true ]; then census=true; fi
+          ./mvnw -B clean deploy --no-transfer-progress -Dgpg.skip=false \
+            -Dtpf.census.release="$census" -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2/repository"
         env:
+          CENSUS_RELEASE_APPROVED: ${{ vars.TPF_CENSUS_PUBLIC_RELEASE_APPROVED }}
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}

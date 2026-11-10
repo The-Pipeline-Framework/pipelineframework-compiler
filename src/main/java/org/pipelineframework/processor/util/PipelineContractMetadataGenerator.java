@@ -134,10 +134,25 @@ public class PipelineContractMetadataGenerator {
         if (processingEnv != null) {
             javax.tools.FileObject resourceFile = processingEnv.getFiler()
                 .createResource(StandardLocation.CLASS_OUTPUT, "", CONTRACT_RESOURCE_PATH);
+            preserveClassOutputRoot(ctx, resourceFile);
             try (var writer = resourceFile.openWriter()) {
                 writer.write(PRETTY_GSON.toJson(finalContract));
             }
         }
+    }
+
+    /** Preserve the host's actual packaged-output location without new Filer resources or reads. */
+    private void preserveClassOutputRoot(PipelineCompilationContext context, javax.tools.FileObject resource) {
+        try {
+            var uri = resource.toUri();
+            if (uri == null || !"file".equalsIgnoreCase(uri.getScheme())) return;
+            var root = java.nio.file.Path.of(uri);
+            for (var ignored : java.nio.file.Path.of(CONTRACT_RESOURCE_PATH)) {
+                if (root.getParent() == null) return;
+                root = root.getParent();
+            }
+            context.setClassOutputRoot(java.util.Optional.of(root));
+        } catch (RuntimeException unavailable) { /* Optional host metadata cannot change generation. */ }
     }
 
     private List<Map<String, Object>> httpPayloadBoundaries(PipelineCompilationContext ctx) {
@@ -366,7 +381,10 @@ public class PipelineContractMetadataGenerator {
                 .map(selection -> typeId(selection.finalOutputType()))
                 .orElseGet(() -> typeId(model.outputMapping().domainType())));
             descriptor.put("runtimeClass", runtimeClass(model, ctx));
-            descriptor.put("clientClass", clientClass(model, ctx));
+            String clientClass = clientClass(model, ctx);
+            if (clientClass != null) {
+                descriptor.put("clientClass", clientClass);
+            }
             if (yamlStep != null && yamlStep.paging().isPresent()) {
                 descriptor.put("paging", Map.of(
                     "maxRecords", yamlStep.paging().orElseThrow().maxRecords()));
@@ -555,10 +573,13 @@ public class PipelineContractMetadataGenerator {
     }
 
     private static String clientClass(PipelineStepModel model, PipelineCompilationContext ctx) {
-        String suffix = model.enabledTargets().contains(GenerationTarget.DEFERRED_COMPLETION_STEP)
-            ? "DeferredCompletionStep"
-            : java.util.Objects.requireNonNullElse(ctx.getTransportMode(), PipelineTransport.GRPC).clientStepSuffix();
-        return model.servicePackage() + ".pipeline." + stripTrailingService(model.generatedName()) + suffix;
+        if (RuntimeStepClassNames.usesGeneratedClient(model, false)) {
+            return ClientStepClassNames.className(
+                model, Objects.requireNonNullElse(ctx.getTransportMode(), PipelineTransport.GRPC));
+        }
+        return model.enabledTargets().contains(GenerationTarget.LOCAL_CLIENT_STEP)
+            ? ClientStepClassNames.className(model, PipelineTransport.LOCAL)
+            : null;
     }
 
     private static Map<String, Object> deferredCompletion(
