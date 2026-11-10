@@ -1,0 +1,69 @@
+name: TPF Node generation
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
+      compiler_sha:
+        type: string
+        required: true
+      project:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      TPF_CENSUS_ENABLED: "false"
+      TPF_SOURCE_SHA: ${{ inputs.source_sha }}
+      TPF_COMPILER_SHA: ${{ inputs.compiler_sha }}
+      TPF_PROJECT: ${{ inputs.project }}
+    steps:
+      - name: Validate requested revisions
+        run: |
+          [[ "$TPF_SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$TPF_SOURCE_SHA" == "$GITHUB_SHA" ]] || {
+            echo "The dispatch ref moved. Dispatch the requested committed revision again."
+            exit 1
+          }
+          [[ "$TPF_COMPILER_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Provide a full compiler commit SHA."
+            exit 1
+          }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: application
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: The-Pipeline-Framework/pipelineframework-compiler
+          ref: ${{ inputs.compiler_sha }}
+          path: compiler
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21.0.13+9'
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.23.4'
+          package-manager-cache: false
+      - name: Generate bindings from committed application inputs
+        id: generate
+        run: |
+          node compiler/scripts/node-generation-host.mjs "$GITHUB_WORKSPACE/application" "$RUNNER_TEMP/tpf-node-generation"
+      - name: Upload generation result
+        if: ${{ !cancelled() && (steps.generate.outcome == 'success' || steps.generate.outcome == 'failure') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tpf-node-generation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tpf-node-generation/
+          if-no-files-found: error
+          retention-days: 7
