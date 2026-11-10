@@ -37,6 +37,137 @@ Set `-Dtpf.version=<version>` only when deliberately testing another published T
 `central-publishing` profile only to sign and deploy the canonical artifact. For the component map, see
 [TPF Components and Repositories](https://pipelineframework.org/architecture/components-and-repositories).
 
+## Generate Node bindings without local Java
+
+The compiler can generate TypeScript models, a typed handler registry and application API, and an ordered
+execution projection for the bounded `tpf-polyglot-unary-policy/1` profile. The generated application
+delegates execution to the runtime interface it exports. A compatible Node runtime is tracked in
+[runtime #84](https://github.com/The-Pipeline-Framework/pipelineframework-runtime/issues/84). The generation
+workflow covers the compiler output and its retrieval. Streaming, Connectors, Await, and distributed
+execution are outside this profile.
+
+### Author the inputs
+
+Use DSL version 3 with `transport: LOCAL`, `platform: COMPUTE`, and exactly three linear
+`ONE_TO_ONE` steps. Declare four distinct canonical record types, each with one required
+`value: int32` field, for the pipeline input, the two intermediate values, and the final output.
+Provide `appName`, `basePackage`, and the pipeline input/output contract.
+
+In `native-bindings.json`, set `schemaVersion` to `1`, `profile` to
+`tpf-polyglot-unary-policy/1`, and `pipelineId` to the DSL's `appName`. Supply one entry in
+`handlers` per authored step. Each entry names the exact authored `step`, a distinct TypeScript
+`handler` identifier, its canonical `inputType` and `outputType` names, and a `retryLimit`
+from 0 through 2. The compiler derives execution order from the DSL. It emits the
+`compiler-node-local` projection format. Use that format with the generated application API.
+
+### Set up the generation workflow
+
+Use a GitHub application repository with Actions enabled. Save the following workflow as
+`.github/workflows/tpf-node-generation.yml` on the repository's default branch and on the branch or tag you
+dispatch. Replace `COMPILER_SHA` in the `uses` line with the full commit SHA of the compiler revision you
+trust. The workflow must be present at that revision in the public compiler repository.
+
+```yaml
+name: Generate TPF Node bindings
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full application commit SHA
+        type: string
+        required: true
+      compiler_sha:
+        description: Full compiler SHA matching the reusable workflow pin
+        type: string
+        required: true
+      project:
+        description: Repository-relative project directory
+        type: string
+        default: '.'
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    uses: The-Pipeline-Framework/pipelineframework-compiler/.github/workflows/tpf-node-generation.yml@COMPILER_SHA
+    with:
+      source_sha: ${{ inputs.source_sha }}
+      compiler_sha: ${{ inputs.compiler_sha }}
+      project: ${{ inputs.project }}
+```
+
+The application repository and its caller workflow are part of the trust boundary. The reusable job uses
+a hosted runner and a read-only token. It checks out both exact commits, reads two regular Git blobs
+named `pipeline.yaml` and `native-bindings.json`, and builds the compiler with the pinned Java and Maven
+toolchain and released Contracts dependencies. It runs no application build scripts and requires no
+application secrets, cross-repository token or TPF Cloud account. Keep credentials out of committed
+inputs and omit `secrets: inherit` from the caller.
+
+### Generate and retrieve
+
+On the workstation, use Git, Node.js 22 or newer, and GitHub CLI 2.100 or newer. Sign in with
+`gh auth login --hostname github.com` using an account authorised to dispatch workflows and retrieve
+artifacts in the application repository. The supported sign-in uses GitHub CLI's OAuth flow because
+`gh run watch` needs Checks access. Clone the compiler separately and check it out at the same
+`COMPILER_SHA` used in the workflow. [GitHub CLI run watch](https://cli.github.com/manual/gh_run_watch)
+
+After editing the pipeline or handler bindings, commit and push your changes to an authorised branch
+or tag. Run from the application checkout at the commit being generated.
+
+```sh
+node /path/to/pinned/compiler/scripts/remote-node-generation.mjs \
+  OWNER/APP BRANCH_OR_TAG "$(git rev-parse HEAD)" COMPILER_SHA ./generated-next
+```
+
+For a project in a subdirectory, append its repository-relative path after the output directory.
+The output directory must be new and its parent must exist. The tool sends the branch or tag and
+commit identities to Actions. It obtains the run ID directly from dispatch, verifies the exact source
+and compiler workflow revision, checks the output digests and the projection's input hashes, then
+installs the verified files together. If the run fails or its output differs, the command exits
+with an error. Inspect the linked run and its diagnostics, fix the inputs or host configuration,
+and dispatch again. A rerun or expired artifact requires a new dispatch.
+
+Use the retrieved `application.ts` and `models.ts` in the application's TypeScript project and type-check the
+handler registry with the project's pinned TypeScript toolchain. For an npm project with a committed
+lockfile, install dependencies with `npm ci` and run the project's type-check script, or
+`./node_modules/.bin/tsc --noEmit` with those files included in `tsconfig.json`. The local type check uses Node.
+Changing step order can require updating the canonical input/output types on the affected edges and
+updating the corresponding binding declarations.
+
+For bindings named `normalize`, `apply`, and `finish`, the generated registry checks each function
+against its declared types. The application accepts a compatible runtime through the generated
+`NodeLocalRuntime` interface.
+
+```ts
+import { createApplication, type HandlerRegistry, type NodeLocalRuntime } from "./generated-next/application.js";
+
+const handlers = {
+  normalize: input => ({ kind: "VALUE", value: { value: input.value } }),
+  apply: input => ({ kind: "VALUE", value: { value: input.value + 1 } }),
+  finish: input => ({ kind: "VALUE", value: { value: input.value } }),
+} satisfies HandlerRegistry;
+
+export const bind = (runtime: NodeLocalRuntime) => createApplication(runtime, handlers);
+```
+
+The output includes `projection.json`, `diagnostics.txt`, and `generation-receipt.json` alongside the
+generated TypeScript. The receipt records source and compiler commits, Maven dependency versions and
+JAR digests, the profile, and generated file digests. These checks establish integrity for the
+selected build result. The receipt carries generation metadata only. TPF Release identity comes from
+existing Release packaging and verification.
+
+An alternative build host can invoke the compiler directly with Java 21 and the packaged compiler
+and its runtime dependency JARs on the classpath.
+
+```sh
+java --enable-preview -cp "$COMPILER_CLASSPATH" \
+  org.pipelineframework.compiler.node.NodeLocalCompiler pipeline.yaml native-bindings.json ./generated-next
+```
+
+Run the compiler-owned build tooling tests with `node --test scripts/test-node-generation.mjs`.
+
 ## Canonical union REST representation
 
 For a version 3 canonical union whose variants carry named record payloads, REST generation emits a typed
