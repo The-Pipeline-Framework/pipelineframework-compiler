@@ -11,6 +11,7 @@ import javax.tools.SimpleJavaFileObject;
 import javax.tools.ToolProvider;
 
 import com.google.gson.JsonParser;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -23,6 +24,61 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class LocalOrdinaryAwaitLoweringTest {
     @TempDir Path directory;
+
+    @Test
+    void rejectsCollidingOrdinaryChildNamesBeforeModelDeduplication() throws Exception {
+        Path yaml = directory.resolve("pipeline.yaml");
+        Files.writeString(yaml, """
+            version: 3
+            appName: LOCAL step name collision
+            basePackage: proof
+            transport: LOCAL
+            contract: { input: Input, output: Result }
+            types:
+              Input: { java: proof.Types.Input, fields: [[value, string]] }
+              Ready: { java: proof.Types.Ready, fields: [[value, string]] }
+              Result: { java: proof.Types.Result, fields: [[value, string]] }
+            pipelines:
+              prepare:
+                input: Input
+                output: Result
+                steps:
+                  - { name: Prepare, service: proof.Types.Prepare, cardinality: ONE_TO_ONE, input: Input, output: Ready }
+                  - { name: Process prepare, service: proof.Types.Finish, cardinality: ONE_TO_ONE, input: Ready, output: Result }
+            steps:
+              - name: Run preparation
+                pipeline: prepare
+                cardinality: ONE_TO_ONE
+                input: Input
+                output: Result
+                java: { input: proof.Types.Input, output: proof.Types.Result }
+            layout: monolith
+            """);
+        String source = """
+            package proof;
+            public class Types {
+              public record Input(String value) {}
+              public record Ready(String value) {}
+              public record Result(String value) {}
+              public static class Prepare implements org.pipelineframework.service.ReactiveService<Input, Ready> {
+                public io.smallrye.mutiny.Uni<Ready> process(Input input) {
+                  return io.smallrye.mutiny.Uni.createFrom().item(new Ready(input.value()));
+                }
+              }
+              public static class Finish implements org.pipelineframework.service.ReactiveService<Ready, Result> {
+                public io.smallrye.mutiny.Uni<Result> process(Ready input) {
+                  return io.smallrye.mutiny.Uni.createFrom().item(new Result(input.value()));
+                }
+              }
+            }
+            """;
+        var diagnostics = new DiagnosticCollector<JavaFileObject>();
+        assertFalse(compile(yaml, source, List.of(new PipelineDiscoveryPhase(), new PipelineBranchPlanningPhase(),
+            new ModelExtractionPhase()), diagnostics));
+        assertTrue(diagnostics.getDiagnostics().stream().anyMatch(diagnostic -> diagnostic.getMessage(null).contains(
+            "Authored steps 'Prepare' and 'Process prepare' in LOCAL definition 'prepare' share generated service name "
+                + "'ProcessPrepareService'")), diagnostics.getDiagnostics().toString());
+    }
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
@@ -106,11 +162,7 @@ class LocalOrdinaryAwaitLoweringTest {
               public static class Persistence {}
             }
             """;
-        var unit = new SimpleJavaFileObject(URI.create("string:///proof/Types.java"), JavaFileObject.Kind.SOURCE) {
-            @Override public CharSequence getCharContent(boolean ignoreEncodingErrors) { return source; }
-        };
         Path generated = directory.resolve("generated");
-        Path classes = Files.createDirectories(directory.resolve("classes"));
         var phases = new ArrayList<PipelineCompilationPhase>(List.of(
             new PipelineDiscoveryPhase(), new PipelineBranchPlanningPhase(), new ModelExtractionPhase(),
             new PipelineSemanticAnalysisPhase(), new PipelineTargetResolutionPhase()));
@@ -122,15 +174,9 @@ class LocalOrdinaryAwaitLoweringTest {
                 new PipelineBranchingMetadataGenerator(ctx.getProcessingEnv()).writeBranchingMetadata(ctx);
             }
         });
-        var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
-        try (var manager = compiler.getStandardFileManager(diagnostics, null, null)) {
-            var task = compiler.getTask(null, manager, diagnostics, List.of(
-                "-proc:only", "-classpath", System.getProperty("java.class.path"), "-d", classes.toString(),
-                "-Apipeline.config=" + yaml), null, List.of(unit));
-            task.setProcessors(List.of(new PipelineStepProcessor(new PipelineCompiler(phases))));
-            assertTrue(task.call(), diagnostics.getDiagnostics().toString());
-        }
+        assertTrue(compile(yaml, source, phases, diagnostics), diagnostics.getDiagnostics().toString());
+        Path classes = directory.resolve("classes");
         var order = JsonParser.parseString(Files.readString(classes.resolve("META-INF/pipeline/order.json")))
             .getAsJsonObject().getAsJsonArray("order").asList().stream().map(value -> value.getAsString()).toList();
         Path invocation;
@@ -166,5 +212,21 @@ class LocalOrdinaryAwaitLoweringTest {
                 }
                 assertTrue(child.contains("java.util.List.of(child0, child1" + (persistence ? ", child2" : "") + ")"), child);
             });
+    }
+
+    private boolean compile(Path yaml, String source, List<PipelineCompilationPhase> phases,
+            DiagnosticCollector<JavaFileObject> diagnostics) throws Exception {
+        var unit = new SimpleJavaFileObject(URI.create("string:///proof/Types.java"), JavaFileObject.Kind.SOURCE) {
+            @Override public CharSequence getCharContent(boolean ignoreEncodingErrors) { return source; }
+        };
+        Path classes = Files.createDirectories(directory.resolve("classes"));
+        var compiler = ToolProvider.getSystemJavaCompiler();
+        try (var manager = compiler.getStandardFileManager(diagnostics, null, null)) {
+            var task = compiler.getTask(null, manager, diagnostics, List.of(
+                "-proc:only", "-classpath", System.getProperty("java.class.path"), "-d", classes.toString(),
+                "-Apipeline.config=" + yaml), null, List.of(unit));
+            task.setProcessors(List.of(new PipelineStepProcessor(new PipelineCompiler(phases))));
+            return task.call();
+        }
     }
 }

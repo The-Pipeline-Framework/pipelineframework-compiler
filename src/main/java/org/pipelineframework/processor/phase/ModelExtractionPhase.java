@@ -156,14 +156,25 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
         }
 
         List<PipelineStepModel> stepModels = new ArrayList<>();
+        Map<String, String> localServiceOwners = new LinkedHashMap<>();
         PipelineStepIRExtractor irExtractor = new PipelineStepIRExtractor(ctx.getProcessingEnv());
 
         for (org.pipelineframework.processor.ir.StepDefinition stepDef : stepDefinitions) {
             PipelineStepModel stepModel = createStepModelFromDefinition(
                 ctx, definition, stepDef, irExtractor, ctxWarningLogger);
-            if (stepModel != null) {
-                stepModels.add(stepModel);
+            if (stepModel == null) {
+                continue;
             }
+            if (ctx.isTransportModeLocal() && stepModel.connectorOperationSelection().isEmpty()
+                    && stepModel.dynamicOperationSelection().isEmpty()) {
+                String previous = localServiceOwners.putIfAbsent(stepModel.artifactBindingName(), stepDef.name());
+                if (previous != null && !previous.equals(stepDef.name())) {
+                    throw new IllegalStateException("Authored steps '" + previous + "' and '" + stepDef.name()
+                        + "' in LOCAL definition '" + definition.logicalId() + "' share generated service name '"
+                        + stepModel.serviceName() + "'. Use distinct step names.");
+                }
+            }
+            stepModels.add(stepModel);
         }
 
         return stepModels;
