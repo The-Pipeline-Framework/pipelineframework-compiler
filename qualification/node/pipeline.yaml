@@ -1,0 +1,15 @@
+version: 3
+appName: node-qualification
+basePackage: org.example
+transport: LOCAL
+platform: COMPUTE
+contract: { input: InputValue, output: OutputValue }
+types:
+  InputValue: { fields: [[value, int32]] }
+  FirstValue: { fields: [[value, int32]] }
+  SecondValue: { fields: [[value, int32]] }
+  OutputValue: { fields: [[value, int32]] }
+steps:
+  - { name: A, cardinality: ONE_TO_ONE, input: InputValue, output: FirstValue }
+  - { name: B, cardinality: ONE_TO_ONE, input: FirstValue, output: SecondValue }
+  - { name: C, cardinality: ONE_TO_ONE, input: SecondValue, output: OutputValue }
