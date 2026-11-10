@@ -85,6 +85,23 @@ class LocalPipelineInvocationRendererTest {
             ctx.getGeneratedRootPipelineStepClasses());
     }
 
+    @Test
+    void rejectsOrdinaryModelsWithAnAmbiguousGeneratedName() {
+        PipelineStepModel first = mock(PipelineStepModel.class);
+        when(first.serviceName()).thenReturn("ProcessFooService");
+        when(first.serviceClassName()).thenReturn(ClassName.get("proof", "FirstFoo"));
+        PipelineStepModel second = mock(PipelineStepModel.class);
+        when(second.serviceName()).thenReturn("ProcessFooService");
+        when(second.serviceClassName()).thenReturn(ClassName.get("proof", "SecondFoo"));
+
+        for (String name : List.of("Foo", "Process foo")) {
+            var failure = org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> LocalPipelineInvocationRenderer.findAuthoredStepModel(List.of(first, second), name));
+            assertTrue(failure.getMessage().contains("Multiple generated step models match authored step '" + name + "'"));
+            assertTrue(failure.getMessage().contains("proof.FirstFoo, proof.SecondFoo"));
+        }
+    }
+
     @Test void matchesImportedOperationModelsByAuthoredIdentity() {
         PipelineStepModel model = mock(PipelineStepModel.class);
         ConnectorOperationSelection selection = mock(ConnectorOperationSelection.class);

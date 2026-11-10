@@ -3,7 +3,6 @@ package org.pipelineframework.processor.renderer;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -161,14 +160,23 @@ public final class LocalPipelineInvocationRenderer {
         return ClassName.bestGuess(ClientStepClassNames.className(model, ctx.getTransportMode()));
     }
 
-    private Optional<PipelineStepModel> findAuthoredStepModel(List<PipelineStepModel> models, String authoredStepName) {
-        return models.stream()
+    static Optional<PipelineStepModel> findAuthoredStepModel(List<PipelineStepModel> models, String authoredStepName) {
+        List<PipelineStepModel> matches = models.stream()
             .filter(model -> !model.sideEffect())
             .filter(model -> matchesAuthoredStep(model, authoredStepName))
-            // Connector and dynamic selections carry exact authored identity. Prefer that owner
-            // over an ordinary service whose normalized generated name happens to match it.
-            .min(Comparator.comparingInt(model -> model.connectorOperationSelection().isPresent()
-                || model.dynamicOperationSelection().isPresent() ? 0 : 1));
+            .toList();
+        // Connector and dynamic selections carry exact authored identity. Prefer them over
+        // ordinary models matched by their generated name.
+        List<PipelineStepModel> exact = matches.stream()
+            .filter(model -> model.connectorOperationSelection().isPresent() || model.dynamicOperationSelection().isPresent())
+            .toList();
+        List<PipelineStepModel> owners = exact.isEmpty() ? matches : exact;
+        if (owners.size() > 1) {
+            throw new IllegalStateException("Multiple generated step models match authored step '" + authoredStepName
+                + "': " + owners.stream().map(model -> model.serviceClassName().canonicalName()).toList()
+                + ". Use distinct step names.");
+        }
+        return owners.stream().findFirst();
     }
 
     static boolean matchesAuthoredStep(PipelineStepModel candidate, String authoredStepName) {
