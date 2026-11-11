@@ -1,7 +1,7 @@
 from collections.abc import Callable
 
 from generated.application import (
-    Application, CancellationSignal, Completed, HandlerRegistry, InvocationContext,
+    Application, CancellationSignal, Completed, Failure, HandlerRegistry, InvocationContext,
     Rejected, RuntimeBinding, TerminalRecord, Value, create_application,
 )
 from generated.models import FirstValue, InputValue, OutputValue, SecondValue
@@ -20,6 +20,9 @@ def finish(value: SecondValue, context: InvocationContext) -> Value[OutputValue]
 
 
 handlers: HandlerRegistry = {"normalize": normalize, "class": apply, "finish": finish}
+transient_failure = Failure("Apply", "TRANSIENT", "retry", True)
+rejected_failure = Failure(step_id="Apply", code="BUSINESS_REJECTION", message="rejected", retryable=False)
+unclassified_failure = Failure("Apply", "UNCLASSIFIED", "Unclassified business function failure", False)
 
 
 class Uncancelled:
