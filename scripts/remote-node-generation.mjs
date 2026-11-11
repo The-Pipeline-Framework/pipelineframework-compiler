@@ -1,6 +1,6 @@
-import { lstatSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import {
   checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, inputPaths, profile, readRegularFile,
@@ -179,7 +179,9 @@ export function generateRemote([repository, ref, sourceSha, compilerSha, outputA
   return output;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+// Node resolves module URLs through symlinks, but argv can retain the caller's path
+// (for example /tmp versus /private/tmp on macOS). Compare filesystem identities.
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   try {
     const version = checked('gh', ['--version']).toString();
     const [, major, minor] = /^gh version (\d+)\.(\d+)/.exec(version) ?? [];
