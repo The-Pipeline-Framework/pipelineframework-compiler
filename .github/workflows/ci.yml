@@ -52,3 +52,21 @@ jobs:
             target/jacoco.exec
           if-no-files-found: warn
           retention-days: 14
+
+  python-generation-client:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test the Python client without Node or Java
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace:ro" -w /workspace \
+            python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016 \
+            sh -ec '
+              test "$(python -c "import platform; print(platform.python_version())")" = 3.12.15
+              test -z "$(command -v node)"
+              test -z "$(command -v java)"
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git
+              python -B -m unittest discover -s scripts -p test_remote_node_generation.py
+            '
