@@ -34,6 +34,21 @@ test('CLI enters argument validation through both real and symlinked script path
   }
 });
 
+test('module import tolerates an unresolvable entry-point argument', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'tpf-client-import-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const source = new URL('./remote-node-generation.mjs', import.meta.url).href;
+  for (const argument of ['-', join(directory, 'missing.mjs')]) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval',
+      `process.argv[1] = ${JSON.stringify(argument)}; await import(${JSON.stringify(source)});`], {
+      cwd: directory, env: { ...process.env, PATH: directory }, encoding: 'utf8', timeout: 10_000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout, '');
+  }
+});
+
 function fixture(t, { symlinkInput = false } = {}) {
   const cwd = mkdtempSync(join(tmpdir(), 'tpf-generation-test-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));

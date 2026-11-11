@@ -181,7 +181,17 @@ export function generateRemote([repository, ref, sourceSha, compilerSha, outputA
 
 // Node resolves module URLs through symlinks, but argv can retain the caller's path
 // (for example /tmp versus /private/tmp on macOS). Compare filesystem identities.
-if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+function isCliEntryPoint() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // Importers may use a synthetic or no-longer-existing entry-point path.
+    return false;
+  }
+}
+
+if (isCliEntryPoint()) {
   try {
     const version = checked('gh', ['--version']).toString();
     const [, major, minor] = /^gh version (\d+)\.(\d+)/.exec(version) ?? [];
