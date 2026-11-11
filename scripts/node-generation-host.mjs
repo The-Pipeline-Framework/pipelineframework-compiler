@@ -51,7 +51,7 @@ function generate(output, temporary, compilerSha, inputs, log, binding) {
   // Keep Maven progress in the log only when the compiler build itself fails.
   log.length = 0;
   runWithDiagnostics(java, ['--enable-preview', '-cp', [jar, ...classpathEntries].join(delimiter),
-    binding.compilerClass, ...stagedInputs, generated], stagingRoot, log);
+    binding.compilerClass, ...(binding.compilerArgs ?? []), ...stagedInputs, generated], stagingRoot, log);
   requireCondition(readdirSync(generated).sort().join(' ') === binding.files.join(' '),
     'Compiler emitted an unexpected set of files.');
   const files = Object.fromEntries(binding.files.map(name => [name, readRegularFile(join(generated, name))]));

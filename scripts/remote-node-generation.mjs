@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual, parseArgs } from 'node:util';
 import {
-  checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, inputPaths, profile, readRegularFile,
+  bindingTarget, checked, compilerRepository, contractsVersion, diagnosticsFile, gitInputs, inputPaths, profile, readRegularFile,
   receiptFile, requireCondition, run, sha256, sourceIdentity, validDigest, validRepository, validSha, workflow, workflowPath,
 } from './node-generation-common.mjs';
 
@@ -49,12 +49,12 @@ function verifyCompiler(compiler) {
   }
 }
 
-function verifyDownload(download, source, compilerSha, id, conclusion) {
+function verifyDownload(download, source, compilerSha, id, conclusion, target, binding) {
   requireCondition(lstatSync(download).isDirectory(), 'Expected a regular artifact directory.');
   const receiptBytes = readRegularFile(join(download, receiptFile));
   const receipt = JSON.parse(receiptBytes);
-  requireCondition(!Object.hasOwn(receipt, 'target') || receipt.target === 'node',
-    'Generation receipt does not match the requested target.');
+  const receivedTarget = Object.hasOwn(receipt, 'target') ? receipt.target : 'node';
+  requireCondition(receivedTarget === target, 'Generation receipt does not match the requested target.');
   requireCondition(receipt.schemaVersion === 1 && receipt.profile === profile &&
     receipt.run?.id === id && receipt.run.attempt === '1' &&
     receipt.compiler?.repository === compilerRepository && receipt.compiler?.sha === compilerSha,
@@ -71,7 +71,7 @@ function verifyDownload(download, source, compilerSha, id, conclusion) {
       (!receipt.source.inputs || isDeepStrictEqual(receipt.source.inputs, source.inputs)),
     'Failed generation receipt does not match the requested source revision.');
   }
-  const resultFiles = success ? [...generatedFiles, diagnosticsFile] : [diagnosticsFile];
+  const resultFiles = success ? [...binding.files, diagnosticsFile] : [diagnosticsFile];
   requireCondition(isDeepStrictEqual(readdirSync(download).sort(), [...resultFiles, receiptFile].sort()) &&
     isDeepStrictEqual(Object.keys(receipt.files ?? {}).sort(), resultFiles.sort()),
   'Generation artifact contains an unexpected set of files.');
@@ -83,12 +83,33 @@ function verifyDownload(download, source, compilerSha, id, conclusion) {
   if (success) {
     const projection = JSON.parse(files['projection.json']);
     requireCondition(projection.schemaVersion === 1 && projection.profile === profile &&
-      projection.kind === 'compiler-node-local' &&
+      projection.kind === binding.kind &&
       projection.provenance?.dslSha256 === source.inputs[0].sha256 &&
       projection.provenance?.bindingsSha256 === source.inputs[1].sha256,
     'Compiler projection does not match the requested profile or committed inputs.');
+    if (Object.hasOwn(files, 'compiled-truth.zip')) verifyCompiledTruth(download, files);
   }
   return { ...files, [receiptFile]: receiptBytes };
+}
+
+function verifyCompiledTruth(download, files) {
+  const expected = {
+    'META-INF/pipeline/native-execution-projection.json': files['projection.json'],
+    'META-INF/pipeline/pipeline-contract.json': files['pipeline-contract.json'],
+  };
+  const archive = 'compiled-truth.zip';
+  const options = { cwd: download, timeout: 10_000 };
+  const listing = run('unzip', ['-Z1', archive], options);
+  requireCondition(listing.error?.code !== 'ENOENT', 'Install unzip to verify Compiled Truth for a worker target.');
+  requireCondition(listing.status === 0, 'Invalid Compiled Truth ZIP.');
+  const entries = listing.stdout.toString('utf8').split(/\r?\n/);
+  requireCondition(entries.pop() === '' && isDeepStrictEqual(entries.sort(), Object.keys(expected).sort()),
+    'Unexpected Compiled Truth resources.');
+  for (const [name, bytes] of Object.entries(expected)) {
+    const result = run('unzip', ['-p', archive, name], options);
+    requireCondition(result.status === 0 && result.stdout.equals(bytes),
+      `Compiled Truth resource differs from generated output: ${name}.`);
+  }
 }
 
 function committedInputs(cwd, sha, project) {
@@ -133,7 +154,9 @@ export function generateRemote([repository, ref, sourceSha, compilerSha, outputA
   ]),
   cwd,
   runId,
+  target = 'node',
 } = {}) {
+  const binding = bindingTarget(target);
   requireCondition(validRepository(repository) && ref && !ref.startsWith('-') &&
     validSha(sourceSha) && validSha(compilerSha) && outputArg,
   'Usage: node remote-node-generation.mjs OWNER/REPO REF SOURCE_SHA COMPILER_SHA NEW_OUTPUT_DIR [PROJECT_DIR]');
@@ -153,7 +176,9 @@ export function generateRemote([repository, ref, sourceSha, compilerSha, outputA
     const remote = api(`${endpoint}/commits/${encodeURIComponent(ref)}`);
     requireCondition(remote.sha === sourceSha, 'Push the committed revision and use a branch or tag pointing to its exact SHA.');
     const dispatch = api(`${endpoint}/actions/workflows/${workflow}/dispatches`, {
-      ref, return_run_details: true, inputs: { source_sha: sourceSha, compiler_sha: compilerSha, project },
+      ref, return_run_details: true, inputs: {
+        source_sha: sourceSha, compiler_sha: compilerSha, project, ...(target === 'node' ? {} : { target }),
+      },
     });
     id = String(dispatch.workflow_run_id);
     requireCondition(/^\d+$/.test(id), 'GitHub did not return the dispatched run ID. Check Actions before retrying.');
@@ -161,7 +186,7 @@ export function generateRemote([repository, ref, sourceSha, compilerSha, outputA
   const runEndpoint = `${endpoint}/actions/runs/${id}`;
   const runUrl = `https://github.com/${repository}/actions/runs/${id}`;
   console.log(`Generation run ${runUrl}`);
-  console.log(`To resume without dispatching, repeat this command with --run-id ${id} and the same source/compiler/project.`);
+  console.log(`To resume without dispatching, repeat this command with --run-id ${id} and the same source/compiler/project/target.`);
   if (runId !== undefined) verifyRun(api(runEndpoint), source, compilerSha, id, false);
   watch(repository, id);
   const run = api(runEndpoint);
@@ -175,7 +200,7 @@ export function generateRemote([repository, ref, sourceSha, compilerSha, outputA
     } catch (error) {
       throw new Error(`Could not retrieve the generation artifact. Inspect ${runUrl}. ${error.message}`);
     }
-    const files = verifyDownload(unpacked, source, compilerSha, id, run.conclusion);
+    const files = verifyDownload(unpacked, source, compilerSha, id, run.conclusion, target, binding);
     const latest = api(runEndpoint);
     verifyRun(latest, source, compilerSha, id);
     requireCondition(latest.conclusion === run.conclusion, 'The generation run conclusion changed during download.');
@@ -213,10 +238,13 @@ if (isCliEntryPoint()) {
     const [, major, minor] = /^gh version (\d+)\.(\d+)/.exec(version) ?? [];
     requireCondition(Number(major) > 2 || (Number(major) === 2 && Number(minor) >= 100),
       'Install GitHub CLI 2.100 or newer and sign in with gh auth login.');
-    const { values, positionals } = parseArgs({ options: { 'run-id': { type: 'string' } }, allowPositionals: true });
+    const { values, positionals } = parseArgs({
+      options: { 'run-id': { type: 'string' }, target: { type: 'string' } }, allowPositionals: true,
+    });
     requireCondition(positionals.length >= 5 && positionals.length <= 6,
-      'Usage: node remote-node-generation.mjs OWNER/REPO REF SOURCE_SHA COMPILER_SHA NEW_OUTPUT_DIR [PROJECT_DIR] [--run-id RUN_ID]');
-    console.log(`Verified generated bindings in ${generateRemote(positionals, { runId: values['run-id'] })}`);
+      'Usage: node remote-node-generation.mjs OWNER/REPO REF SOURCE_SHA COMPILER_SHA NEW_OUTPUT_DIR '
+      + '[PROJECT_DIR] [--target TARGET] [--run-id RUN_ID]');
+    console.log(`Verified generated bindings in ${generateRemote(positionals, { runId: values['run-id'], target: values.target })}`);
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

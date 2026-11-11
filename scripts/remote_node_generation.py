@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,8 @@ import tempfile
 import time
 import unicodedata
 from urllib.parse import quote
+from zipfile import BadZipFile, ZIP_DEFLATED, ZIP_STORED, ZipFile
+from zlib import error as ZlibError
 
 COMPILER_REPOSITORY = "The-Pipeline-Framework/pipelineframework-compiler"
 CONTRACTS_VERSION = "26.11.1"
@@ -264,7 +267,28 @@ def verify_download(directory, source, compiler_sha, run_id, conclusion, target=
                 and provenance.get("dslSha256") == source["inputs"][0]["sha256"]
                 and provenance.get("bindingsSha256") == source["inputs"][1]["sha256"],
                 "Compiler projection does not match the requested profile or committed inputs.")
+        if "compiled-truth.zip" in files:
+            verify_compiled_truth(files)
     return {**files, RECEIPT: receipt_bytes}
+
+
+def verify_compiled_truth(files):
+    expected = {
+        "META-INF/pipeline/native-execution-projection.json": files["projection.json"],
+        "META-INF/pipeline/pipeline-contract.json": files["pipeline-contract.json"],
+    }
+    try:
+        with ZipFile(BytesIO(files["compiled-truth.zip"])) as archive:
+            entries = archive.infolist()
+            require(len(entries) == len(expected) and {entry.filename for entry in entries} == set(expected),
+                    "Unexpected Compiled Truth resources.")
+            for entry in entries:
+                content = expected[entry.filename]
+                require(entry.compress_type in (ZIP_STORED, ZIP_DEFLATED)
+                        and entry.file_size == len(content) and archive.read(entry) == content,
+                        f"Compiled Truth resource differs from generated output: {entry.filename}.")
+    except (BadZipFile, RuntimeError, EOFError, OSError, ValueError, ZlibError):
+        raise GenerationError("Invalid Compiled Truth ZIP.") from None
 
 
 def require_new_output(output):

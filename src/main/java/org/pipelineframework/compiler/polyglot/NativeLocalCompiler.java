@@ -36,6 +36,11 @@ public final class NativeLocalCompiler {
     }
 
     public static void generate(Target target, Path pipeline, Path bindings, Path output) throws IOException {
+        generate(target, pipeline, bindings, output, false);
+    }
+
+    static void generate(Target target, Path pipeline, Path bindings, Path output, boolean workerMetadata)
+        throws IOException {
         Path destination = output.toAbsolutePath().normalize();
         requireEmptyDestination(destination);
         byte[] pipelineBytes = Files.readAllBytes(pipeline);
@@ -47,12 +52,18 @@ public final class NativeLocalCompiler {
 
         String projectionJson = new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(projection)
             + "\n";
-        String digest = sha256(projectionJson.getBytes(StandardCharsets.UTF_8));
-        var outputs = new LinkedHashMap<>(switch (target) {
+        byte[] projectionBytes = projectionJson.getBytes(StandardCharsets.UTF_8);
+        String digest = sha256(projectionBytes);
+        var rendered = switch (target) {
             case NODE -> new NodeLocalTypeScript().render(projection, pipeline, projectionJson, digest);
             case PYTHON -> new PythonLocalSource().render(projection, pipeline, projectionJson, digest);
-        });
-        outputs.put("projection.json", projectionJson);
+        };
+        var outputs = new LinkedHashMap<String, byte[]>();
+        rendered.forEach((name, source) -> outputs.put(name, source.getBytes(StandardCharsets.UTF_8)));
+        outputs.put("projection.json", projectionBytes);
+        if (workerMetadata) {
+            outputs.putAll(new NativeWorkerMetadata().render(model, projection, projectionBytes));
+        }
         publish(destination, outputs);
     }
 
@@ -78,13 +89,13 @@ public final class NativeLocalCompiler {
         throw new IOException(destination + ": output directory must be absent or empty");
     }
 
-    private static void publish(Path destination, Map<String, String> outputs) throws IOException {
+    private static void publish(Path destination, Map<String, byte[]> outputs) throws IOException {
         Path parent = destination.getParent();
         Files.createDirectories(parent);
         Path stage = Files.createTempDirectory(parent, ".tpf-local-");
         try {
             for (var output : outputs.entrySet()) {
-                Files.writeString(stage.resolve(output.getKey()), output.getValue());
+                Files.write(stage.resolve(output.getKey()), output.getValue());
             }
             requireEmptyDestination(destination);
             Files.move(stage, destination, StandardCopyOption.ATOMIC_MOVE);
