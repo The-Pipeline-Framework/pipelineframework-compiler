@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 from types import SimpleNamespace
+from zipfile import ZipFile
 
 import remote_node_generation as client
 
@@ -59,7 +60,7 @@ class Fixture:
         }
         self.projection = {
             "schemaVersion": 1, "profile": "tpf-polyglot-unary-policy/1",
-            "kind": f"compiler-{artifact_target}-local",
+            "kind": f"compiler-{artifact_target.removesuffix('-worker')}-local",
             "provenance": {
                 "dslSha256": self.source["inputs"][0]["sha256"],
                 "bindingsSha256": self.source["inputs"][1]["sha256"],
@@ -69,12 +70,15 @@ class Fixture:
             "projection.json": json.dumps(self.projection).encode(),
             "diagnostics.txt": b"",
         }
-        if artifact_target == "node":
+        if artifact_target in ("node", "node-worker"):
             self.files["application.ts"] = VECTORS["application"].encode()
             self.files["models.ts"] = VECTORS["models"].encode()
         else:
             self.files["application.py"] = b"class HandlerRegistry:\n    pass\n"
             self.files["models.py"] = b"class InputValue:\n    value: int\n"
+        if artifact_target.endswith("-worker"):
+            self.files["pipeline-contract.json"] = b'{"pipelineId":"worker-qualification"}'
+            self.files["compiled-truth.zip"] = compiled_truth(self.files)
         self.receipt = {
             "schemaVersion": 1, "profile": "tpf-polyglot-unary-policy/1", "status": "success",
             "run": {"id": RUN_ID, "attempt": "1"}, "source": copy.deepcopy(self.source),
@@ -90,8 +94,8 @@ class Fixture:
             },
             "files": {name: client.digest(content) for name, content in self.files.items()},
         }
-        if artifact_target == "python":
-            self.receipt["target"] = "python"
+        if artifact_target != "node":
+            self.receipt["target"] = artifact_target
         self.api_calls = []
         self.watches = []
         self.downloads = []
@@ -101,8 +105,8 @@ class Fixture:
 
     def dispatch_body(self):
         inputs = {"source_sha": self.source_sha, "compiler_sha": COMPILER_SHA, "project": PROJECT}
-        if self.target == "python":
-            inputs["target"] = "python"
+        if self.target != "node":
+            inputs["target"] = self.target
         return {"ref": REF, "return_run_details": True, "inputs": inputs}
 
     def git(self, *args):
@@ -165,6 +169,15 @@ class Fixture:
             self.receipt["files"]["projection.json"] = client.digest(content)
 
 
+def compiled_truth(files, *, projection=None):
+    output = io.BytesIO()
+    with ZipFile(output, "w") as archive:
+        archive.writestr("META-INF/pipeline/native-execution-projection.json",
+                         files["projection.json"] if projection is None else projection)
+        archive.writestr("META-INF/pipeline/pipeline-contract.json", files["pipeline-contract.json"])
+    return output.getvalue()
+
+
 class RemoteGenerationTest(unittest.TestCase):
     def fixture(self, **options):
         temporary = tempfile.TemporaryDirectory()
@@ -191,6 +204,30 @@ class RemoteGenerationTest(unittest.TestCase):
         fixture = self.fixture(target="python")
         fixture.files["models.py"] += b"# tampered\n"
         with self.assertRaisesRegex(client.GenerationError, "digest mismatch for models.py"):
+            fixture.generate()
+        self.no_output(fixture)
+
+    def test_worker_target_verifies_receipt_digests_and_exact_compiled_truth(self):
+        for target in ("node-worker", "python-worker"):
+            with self.subTest(target=target):
+                fixture = self.fixture(target=target)
+                self.assertEqual(fixture.generate(), fixture.output)
+                for name in client.TARGETS[target]["files"]:
+                    self.assertEqual((fixture.output / name).read_bytes(), fixture.files[name])
+
+        fixture = self.fixture(target="python-worker", artifact_target="python")
+        with self.assertRaisesRegex(client.GenerationError, "requested target"):
+            fixture.generate()
+        self.no_output(fixture)
+
+        fixture = self.fixture(target="python-worker")
+        fixture.files["compiled-truth.zip"] = compiled_truth(fixture.files, projection=b"substituted projection")
+        with self.assertRaisesRegex(client.GenerationError, "digest mismatch for compiled-truth.zip"):
+            fixture.generate()
+        self.no_output(fixture)
+
+        fixture.receipt["files"]["compiled-truth.zip"] = client.digest(fixture.files["compiled-truth.zip"])
+        with self.assertRaisesRegex(client.GenerationError, "Compiled Truth resource differs"):
             fixture.generate()
         self.no_output(fixture)
 

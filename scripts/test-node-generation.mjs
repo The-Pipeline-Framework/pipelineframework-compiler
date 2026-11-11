@@ -76,7 +76,7 @@ test('module import tolerates an unresolvable entry-point argument', t => {
   }
 });
 
-function fixture(t, { symlinkInput = false } = {}) {
+function fixture(t, { symlinkInput = false, target = 'node' } = {}) {
   const cwd = mkdtempSync(join(tmpdir(), 'tpf-generation-test-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   const git = (...args) => checked('git', args, { cwd }).toString().trim();
@@ -115,13 +115,13 @@ function fixture(t, { symlinkInput = false } = {}) {
   };
   const events = [];
   const mock = {
-    cwd,
+    cwd, target,
     api(path, body) {
       events.push(path);
       if (path.includes('/commits/')) return { sha: sourceSha };
       if (path.endsWith('/dispatches')) {
         assert.deepEqual(body, { ref: 'test/branch', return_run_details: true,
-          inputs: { source_sha: sourceSha, compiler_sha: compilerSha, project: '.' } });
+          inputs: { source_sha: sourceSha, compiler_sha: compilerSha, project: '.', ...(target === 'node' ? {} : { target }) } });
         return { workflow_run_id: Number(runId) };
       }
       assert.equal(path, `repos/${repository}/actions/runs/${runId}`);
@@ -155,6 +155,44 @@ test('dispatches exact source, verifies this run and installs only the expected 
   assert.equal(events.length, 4);
   assert.throws(() => generateRemote(args, mock), /Output already exists/);
   assert.equal(events.length, 4);
+});
+
+function workerFixture(t, archiveProjection) {
+  const data = fixture(t, { target: 'node-worker' });
+  const { cwd, files, receipt } = data;
+  files['pipeline-contract.json'] = '{"pipelineId":"worker-qualification"}';
+  const staging = join(cwd, 'worker-archive');
+  mkdirSync(join(staging, 'META-INF', 'pipeline'), { recursive: true });
+  const projection = 'META-INF/pipeline/native-execution-projection.json';
+  const contract = 'META-INF/pipeline/pipeline-contract.json';
+  writeFileSync(join(staging, projection), archiveProjection ?? files['projection.json']);
+  writeFileSync(join(staging, contract), files['pipeline-contract.json']);
+  checked('zip', ['-q', 'compiled-truth.zip', projection, contract], { cwd: staging });
+  files['compiled-truth.zip'] = readFileSync(join(staging, 'compiled-truth.zip'));
+  receipt.target = 'node-worker';
+  receipt.files = Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, sha256(bytes)]));
+  return data;
+}
+
+test('Node client installs an explicitly selected worker target after verifying exact Compiled Truth bytes', t => {
+  const { args, files, mock, output } = workerFixture(t);
+  assert.equal(generateRemote(args, mock), output);
+  const expected = bindingTarget('node-worker').files;
+  assert.deepEqual(readdirSync(output).sort(), [...expected, diagnosticsFile, receiptFile].sort());
+  assert.deepEqual(readFileSync(join(output, 'compiled-truth.zip')), files['compiled-truth.zip']);
+});
+
+test('Node client rejects a substituted worker projection even when the archive digest matches its receipt', t => {
+  const { args, mock, output } = workerFixture(t, 'substituted projection');
+  assert.throws(() => generateRemote(args, mock), /Compiled Truth resource differs/);
+  absent(output);
+});
+
+test('Node client rejects a receipt from the local target for a worker request', t => {
+  const { args, mock, output, receipt } = workerFixture(t);
+  delete receipt.target;
+  assert.throws(() => generateRemote(args, mock), /requested target/);
+  absent(output);
 });
 
 test('Node retrieval rejects a Python artifact for its Node dispatch', t => {

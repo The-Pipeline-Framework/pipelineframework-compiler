@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.*;
+import java.util.function.Function;
 import java.util.logging.Logger;
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.tools.StandardLocation;
@@ -15,16 +16,19 @@ import com.google.gson.GsonBuilder;
 import com.squareup.javapoet.TypeName;
 import org.pipelineframework.config.pipeline.*;
 import org.pipelineframework.config.boundary.PipelineHttpPayloadBoundaryConfig;
+import org.pipelineframework.config.template.PipelineTemplateConfig;
 import org.pipelineframework.config.template.PipelineTemplateTypeDefinition;
 import org.pipelineframework.config.template.PipelineTemplateTypeModel;
 import org.pipelineframework.config.template.PipelineTemplateTypeReference;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.composition.PipelineCompositionContractProjector;
 import org.pipelineframework.orchestrator.composition.PipelineCompositionDescriptor;
+import org.pipelineframework.orchestrator.release.PipelineContractDescriptor;
 import org.pipelineframework.processor.ir.GenerationTarget;
 import org.pipelineframework.processor.ir.PipelineStepModel;
 import org.pipelineframework.processor.ir.PipelineTransport;
 import org.pipelineframework.processor.ir.StreamingShape;
+import org.pipelineframework.processor.mapping.PipelineRuntimeMapping;
 import org.pipelineframework.processor.routing.V3JavaTypeResolver;
 
 /**
@@ -32,12 +36,17 @@ import org.pipelineframework.processor.routing.V3JavaTypeResolver;
  */
 public class PipelineContractMetadataGenerator {
 
-    private static final String CONTRACT_RESOURCE_PATH = "META-INF/pipeline/pipeline-contract.json";
+    private static final String CONTRACT_RESOURCE_PATH = PipelineContractDescriptor.RESOURCE_PATH;
     private static final Logger LOGGER = Logger.getLogger(PipelineContractMetadataGenerator.class.getName());
     private static final Gson CANONICAL_GSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final Gson PRETTY_GSON = new GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create();
 
-    private final ProcessingEnvironment processingEnv;
+    private final Optional<ProcessingEnvironment> processingEnv;
+
+    /** Creates a metadata renderer without a JSR-269 output host. */
+    public PipelineContractMetadataGenerator() {
+        this.processingEnv = Optional.empty();
+    }
 
     /**
      * Creates a metadata generator.
@@ -45,7 +54,7 @@ public class PipelineContractMetadataGenerator {
      * @param processingEnv processing environment
      */
     public PipelineContractMetadataGenerator(ProcessingEnvironment processingEnv) {
-        this.processingEnv = processingEnv;
+        this.processingEnv = Optional.ofNullable(processingEnv);
     }
 
     /**
@@ -65,7 +74,6 @@ public class PipelineContractMetadataGenerator {
         }
 
         String pipelineId = resolvePipelineId(ctx);
-        Map<String, Object> contractWithoutHash = new LinkedHashMap<>();
         Map<String, Object> canonicalTypes = canonicalTypes(ctx);
         PipelineCompositionDescriptor composition = ctx.getResolvedPipelineDefinitionGraph()
             .map(graph -> new PipelineCompositionContractProjector().project(graph))
@@ -82,17 +90,12 @@ public class PipelineContractMetadataGenerator {
         int schemaVersion = composition.present() || hasContributedTypes || !importedDefinitions.isEmpty()
             || !capabilityImports.isEmpty() || !httpPayloadBoundaries.isEmpty()
             ? 3 : canonicalTypes.isEmpty() ? 1 : 2;
-        String canonicalCatalogFingerprint = sha256(CANONICAL_GSON.toJson(canonicalTypes));
-        contractWithoutHash.put("schemaVersion", schemaVersion);
-        contractWithoutHash.put("pipelineId", pipelineId);
-        contractWithoutHash.put("platform", ctx.getPlatformMode() == null ? "COMPUTE" : ctx.getPlatformMode().name());
-        contractWithoutHash.put("transport", ctx.getTransportMode() == null ? "GRPC" : ctx.getTransportMode().name());
-        contractWithoutHash.put("module", blankToNull(ctx.getModuleName()));
-        contractWithoutHash.put("pluginHost", ctx.isPluginHost());
-        contractWithoutHash.put("runtimeLayout", ctx.getRuntimeMapping() == null ? null : ctx.getRuntimeMapping().layout().name());
-        contractWithoutHash.put("steps", steps);
-        contractWithoutHash.put("canonicalTypes", canonicalTypes);
-        contractWithoutHash.put("canonicalCatalogFingerprint", canonicalCatalogFingerprint);
+        var contractWithoutHash = contractMetadata(schemaVersion, pipelineId,
+            ctx.getPlatformMode() == null ? "COMPUTE" : ctx.getPlatformMode().name(),
+            ctx.getTransportMode() == null ? "GRPC" : ctx.getTransportMode().name(),
+            Optional.ofNullable(blankToNull(ctx.getModuleName())), ctx.isPluginHost(),
+            Optional.ofNullable(ctx.getRuntimeMapping()).map(mapping -> mapping.layout().name()),
+            steps, canonicalTypes);
         if (composition.present()) {
             contractWithoutHash.put("composition", composition);
         }
@@ -104,41 +107,83 @@ public class PipelineContractMetadataGenerator {
             }
         }
         contractWithoutHash.put("capabilities", capabilities());
+        String contract = renderContract(contractWithoutHash, Optional.empty());
 
-        String contractHash = sha256(CANONICAL_GSON.toJson(contractWithoutHash));
-        Map<String, Object> finalContract = new LinkedHashMap<>();
-        finalContract.put("schemaVersion", schemaVersion);
-        finalContract.put("pipelineId", pipelineId);
-        finalContract.put("contractVersion", "sha256:" + contractHash);
-        finalContract.put("contractHash", contractHash);
-        finalContract.put("platform", contractWithoutHash.get("platform"));
-        finalContract.put("transport", contractWithoutHash.get("transport"));
-        finalContract.put("module", contractWithoutHash.get("module"));
-        finalContract.put("pluginHost", contractWithoutHash.get("pluginHost"));
-        finalContract.put("runtimeLayout", contractWithoutHash.get("runtimeLayout"));
-        finalContract.put("steps", steps);
-        finalContract.put("canonicalTypes", canonicalTypes);
-        finalContract.put("canonicalCatalogFingerprint", canonicalCatalogFingerprint);
-        if (composition.present()) {
-            finalContract.put("composition", composition);
-        }
-        if (schemaVersion == 3) {
-            finalContract.put("importedDefinitions", importedDefinitions);
-            finalContract.put("capabilityImports", capabilityImports);
-            if (!httpPayloadBoundaries.isEmpty()) {
-                finalContract.put("httpPayloadBoundaries", httpPayloadBoundaries);
-            }
-        }
-        finalContract.put("capabilities", contractWithoutHash.get("capabilities"));
-
-        if (processingEnv != null) {
-            javax.tools.FileObject resourceFile = processingEnv.getFiler()
+        if (processingEnv.isPresent()) {
+            javax.tools.FileObject resourceFile = processingEnv.orElseThrow().getFiler()
                 .createResource(StandardLocation.CLASS_OUTPUT, "", CONTRACT_RESOURCE_PATH);
             preserveClassOutputRoot(ctx, resourceFile);
             try (var writer = resourceFile.openWriter()) {
-                writer.write(PRETTY_GSON.toJson(finalContract));
+                writer.write(contract);
             }
         }
+    }
+
+    /**
+     * Renders the coordinator Contract for an already admitted whole-bundle native worker.
+     * Runtime and handler names belong to the executable projection, not the logical Contract.
+     *
+     * @param model canonical DSL model admitted by the native compiler
+     * @param profile admitted native execution profile
+     * @param retryLimits admitted retry limits in model step order
+     * @return serialized coordinator Contract
+     */
+    public String renderNativeWorkerContract(
+        PipelineTemplateConfig model, String profile, List<Integer> retryLimits
+    ) {
+        if (retryLimits.size() != model.steps().size()) {
+            throw new IllegalArgumentException("Native retry limits must correspond to each admitted step");
+        }
+        List<Map<String, Object>> steps = new ArrayList<>();
+        for (var step : model.steps()) {
+            steps.add(logicalStep(steps.size(), step.name(), "internal", step.cardinality(),
+                step.inputTypeName(), step.outputTypeName()));
+        }
+        var metadata = contractMetadata(2, model.appName(), model.platform().name(), model.transport(),
+            Optional.empty(), false, Optional.of(PipelineRuntimeMapping.Layout.MONOLITH.name()),
+            steps, canonicalTypes(model.typeModel(), ignored -> Optional.empty()));
+        metadata.put("capabilities", capabilities(List.of("local", "rest")));
+
+        // Schema 2 has no native policy field. Include the language-neutral part of
+        // the exact projection in the compiler identity without extending the wire shape.
+        var policy = new LinkedHashMap<String, Object>();
+        policy.put("profile", profile);
+        policy.put("retryLimits", List.copyOf(retryLimits));
+        return renderContract(metadata, Optional.of(policy));
+    }
+
+    private static Map<String, Object> contractMetadata(
+        int schemaVersion, String pipelineId, String platform, String transport, Optional<String> module,
+        boolean pluginHost, Optional<String> layout, List<Map<String, Object>> steps,
+        Map<String, Object> canonicalTypes
+    ) {
+        var metadata = new LinkedHashMap<String, Object>();
+        metadata.put("schemaVersion", schemaVersion);
+        metadata.put("pipelineId", pipelineId);
+        metadata.put("platform", platform);
+        metadata.put("transport", transport);
+        module.ifPresent(value -> metadata.put("module", value));
+        metadata.put("pluginHost", pluginHost);
+        layout.ifPresent(value -> metadata.put("runtimeLayout", value));
+        metadata.put("steps", steps);
+        metadata.put("canonicalTypes", canonicalTypes);
+        metadata.put("canonicalCatalogFingerprint", sha256(CANONICAL_GSON.toJson(canonicalTypes)));
+        return metadata;
+    }
+
+    private static String renderContract(
+        Map<String, Object> metadata, Optional<Map<String, Object>> nativePolicy
+    ) {
+        var hashInput = new LinkedHashMap<>(metadata);
+        nativePolicy.ifPresent(policy -> hashInput.put("nativeExecutionPolicy", policy));
+        String contractHash = sha256(CANONICAL_GSON.toJson(hashInput));
+        var result = new LinkedHashMap<String, Object>();
+        result.put("schemaVersion", metadata.get("schemaVersion"));
+        result.put("pipelineId", metadata.get("pipelineId"));
+        result.put("contractVersion", "sha256:" + contractHash);
+        result.put("contractHash", contractHash);
+        result.putAll(metadata);
+        return PRETTY_GSON.toJson(result);
     }
 
     /** Preserve the host's actual packaged-output location without new Filer resources or reads. */
@@ -277,7 +322,15 @@ public class PipelineContractMetadataGenerator {
             || pipelineTemplate.dialect() != org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
             return Map.of();
         }
-        PipelineTemplateTypeModel model = pipelineTemplate.typeModel();
+        var resolver = new V3JavaTypeResolver(pipelineTemplate);
+        return canonicalTypes(pipelineTemplate.typeModel(), type -> Optional.of(resolver.resolve(type)
+            .map(com.squareup.javapoet.ClassName::canonicalName)
+            .orElse(pipelineTemplate.basePackage() + ".domain." + type)));
+    }
+
+    private Map<String, Object> canonicalTypes(
+        PipelineTemplateTypeModel model, Function<String, Optional<String>> runtimeClass
+    ) {
         Map<String, Object> types = new java.util.TreeMap<>();
         for (Map.Entry<String, PipelineTemplateTypeDefinition> entry : model.definitions().entrySet()) {
             Map<String, Object> definition = definition(entry.getValue());
@@ -285,9 +338,7 @@ public class PipelineContractMetadataGenerator {
             Map<String, Object> binding = new LinkedHashMap<>();
             binding.put("definition", definition);
             binding.put("definitionFingerprint", fingerprint);
-            binding.put("runtimeClass", new V3JavaTypeResolver(pipelineTemplate).resolve(entry.getKey())
-                .map(com.squareup.javapoet.ClassName::canonicalName)
-                .orElse(pipelineTemplate.basePackage() + ".domain." + entry.getKey()));
+            runtimeClass.apply(entry.getKey()).ifPresent(value -> binding.put("runtimeClass", value));
             model.contributedTypeIdentity(entry.getKey())
                 .ifPresent(identity -> binding.put("contributedIdentity", identity.qualifiedName()));
             types.put(entry.getKey(), immutableSortedMap(binding));
@@ -371,15 +422,14 @@ public class PipelineContractMetadataGenerator {
         for (int i = 0; i < orderedModels.size(); i++) {
             PipelineStepModel model = orderedModels.get(i);
             PipelineYamlStep yamlStep = yamlByName.get(matchedStepToken(model, yamlByName.keySet()));
-            Map<String, Object> descriptor = new LinkedHashMap<>();
-            descriptor.put("index", i);
-            descriptor.put("authoredName", yamlStep == null ? stripTrailingService(model.generatedName()) : yamlStep.name());
-            descriptor.put("kind", inferKind(model));
-            descriptor.put("cardinality", yamlStep == null ? cardinality(model.streamingShape()) : yamlStep.cardinality());
-            descriptor.put("inputTypeId", typeId(model.inputMapping().domainType()));
-            descriptor.put("outputTypeId", model.deferredCompletionSelection()
-                .map(selection -> typeId(selection.finalOutputType()))
-                .orElseGet(() -> typeId(model.outputMapping().domainType())));
+            Map<String, Object> descriptor = logicalStep(i,
+                yamlStep == null ? stripTrailingService(model.generatedName()) : yamlStep.name(),
+                inferKind(model),
+                yamlStep == null ? cardinality(model.streamingShape()) : yamlStep.cardinality(),
+                typeId(model.inputMapping().domainType()),
+                model.deferredCompletionSelection()
+                    .map(selection -> typeId(selection.finalOutputType()))
+                    .orElseGet(() -> typeId(model.outputMapping().domainType())));
             descriptor.put("runtimeClass", runtimeClass(model, ctx));
             String clientClass = clientClass(model, ctx);
             if (clientClass != null) {
@@ -394,6 +444,19 @@ public class PipelineContractMetadataGenerator {
             descriptors.add(descriptor);
         }
         return descriptors;
+    }
+
+    private static Map<String, Object> logicalStep(
+        int index, String authoredName, String kind, String cardinality, String inputTypeId, String outputTypeId
+    ) {
+        var descriptor = new LinkedHashMap<String, Object>();
+        descriptor.put("index", index);
+        descriptor.put("authoredName", authoredName);
+        descriptor.put("kind", kind);
+        descriptor.put("cardinality", cardinality);
+        descriptor.put("inputTypeId", inputTypeId);
+        descriptor.put("outputTypeId", outputTypeId);
+        return descriptor;
     }
 
     private static Map<String, Object> immutableSortedMap(Map<String, ?> values) {
@@ -441,14 +504,13 @@ public class PipelineContractMetadataGenerator {
         if (configPath.isEmpty()) {
             return null;
         }
-        PipelineYamlConfigLoader loader = processingEnv != null
-            ? new PipelineYamlConfigLoader(processingEnv.getOptions()::get, System::getenv)
-            : new PipelineYamlConfigLoader(key -> null, System::getenv);
+        var options = processingEnv.map(ProcessingEnvironment::getOptions).orElseGet(Map::of);
+        var loader = new PipelineYamlConfigLoader(options::get, System::getenv);
         return loader.load(configPath.get());
     }
 
     private Optional<Path> resolvePipelineConfigPath(PipelineCompilationContext ctx) {
-        Map<String, String> options = processingEnv != null ? processingEnv.getOptions() : Map.of();
+        var options = processingEnv.map(ProcessingEnvironment::getOptions).orElseGet(Map::of);
         String explicit = options.get("pipeline.config");
         if (explicit != null && !explicit.isBlank()) {
             Path explicitPath = Path.of(explicit.trim());
@@ -540,9 +602,13 @@ public class PipelineContractMetadataGenerator {
     }
 
     private static Map<String, Object> capabilities() {
+        return capabilities(List.of("local", "rest", "grpc", "sqs"));
+    }
+
+    private static Map<String, Object> capabilities(List<String> protocols) {
         Map<String, Object> capabilities = new LinkedHashMap<>();
         capabilities.put("localTransitionExecution", true);
-        capabilities.put("transitionWorkerProtocols", List.of("local", "rest", "grpc", "sqs"));
+        capabilities.put("transitionWorkerProtocols", protocols);
         return capabilities;
     }
 
