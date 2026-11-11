@@ -157,8 +157,35 @@ The output directory must be new and its parent must exist. The tool sends the b
 commit identities to Actions. It obtains the run ID directly from dispatch, verifies the exact source
 and compiler workflow revision, checks the output digests and the projection's input hashes, then
 installs the verified files together. If the run fails or its output differs, the command exits
-with an error. Inspect the linked run and its diagnostics, fix the inputs or host configuration,
-and dispatch again. A rerun or expired artifact requires a new dispatch.
+with an error. Inspect the linked run and its diagnostics. Fix authored inputs or host configuration
+before dispatching a new generation. A rerun (attempt greater than 1) or expired artifact requires
+a new dispatch.
+
+### Resume an interrupted generation
+
+If the command printed a run URL and then lost connectivity, timed out, or was interrupted, repeat
+it with `--run-id RUN_ID`. Both clients support this option. It waits for and retrieves that exact
+run; it never dispatches or reruns a workflow. Keep the original repository, source/compiler SHAs,
+project and target. Check out the original source commit with clean input files; the remote branch
+may have moved since dispatch. Use a new output directory with an existing parent.
+
+```sh
+python3.14 /path/to/compiler/scripts/remote_node_generation.py \
+  OWNER/APP ORIGINAL_REF ORIGINAL_SOURCE_SHA ORIGINAL_COMPILER_SHA ./recovered_python \
+  PROJECT_DIR --target python --run-id RUN_ID
+
+node /path/to/compiler/scripts/remote-node-generation.mjs \
+  OWNER/APP ORIGINAL_REF ORIGINAL_SOURCE_SHA ORIGINAL_COMPILER_SHA ./recovered_node \
+  PROJECT_DIR --run-id RUN_ID
+```
+
+Use a client revision that provides recovery and keep its adjacent target manifest. The compiler
+SHA argument still identifies the original build host, not the newer client revision. The run ID
+is only a locator: recovery rechecks workflow/repository/source/compiler identity, attempt 1,
+receipts, target, input/output hashes and the run again after downloading. It refuses existing
+output, stale or tampered files, and mismatched runs. Failed generation prints only verified
+diagnostics and installs no application. If dispatch failed before returning an ID, inspect Actions
+to locate the run before trying another dispatch; the client does not guess which run belongs to you.
 
 Use the retrieved `application.ts` and `models.ts` in the application's TypeScript project and type-check the
 handler registry with the project's pinned TypeScript toolchain. For an npm project with a committed

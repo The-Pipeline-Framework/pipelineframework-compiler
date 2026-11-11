@@ -391,11 +391,20 @@ for (const statusLine of ['HTTP/2.0 503 Service Unavailable', '']) {
   });
 }
 
-async function testSharedRetrievalCases(t) {
+async function testSharedRetrievalCases(t, resuming = false) {
   const vectors = JSON.parse(readFileSync(new URL('./node-generation-client-cases.json', import.meta.url)));
   for (const { name, change, error, workflowFailure } of vectors.cases) {
     await t.test(name, t => {
       const { args, files, mock, output, receipt, run } = fixture(t);
+      if (resuming) {
+        mock.runId = runId;
+        const api = mock.api;
+        mock.api = (path, body) => {
+          assert.equal(body, undefined, 'recovery must never dispatch');
+          assert.equal(path, `repos/${repository}/actions/runs/${runId}`, 'no mutable ref lookup');
+          return api(path, body);
+        };
+      }
       files['application.ts'] = vectors.application;
       files['models.ts'] = vectors.models;
       for (const file of generatedFiles) receipt.files[file] = sha256(files[file]);
@@ -423,7 +432,7 @@ async function testSharedRetrievalCases(t) {
           if (target === 'latest') {
             const api = mock.api;
             let reads = 0;
-            mock.api = (path, body) => path.endsWith(`/runs/${runId}`) && ++reads === 2 ? latest : api(path, body);
+            mock.api = (path, body) => path.endsWith(`/runs/${runId}`) && ++reads === (resuming ? 3 : 2) ? latest : api(path, body);
           }
         }
       }
@@ -441,3 +450,29 @@ async function testSharedRetrievalCases(t) {
 }
 
 test('accepts and rejects the shared Node/Python retrieval cases', testSharedRetrievalCases);
+
+
+test('recovery preserves every shared run/receipt/artifact rejection without dispatch', t => testSharedRetrievalCases(t, true));
+
+test('recovers after an accepted dispatch loses readiness, without a second dispatch', t => {
+  const { args, events, mock, output, run } = fixture(t);
+  mock.watch = () => { throw new Error('HTTP 500 after dispatch'); };
+  assert.throws(() => generateRemote(args, mock), /HTTP 500/);
+  absent(output);
+  assert.equal(events.filter(path => path.endsWith('/dispatches')).length, 1);
+  run.status = 'in_progress';
+  mock.watch = () => { run.status = 'completed'; };
+  assert.equal(generateRemote(args, { ...mock, runId }), output);
+  assert.equal(events.filter(path => path.endsWith('/dispatches')).length, 1);
+  assert.equal(events.filter(path => path.includes('/commits/')).length, 1);
+  assert.throws(() => generateRemote(args, { ...mock, runId }), /Output already exists/);
+});
+
+test('recovery rejects malformed run IDs before any API or download', t => {
+  const { args, mock, events, output } = fixture(t);
+  for (const runId of ['', '0', '-1', '123/other', '1?x', 123, null]) {
+    assert.throws(() => generateRemote(args, { ...mock, runId }), /positive decimal/);
+  }
+  assert.deepEqual(events, []);
+  absent(output);
+});
