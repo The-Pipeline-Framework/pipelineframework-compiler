@@ -107,8 +107,12 @@ export function watchRun(repository, id, {
     const probe = execute('gh', ['api', '--hostname', 'github.com', '--include', '--silent', endpoint],
       { timeout: 10_000 });
     if (probe.status === 0) break;
-    requireCondition(/^HTTP\/\S+ 404\b/.test(probe.stdout?.toString() ?? ''),
-      `Could not read generation run ${id}: ${probe.error?.message ?? probe.stderr?.toString().trim()}`);
+    // gh may fail while decoding an HTTP error body. Retain only the status code,
+    // not response headers, so the failure remains diagnosable without leaking metadata.
+    const status = /^HTTP\/\S+ (\d{3})\b/.exec(probe.stdout?.toString() ?? '')?.[1];
+    requireCondition(status === '404',
+      `Could not read generation run ${id} (${status ? `HTTP ${status}` : 'HTTP status unavailable'}): ` +
+      `${probe.error?.message ?? probe.stderr?.toString().trim()}. Inspect the linked run before dispatching again.`);
     requireCondition(delay > 0,
       `Generation run ${id} is not visible yet. Check the linked GitHub Actions run before dispatching again.`);
     pause(delay);
