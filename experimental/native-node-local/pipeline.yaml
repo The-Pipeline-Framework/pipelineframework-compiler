@@ -5,7 +5,7 @@ transport: LOCAL
 platform: COMPUTE
 contract: { input: InputValue, output: OutputValue }
 types:
-  InputValue: { fields: [[value, int32]] }
+  InputValue: { fields: [[value, int64]] }
   FirstValue: { fields: [[value, int32]] }
   SecondValue: { fields: [[value, int32]] }
   OutputValue: { fields: [[value, int32]] }
