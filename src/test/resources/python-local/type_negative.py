@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from generated.application import Handler, HandlerRegistry, InvocationContext, Rejected, Value
+from generated.application import Failure, Handler, HandlerRegistry, InvocationContext, Rejected, Value
 from generated.models import FirstValue, InputValue, OutputValue, SecondValue
 from type_positive import finish, normalize
 
@@ -45,6 +45,12 @@ frozen = OutputValue(3)
 frozen.value = 4  # expect: misc
 missing_context = InvocationContext("execution")  # expect: call-arg
 missing_diagnostic = Rejected()  # expect: call-arg
+nonretryable_transient = Failure("Apply", "TRANSIENT", "retry", False)  # expect: call-overload
+retryable_rejection = Failure("Apply", "BUSINESS_REJECTION", "rejected", True)  # expect: call-overload
+wrong_unclassified_message = Failure("Apply", "UNCLASSIFIED", "wrong message", False)  # expect: call-overload
+retryable_unclassified = Failure(  # expect: call-overload
+    "Apply", "UNCLASSIFIED", "Unclassified business function failure", True
+)
 
 
 class Subtype(InputValue):  # expect: misc

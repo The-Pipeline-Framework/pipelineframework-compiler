@@ -75,7 +75,7 @@ final class PythonLocalSource {
             from collections.abc import Callable, Coroutine, Mapping
             from dataclasses import dataclass, field
             from types import MappingProxyType
-            from typing import Any, Final, Generic, Literal, Protocol, TypeAlias, TypedDict, TypeVar, final
+            from typing import Any, Final, Generic, Literal, Protocol, TypeAlias, TypedDict, TypeVar, final, overload
 
             from . import models as _models
 
@@ -111,14 +111,43 @@ final class PythonLocalSource {
             })
 
 
+            _FailureCode: TypeAlias = Literal["TRANSIENT", "BUSINESS_REJECTION", "UNCLASSIFIED"]
+
+
             @final
             @dataclass(frozen=True, slots=True)
             class Failure:
                 step_id: StepId
-                code: Literal["TRANSIENT", "BUSINESS_REJECTION", "UNCLASSIFIED"]
+                code: _FailureCode
                 message: str
                 retryable: bool
                 owner: Literal["LOCAL_SHELL"] = field(init=False, default="LOCAL_SHELL")
+
+                @overload
+                def __init__(self, step_id: StepId, code: Literal["TRANSIENT"],
+                             message: str, retryable: Literal[True]) -> None: ...
+
+                @overload
+                def __init__(self, step_id: StepId, code: Literal["BUSINESS_REJECTION"],
+                             message: str, retryable: Literal[False]) -> None: ...
+
+                @overload
+                def __init__(self, step_id: StepId, code: Literal["UNCLASSIFIED"],
+                             message: Literal["Unclassified business function failure"],
+                             retryable: Literal[False]) -> None: ...
+
+                def __init__(self, step_id: StepId, code: _FailureCode, message: str, retryable: bool) -> None:
+                    if code not in ("TRANSIENT", "BUSINESS_REJECTION", "UNCLASSIFIED"):
+                        raise ValueError("Unknown failure code")
+                    if retryable is not (code == "TRANSIENT"):
+                        raise ValueError("Only TRANSIENT failures must be retryable")
+                    if code == "UNCLASSIFIED" and message != "Unclassified business function failure":
+                        raise ValueError("UNCLASSIFIED failures require the fixed message")
+                    object.__setattr__(self, "step_id", step_id)
+                    object.__setattr__(self, "code", code)
+                    object.__setattr__(self, "message", message)
+                    object.__setattr__(self, "retryable", retryable)
+                    object.__setattr__(self, "owner", "LOCAL_SHELL")
 
 
             @final

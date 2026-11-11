@@ -90,6 +90,35 @@ class GeneratedBindingsTest(unittest.TestCase):
         self.assertEqual(Rejected("invalid").kind, "REJECTED")
         self.assertEqual(Cancelled().kind, "CANCELLED")
 
+    def test_failure_accepts_each_policy_variant(self):
+        variants = (
+            ("TRANSIENT", "retry", True),
+            ("BUSINESS_REJECTION", "rejected", False),
+            ("UNCLASSIFIED", "Unclassified business function failure", False),
+        )
+        for code, message, retryable in variants:
+            with self.subTest(code=code):
+                failure = Failure("Apply", code, message, retryable)
+                self.assertEqual((failure.step_id, failure.code, failure.message, failure.retryable, failure.owner),
+                                 ("Apply", code, message, retryable, "LOCAL_SHELL"))
+                self.assertFalse(hasattr(failure, "__dict__"))
+                with self.assertRaises(FrozenInstanceError):
+                    failure.retryable = not retryable
+
+    def test_failure_rejects_contradictory_policy_fields(self):
+        invalid_variants = (
+            ("TRANSIENT", "retry", False),
+            ("BUSINESS_REJECTION", "rejected", True),
+            ("UNCLASSIFIED", "wrong message", False),
+            ("UNCLASSIFIED", "Unclassified business function failure", True),
+            ("UNKNOWN", "unknown code", False),
+            ("TRANSIENT", "retry", 1),
+        )
+        for code, message, retryable in invalid_variants:
+            with self.subTest(code=code, message=message, retryable=retryable):
+                with self.assertRaises(ValueError):
+                    Failure("Apply", code, message, retryable)
+
 
 if __name__ == "__main__":
     unittest.main()
