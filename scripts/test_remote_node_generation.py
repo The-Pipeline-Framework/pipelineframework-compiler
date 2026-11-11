@@ -23,10 +23,12 @@ VECTORS = json.loads(Path(__file__).with_name("node-generation-client-cases.json
 
 
 class Fixture:
-    def __init__(self, cwd):
+    def __init__(self, cwd, *, target="node", artifact_target=None):
         self.cwd = cwd
         self.output = cwd / "generated"
         self.project = cwd / PROJECT
+        self.target = target
+        artifact_target = target if artifact_target is None else artifact_target
         self.project.mkdir(parents=True)
         # Force a checkout conversion so matching the Git blob cannot happen
         # accidentally by hashing the working-tree file.
@@ -56,18 +58,23 @@ class Fixture:
             }],
         }
         self.projection = {
-            "schemaVersion": 1, "profile": "tpf-polyglot-unary-policy/1", "kind": "compiler-node-local",
+            "schemaVersion": 1, "profile": "tpf-polyglot-unary-policy/1",
+            "kind": f"compiler-{artifact_target}-local",
             "provenance": {
                 "dslSha256": self.source["inputs"][0]["sha256"],
                 "bindingsSha256": self.source["inputs"][1]["sha256"],
             },
         }
         self.files = {
-            "application.ts": VECTORS["application"].encode(),
-            "models.ts": VECTORS["models"].encode(),
             "projection.json": json.dumps(self.projection).encode(),
             "diagnostics.txt": b"",
         }
+        if artifact_target == "node":
+            self.files["application.ts"] = VECTORS["application"].encode()
+            self.files["models.ts"] = VECTORS["models"].encode()
+        else:
+            self.files["application.py"] = b"class HandlerRegistry:\n    pass\n"
+            self.files["models.py"] = b"class InputValue:\n    value: int\n"
         self.receipt = {
             "schemaVersion": 1, "profile": "tpf-polyglot-unary-policy/1", "status": "success",
             "run": {"id": RUN_ID, "attempt": "1"}, "source": copy.deepcopy(self.source),
@@ -83,12 +90,20 @@ class Fixture:
             },
             "files": {name: client.digest(content) for name, content in self.files.items()},
         }
+        if artifact_target == "python":
+            self.receipt["target"] = "python"
         self.api_calls = []
         self.watches = []
         self.downloads = []
         self.remote_sha = self.source_sha
         self.latest = None
         self.after_download = lambda path: None
+
+    def dispatch_body(self):
+        inputs = {"source_sha": self.source_sha, "compiler_sha": COMPILER_SHA, "project": PROJECT}
+        if self.target == "python":
+            inputs["target"] = "python"
+        return {"ref": REF, "return_run_details": True, "inputs": inputs}
 
     def git(self, *args):
         return subprocess.check_output(
@@ -105,10 +120,7 @@ class Fixture:
         if endpoint.endswith("/commits/test%2Fbranch"):
             return {"sha": self.remote_sha}
         if endpoint == "repos/owner/app/actions/workflows/tpf-node-generation.yml/dispatches":
-            assert body == {
-                "ref": REF, "return_run_details": True,
-                "inputs": {"source_sha": self.source_sha, "compiler_sha": COMPILER_SHA, "project": PROJECT},
-            }
+            assert body == self.dispatch_body()
             return {"workflow_run_id": int(RUN_ID)}
         assert endpoint == f"repos/{REPOSITORY}/actions/runs/{RUN_ID}"
         return copy.deepcopy(self.latest if self.latest is not None and len(self.api_calls) == 4 else self.run)
@@ -127,6 +139,7 @@ class Fixture:
             return client.generate_remote(
                 REPOSITORY, REF, self.source_sha, COMPILER_SHA, self.output, PROJECT,
                 cwd=self.cwd, api=self.api, watch=lambda *args: self.watches.append(args), download=self.download,
+                target=self.target,
             )
 
     def fail_workflow(self, diagnostic=b"pipeline.yaml:8 unsupported transport\n"):
@@ -153,21 +166,69 @@ class Fixture:
 
 
 class RemoteGenerationTest(unittest.TestCase):
-    def fixture(self):
+    def fixture(self, **options):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        return Fixture(Path(temporary.name))
+        return Fixture(Path(temporary.name), **options)
 
     def no_output(self, fixture):
         self.assertFalse(os.path.lexists(fixture.output))
         self.assertEqual(list(fixture.cwd.glob(".tpf-generation-*")), [])
 
+    def test_python_target_rejects_wrong_files_projection_and_digest(self):
+        fixture = self.fixture(target="python", artifact_target="node")
+        fixture.receipt["target"] = "python"
+        with self.assertRaisesRegex(client.GenerationError, "unexpected set of files"):
+            fixture.generate()
+        self.no_output(fixture)
+
+        fixture = self.fixture(target="python")
+        fixture.change("projection", "kind", "compiler-node-local")
+        with self.assertRaisesRegex(client.GenerationError, "Compiler projection"):
+            fixture.generate()
+        self.no_output(fixture)
+
+        fixture = self.fixture(target="python")
+        fixture.files["models.py"] += b"# tampered\n"
+        with self.assertRaisesRegex(client.GenerationError, "digest mismatch for models.py"):
+            fixture.generate()
+        self.no_output(fixture)
+
+    def test_python_target_binds_failure_receipts_before_reporting_diagnostics(self):
+        for receipt_target in ("python", "node", None):
+            with self.subTest(receipt_target=receipt_target):
+                fixture = self.fixture(target="python")
+                fixture.fail_workflow(b"unsupported Python handler name\n")
+                if receipt_target is None:
+                    del fixture.receipt["target"]
+                else:
+                    fixture.receipt["target"] = receipt_target
+                with self.assertRaises(client.GenerationError) as failure:
+                    fixture.generate()
+                if receipt_target == "python":
+                    self.assertIn("Generation failed", str(failure.exception))
+                    self.assertIn("unsupported Python handler name", str(failure.exception))
+                else:
+                    self.assertRegex(str(failure.exception), "target")
+                    self.assertNotIn("unsupported Python handler name", str(failure.exception))
+                self.no_output(fixture)
+
+    def test_unknown_target_is_rejected_before_dispatch(self):
+        fixture = self.fixture(target="unsupported")
+        with self.assertRaisesRegex(client.GenerationError, "Unsupported generation target"):
+            fixture.generate()
+        self.assertEqual(fixture.api_calls, [])
+        self.no_output(fixture)
+
     def test_shared_receipt_run_and_artifact_matrix(self):
         for case in VECTORS["cases"]:
             with self.subTest(case["name"]):
                 fixture = self.fixture()
+                if case.get("workflowFailure"):
+                    fixture.fail_workflow()
                 if "change" in case:
                     fixture.change(*case["change"])
+                if "error" in case:
                     with self.assertRaisesRegex(client.GenerationError, case["error"]):
                         fixture.generate()
                     self.no_output(fixture)
@@ -354,7 +415,13 @@ class RemoteGenerationTest(unittest.TestCase):
             self.assertNotIn("do-not-echo", str(failure.exception))
 
     def test_cli_uses_git_and_gh_from_path_with_no_other_runtime(self):
-        fixture = self.fixture()
+        self.check_cli("node")
+
+    def test_cli_selects_python_and_verifies_python_output(self):
+        self.check_cli("python")
+
+    def check_cli(self, target):
+        fixture = self.fixture(target=target)
         binaries = fixture.cwd / "bin"
         binaries.mkdir()
         real_git = shutil.which("git")
@@ -364,6 +431,8 @@ class RemoteGenerationTest(unittest.TestCase):
         versioned_cli.chmod(0o755)
         args = [sys.executable, "-B", client.__file__, REPOSITORY, REF, fixture.source_sha,
                 COMPILER_SHA, str(fixture.output), PROJECT]
+        if target == "python":
+            args.extend(("--target", "python"))
         environment = {**os.environ, "PATH": str(binaries)}
         result = subprocess.run(args, cwd=fixture.cwd, env=environment, capture_output=True)
         self.assertEqual(result.returncode, 1)
@@ -372,10 +441,6 @@ class RemoteGenerationTest(unittest.TestCase):
         source = binaries / "artifact"
         fixture.download(REPOSITORY, RUN_ID, source)
         run_json = json.dumps(fixture.run)
-        fixture_payload = {
-            "ref": REF, "return_run_details": True,
-            "inputs": {"source_sha": fixture.source_sha, "compiler_sha": COMPILER_SHA, "project": PROJECT},
-        }
         versioned_cli.write_text(
             f"#!{sys.executable}\n"
             "import json, shutil, sys\n"
@@ -388,7 +453,7 @@ class RemoteGenerationTest(unittest.TestCase):
             f"        print(json.dumps({{'sha': {fixture.source_sha!r}}}))\n"
             "    elif args[-1] == 'repos/owner/app/actions/workflows/tpf-node-generation.yml/dispatches':\n"
             "        assert args[-5:-1] == ['--method', 'POST', '--input', '-']\n"
-            f"        assert json.load(sys.stdin) == {fixture_payload!r}\n"
+            f"        assert json.load(sys.stdin) == {fixture.dispatch_body()!r}\n"
             "        print(json.dumps({'workflow_run_id': 123456}))\n"
             "    else:\n"
             "        assert args[-1] in ('repos/owner/app/actions/runs/123456', "
@@ -404,7 +469,10 @@ class RemoteGenerationTest(unittest.TestCase):
         result = subprocess.run(args, cwd=fixture.cwd, env=environment, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertIn(b"Verified generated bindings", result.stdout)
-        self.assertEqual((fixture.output / "models.ts").read_bytes(), fixture.files["models.ts"])
+        self.assertEqual({file.name for file in fixture.output.iterdir()},
+                         {*fixture.files, client.RECEIPT})
+        for name, content in fixture.files.items():
+            self.assertEqual((fixture.output / name).read_bytes(), content)
 
 
 if __name__ == "__main__":

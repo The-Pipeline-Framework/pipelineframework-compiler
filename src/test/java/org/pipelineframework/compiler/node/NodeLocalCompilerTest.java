@@ -16,6 +16,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -66,12 +70,20 @@ class NodeLocalCompilerTest {
     private final ObjectMapper json = new ObjectMapper();
 
     @Test
-    void generatesDeterministicTypedBindingAndUsesAuthoredOrder() throws IOException {
+    void generatesDeterministicTypedBindingAndUsesAuthoredOrder() throws IOException, NoSuchAlgorithmException {
         Path output = Files.createDirectory(temp.resolve("generated"));
         generate(DSL, BINDINGS, output);
         try (var entries = Files.list(output)) {
             assertEquals(Set.of("projection.json", "models.ts", "application.ts"),
                 entries.map(path -> path.getFileName().toString()).collect(Collectors.toSet()));
+        }
+        // Exact outputs captured from the Node compiler before extracting the shared projection.
+        var baseline = Map.of(
+            "application.ts", "122d76593269306237c2666ceb9eed6af81e7f48caeb2d00134623c29136f790",
+            "models.ts", "5b406c69931265b405dfc1d21746944d17e6150dd6025d53e0d81677d88d044a",
+            "projection.json", "75e250dc340566bfdcaf09097900098eeb8bdc24b625e89b9a46a529c5f11c96");
+        for (var entry : baseline.entrySet()) {
+            assertEquals(entry.getValue(), sha256(Files.readAllBytes(output.resolve(entry.getKey()))), entry.getKey());
         }
         Path projectionFile = output.resolve("projection.json");
         JsonNode projection = json.readTree(projectionFile.toFile());
@@ -88,9 +100,9 @@ class NodeLocalCompilerTest {
         assertEquals("traceId", projection.at("/contextKeys/1").textValue());
         assertEquals("LOCAL_SHELL", projection.at("/policy/retryOwner").textValue());
         assertEquals("REJECT", projection.at("/policy/legacyPolicy").textValue());
-        assertEquals(NodeLocalCompiler.sha256(Files.readAllBytes(temp.resolve("pipeline.yaml"))),
+        assertEquals(sha256(Files.readAllBytes(temp.resolve("pipeline.yaml"))),
             projection.at("/provenance/dslSha256").textValue());
-        assertEquals(NodeLocalCompiler.sha256(Files.readAllBytes(temp.resolve("bindings.json"))),
+        assertEquals(sha256(Files.readAllBytes(temp.resolve("bindings.json"))),
             projection.at("/provenance/bindingsSha256").textValue());
 
         String application = Files.readString(output.resolve("application.ts"));
@@ -99,7 +111,7 @@ class NodeLocalCompilerTest {
         assertTrue(application.contains("return runtime.load("));
         assertTrue(application.contains("readonly kind: \"REJECTED\"; readonly diagnostic: string"));
         assertTrue(application.contains(json.writeValueAsString(Files.readString(projectionFile))));
-        assertTrue(application.contains(NodeLocalCompiler.sha256(Files.readAllBytes(projectionFile))));
+        assertTrue(application.contains(sha256(Files.readAllBytes(projectionFile))));
 
         Path repeated = temp.resolve("repeated");
         generate(DSL, BINDINGS, repeated);
@@ -175,6 +187,10 @@ class NodeLocalCompilerTest {
         assertThrows(IOException.class, () -> generate(DSL, BINDINGS, output));
         assertEquals("prior", Files.readString(prior));
         assertFalse(Files.exists(output.resolve("application.ts")));
+    }
+
+    private String sha256(byte[] bytes) throws NoSuchAlgorithmException {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     }
 
     private void exportTypeScriptSmokeFixture() throws IOException {
