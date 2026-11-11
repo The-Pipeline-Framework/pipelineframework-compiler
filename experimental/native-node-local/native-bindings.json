@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "profile": "tpf-polyglot-unary-policy/1",
+  "pipelineId": "node-qualification",
+  "handlers": [
+    {
+      "step": "C",
+      "handler": "finish",
+      "inputType": "SecondValue",
+      "outputType": "OutputValue",
+      "retryLimit": 0
+    },
+    {
+      "step": "B",
+      "handler": "apply",
+      "inputType": "InputValue",
+      "outputType": "FirstValue",
+      "retryLimit": 1
+    },
+    {
+      "step": "A",
+      "handler": "normalize",
+      "inputType": "FirstValue",
+      "outputType": "SecondValue",
+      "retryLimit": 0
+    }
+  ]
+}
