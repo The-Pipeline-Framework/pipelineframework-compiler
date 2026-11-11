@@ -37,11 +37,23 @@ jobs:
         run: |
           ./mvnw clean verify -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2/repository" \
             -Dtpf.census.senderTrials=2 -Dtpf.census.parallel=true \
-            -Dtpf.nodeGeneration.smokeDir="$GITHUB_WORKSPACE/target/node-generation-smoke"
+            -Dtpf.nodeGeneration.smokeDir="$GITHUB_WORKSPACE/target/node-generation-smoke" \
+            -Dtpf.pythonGeneration.smokeDir="$GITHUB_WORKSPACE/target/python-generation-smoke"
       - name: Type-check generated Node bindings
         run: |
           npm exec --yes --package=typescript@5.9.3 -- tsc --strict --noEmit --module NodeNext --target ES2022 \
             target/node-generation-smoke/handler-types.ts
+      - name: Check generated Python bindings without Node or Java
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE/target/python-generation-smoke:/work:ro" -w /work \
+            python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016 \
+            sh -ec '
+              test -z "$(command -v node)"
+              test -z "$(command -v java)"
+              pip install --disable-pip-version-check mypy==1.18.2 mypy_extensions==1.1.0 pathspec==0.12.1 typing_extensions==4.15.0
+              python -B -m unittest discover -p test_generated_bindings.py
+              python -B check_types.py
+            '
       - name: Publish compiler coverage report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

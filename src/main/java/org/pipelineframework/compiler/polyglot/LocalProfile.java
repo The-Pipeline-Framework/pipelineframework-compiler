@@ -4,7 +4,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
  */
-package org.pipelineframework.compiler.node;
+package org.pipelineframework.compiler.polyglot;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.StreamReadFeature;
@@ -32,21 +32,12 @@ import org.pipelineframework.config.template.PipelineTemplateTypeReference;
 import org.pipelineframework.processor.routing.AuthoredConsumerValidator;
 import org.yaml.snakeyaml.error.YAMLException;
 
-/** Narrows the canonical v3 model to the accepted finite unary Node projection. */
-final class NodeLocalProfile {
+/** Projects the admitted canonical v3 model for the finite unary LOCAL profile. */
+final class LocalProfile {
     private static final int SCHEMA_VERSION = 1;
     private static final String PROFILE = "tpf-polyglot-unary-policy/1";
-    private static final String KIND = "compiler-node-local";
     private static final Pattern PIPELINE_ID = Pattern.compile("[a-z][a-z0-9-]*");
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z][A-Za-z0-9_]*");
-    private static final Set<String> RESERVED_TYPE_NAMES = Set.of(("""
-        abstract any as assert asserts async await bigint boolean break case catch class const constructor continue
-        debugger declare default delete do else enum export extends false finally for from function get global if
-        implements import in infer instanceof interface intrinsic is keyof let module namespace never new null
-        number object of out override package private protected public readonly require return satisfies set static
-        string super switch symbol this throw true try type typeof undefined unique unknown using var void while
-        with yield Int32
-        """).strip().split("\\s+"));
     private static final Set<String> ROOT_KEYS = Set.of(
         "version", "appName", "basePackage", "transport", "platform", "contract", "types", "steps");
 
@@ -83,7 +74,7 @@ final class NodeLocalProfile {
     PipelineTemplateConfig load(Path source, byte[] bytes) throws IOException {
         // The canonical loader takes a Path. Give both gates the same source snapshot used
         // for provenance, with no processor, ambient overrides, or application Java discovery.
-        Path snapshot = Files.createTempFile("tpf-node-pipeline-", ".yaml");
+        Path snapshot = Files.createTempFile("tpf-local-pipeline-", ".yaml");
         try {
             Files.write(snapshot, bytes);
             admitShape(new PipelineYamlDocumentLoader().load(snapshot), source.toString());
@@ -160,7 +151,7 @@ final class NodeLocalProfile {
     }
 
     Projection project(PipelineTemplateConfig model, Path dsl, Path bindingFile, byte[] bindingBytes,
-                       InputDigests digests) {
+                       InputDigests digests, String kind) {
         String location = dsl.toString();
         if (!PIPELINE_ID.matcher(model.appName()).matches()) {
             throw reject(location + ".appName", "IDENTITY", "expected a lowercase pipeline identifier");
@@ -215,7 +206,7 @@ final class NodeLocalProfile {
             throw reject(location + ".types", "UNSUPPORTED_TYPE",
                 "expected four distinct canonical records for pipeline input and the three step outputs");
         }
-        return new Projection(SCHEMA_VERSION, PROFILE, KIND,
+        return new Projection(SCHEMA_VERSION, PROFILE, kind,
             new Pipeline(model.appName(), model.inputContract(), model.outputContract(), model.transport(),
                 model.platform().name(), "DIRECT"),
             List.of("pure", "linear", "unary", "local", "retry", "cancellation", "context"),
@@ -230,9 +221,6 @@ final class NodeLocalProfile {
         if (!(definition instanceof PipelineTemplateTypeDefinition.RecordType record)
             || record.fields().size() != 1) {
             throw reject(typeLocation, "UNSUPPORTED_TYPE", "expected one required non-null value:int32 field");
-        }
-        if (!IDENTIFIER.matcher(typeId).matches() || RESERVED_TYPE_NAMES.contains(typeId)) {
-            throw reject(typeLocation, "TYPE_ID", "canonical name cannot be used as a TypeScript type declaration");
         }
         var field = record.fields().getFirst();
         if (!"value".equals(field.name()) || field.repeated()

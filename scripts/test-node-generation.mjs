@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
-  checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, profile,
+  bindingTarget, checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, profile,
   receiptFile, sha256, sourceIdentity, workflowPath,
 } from './node-generation-common.mjs';
 import { stageGitInputs } from './node-generation-host.mjs';
@@ -15,6 +15,33 @@ import { generateRemote, watchRun } from './remote-node-generation.mjs';
 const repository = 'owner/app';
 const compilerSha = 'a'.repeat(40);
 const runId = '123456';
+
+test('selects only the pinned compiler targets and keeps the Node default', () => {
+  assert.deepEqual(bindingTarget(), {
+    compilerClass: 'org.pipelineframework.compiler.node.NodeLocalCompiler',
+    kind: 'compiler-node-local', files: ['application.ts', 'models.ts', 'projection.json'],
+  });
+  assert.deepEqual(bindingTarget('python'), {
+    compilerClass: 'org.pipelineframework.compiler.python.PythonLocalCompiler',
+    kind: 'compiler-python-local', files: ['application.py', 'models.py', 'projection.json'],
+  });
+  for (const target of ['', 'Python', 'unsupported', 'constructor']) {
+    assert.throws(() => bindingTarget(target), /Unsupported generation target/);
+  }
+});
+
+test('generation host rejects an unsupported target before creating an artifact', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'tpf-host-target-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const host = fileURLToPath(new URL('./node-generation-host.mjs', import.meta.url));
+  const output = join(directory, 'artifact');
+  const result = spawnSync(process.execPath, [host, directory, output], {
+    env: { PATH: directory, TPF_BINDING_TARGET: 'unsupported' }, encoding: 'utf8', timeout: 10_000,
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Unsupported generation target/);
+  absent(output);
+});
 
 test('CLI enters argument validation through both real and symlinked script paths', t => {
   const directory = mkdtempSync(join(tmpdir(), 'tpf-client-entry-'));
@@ -128,6 +155,20 @@ test('dispatches exact source, verifies this run and installs only the expected 
   assert.equal(events.length, 4);
   assert.throws(() => generateRemote(args, mock), /Output already exists/);
   assert.equal(events.length, 4);
+});
+
+test('Node retrieval rejects a Python artifact for its Node dispatch', t => {
+  const { args, files, mock, output, receipt } = fixture(t);
+  files['application.py'] = 'class HandlerRegistry: pass\n';
+  files['models.py'] = 'class InputValue: pass\n';
+  delete files['application.ts'];
+  delete files['models.ts'];
+  const projection = JSON.parse(files['projection.json']);
+  files['projection.json'] = JSON.stringify({ ...projection, kind: 'compiler-python-local' });
+  receipt.target = 'python';
+  receipt.files = Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, sha256(bytes)]));
+  assert.throws(() => generateRemote(args, mock), /does not match|unexpected set of files/);
+  absent(output);
 });
 
 test('rejects an unpushed or moved ref before dispatch', t => {
@@ -352,17 +393,24 @@ for (const statusLine of ['HTTP/2.0 503 Service Unavailable', '']) {
 
 async function testSharedRetrievalCases(t) {
   const vectors = JSON.parse(readFileSync(new URL('./node-generation-client-cases.json', import.meta.url)));
-  for (const { name, change, error } of vectors.cases) {
+  for (const { name, change, error, workflowFailure } of vectors.cases) {
     await t.test(name, t => {
       const { args, files, mock, output, receipt, run } = fixture(t);
       files['application.ts'] = vectors.application;
       files['models.ts'] = vectors.models;
       for (const file of generatedFiles) receipt.files[file] = sha256(files[file]);
+      if (workflowFailure) {
+        run.conclusion = 'failure';
+        receipt.status = 'failed';
+        for (const file of generatedFiles) delete files[file];
+        files[diagnosticsFile] = 'pipeline.yaml:8 unsupported transport\n';
+        receipt.files = { [diagnosticsFile]: sha256(files[diagnosticsFile]) };
+      }
       if (change) {
         const [target, path, value] = change;
         if (target === 'file') files[path] = value;
         else {
-          const projection = JSON.parse(files['projection.json']);
+          const projection = target === 'projection' ? JSON.parse(files['projection.json']) : undefined;
           const latest = structuredClone(run);
           const root = { receipt, run, projection, latest }[target];
           const keys = path.split('.');

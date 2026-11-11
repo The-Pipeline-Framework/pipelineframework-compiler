@@ -9,7 +9,15 @@ export const workflowPath = `.github/workflows/${workflow}`;
 export const profile = 'tpf-polyglot-unary-policy/1';
 export const receiptFile = 'generation-receipt.json';
 export const diagnosticsFile = 'diagnostics.txt';
-export const generatedFiles = ['application.ts', 'models.ts', 'projection.json'];
+const targets = JSON.parse(readFileSync(new URL('./native-generation-targets.json', import.meta.url), 'utf8'));
+
+/** Build target metadata is pinned with the compiler, never inferred from returned files. */
+export function bindingTarget(name = 'node') {
+  requireCondition(typeof name === 'string' && Object.hasOwn(targets, name), 'Unsupported generation target.');
+  return targets[name];
+}
+
+export const generatedFiles = bindingTarget().files;
 export const inputNames = ['pipeline.yaml', 'native-bindings.json'];
 export const limit = 8 * 1024 * 1024;
 

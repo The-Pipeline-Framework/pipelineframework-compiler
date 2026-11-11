@@ -37,6 +37,12 @@
     { "name": "wrong projection bindings provenance", "change": ["projection", "provenance.bindingsSha256", "another"], "error": "projection does not match" },
     { "name": "run and receipt disagree", "change": ["run", "conclusion", "failure"], "error": "conclusion disagree" },
     { "name": "conclusion changes on reread", "change": ["latest", "conclusion", "failure"], "error": "conclusion changed during download" },
-    { "name": "attempt changes on reread", "change": ["latest", "run_attempt", 2], "error": "was retried" }
+    { "name": "attempt changes on reread", "change": ["latest", "run_attempt", 2], "error": "was retried" },
+    { "name": "explicit Node receipt", "change": ["receipt", "target", "node"] },
+    { "name": "Python target on successful Node receipt", "change": ["receipt", "target", "python"], "error": "requested target" },
+    { "name": "null target on successful Node receipt", "change": ["receipt", "target", null], "error": "requested target" },
+    { "name": "legacy Node failure without target", "workflowFailure": true, "error": "Generation failed" },
+    { "name": "Python target on failed Node receipt", "workflowFailure": true, "change": ["receipt", "target", "python"], "error": "requested target" },
+    { "name": "null target on failed Node receipt", "workflowFailure": true, "change": ["receipt", "target", null], "error": "requested target" }
   ]
 }
