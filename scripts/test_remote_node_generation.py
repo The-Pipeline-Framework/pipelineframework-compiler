@@ -489,3 +489,73 @@ class PlatformPreflight(unittest.TestCase):
                         client.generate_remote(REPOSITORY, REF, "a" * 40, COMPILER_SHA, "output", api=api)
                 checked.assert_not_called()
                 api.assert_not_called()
+
+
+class RecoveryTests(unittest.TestCase):
+    fixture = RemoteGenerationTest.fixture
+    no_output = RemoteGenerationTest.no_output
+
+    def resume(self, fixture, run_id=RUN_ID):
+        def api(endpoint, body=None):
+            self.assertIsNone(body, "recovery must never dispatch")
+            self.assertEqual(endpoint, f"repos/{REPOSITORY}/actions/runs/{RUN_ID}", "no mutable ref lookup")
+            fixture.api_calls.append((endpoint, body))
+            return copy.deepcopy(fixture.latest if fixture.downloads and fixture.latest else fixture.run)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            return client.generate_remote(
+                REPOSITORY, REF, fixture.source_sha, COMPILER_SHA, fixture.output, PROJECT,
+                cwd=fixture.cwd, api=api, watch=lambda *args: fixture.watches.append(args),
+                download=fixture.download, target=fixture.target, run_id=run_id,
+            )
+
+    def test_recovery_preserves_shared_rejections_without_dispatch(self):
+        for case in VECTORS["cases"]:
+            with self.subTest(case=case["name"]):
+                fixture = self.fixture()
+                if case.get("workflowFailure"):
+                    fixture.fail_workflow()
+                if "change" in case:
+                    fixture.change(*case["change"])
+                if "error" in case:
+                    with self.assertRaisesRegex(client.GenerationError, case["error"]):
+                        self.resume(fixture)
+                    self.no_output(fixture)
+                else:
+                    self.assertEqual(self.resume(fixture), fixture.output)
+                    for name, content in fixture.files.items():
+                        self.assertEqual((fixture.output / name).read_bytes(), content)
+
+    def test_resume_after_readiness_failure_and_moved_remote_ref(self):
+        fixture = self.fixture(target="python")
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            with self.assertRaisesRegex(client.GenerationError, "HTTP 500"):
+                client.generate_remote(
+                    REPOSITORY, REF, fixture.source_sha, COMPILER_SHA, fixture.output, PROJECT,
+                    cwd=fixture.cwd, api=fixture.api, watch=Mock(side_effect=client.GenerationError("HTTP 500")),
+                    download=fixture.download, target="python",
+                )
+        self.assertIn(f"--run-id {RUN_ID}", output.getvalue())
+        self.no_output(fixture)
+        fixture.remote_sha = "f" * 40
+        self.assertEqual(self.resume(fixture), fixture.output)
+        self.assertEqual(sum(body is not None for _, body in fixture.api_calls), 1)
+        with self.assertRaisesRegex(client.GenerationError, "Output already exists"):
+            self.resume(fixture)
+
+    def test_invalid_run_id_and_dirty_inputs_never_reach_network(self):
+        fixture = self.fixture()
+        for invalid in ("", "0", "-1", "123/other", "1?x", 123):
+            with self.subTest(run_id=invalid), self.assertRaisesRegex(client.GenerationError, "positive decimal"):
+                self.resume(fixture, invalid)
+        (fixture.project / "pipeline.yaml").write_text("changed")
+        with self.assertRaisesRegex(client.GenerationError, "Commit changes"):
+            self.resume(fixture)
+        self.assertEqual(fixture.api_calls, [])
+        self.no_output(fixture)
+
+    def test_resume_python_rejects_wrong_target_without_installing(self):
+        fixture = self.fixture(target="python", artifact_target="node")
+        with self.assertRaisesRegex(client.GenerationError, "requested target"):
+            self.resume(fixture)
+        self.no_output(fixture)
