@@ -9,7 +9,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+from types import SimpleNamespace
 
 import remote_node_generation as client
 
@@ -408,3 +409,15 @@ class RemoteGenerationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlatformPreflight(unittest.TestCase):
+    def test_unsupported_platform_fails_before_git_or_dispatch(self):
+        for operating_system in (SimpleNamespace(name="nt"), SimpleNamespace(name="posix")):
+            with self.subTest(platform=operating_system.name):
+                api = Mock()
+                with patch.object(client, "os", operating_system), patch.object(client, "checked") as checked:
+                    with self.assertRaisesRegex(client.GenerationError, "requires POSIX"):
+                        client.generate_remote(REPOSITORY, REF, "a" * 40, COMPILER_SHA, "output", api=api)
+                checked.assert_not_called()
+                api.assert_not_called()

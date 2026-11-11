@@ -267,6 +267,9 @@ def require_new_output(output):
 
 def generate_remote(repository, ref, source_sha, compiler_sha, output_arg, project=".", *,
                     cwd=None, api=gh_api, watch=watch_run, download=download_run):
+    # Fail before Git/network work: secure artifact reads require POSIX open flags.
+    require(os.name == "posix" and all(hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_NONBLOCK")),
+            "The Python client requires POSIX O_NOFOLLOW/O_NONBLOCK support; native Windows is unsupported.")
     require(matches(r"[\w-]+/[\w.-]+", repository) and repository.split("/")[1] not in {".", ".."},
             "Use a GitHub repository in OWNER/REPO form.")
     require(ref and not ref.startswith("-"), "Provide the branch or tag to dispatch.")

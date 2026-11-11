@@ -108,7 +108,9 @@ inputs and omit `secrets: inherit` from the caller.
 ### Generate and retrieve
 
 On the workstation, use Git and GitHub CLI 2.100 or newer. Run the client with Node.js 22 or newer
-or with CPython 3.12. The Python client is tested on CPython 3.12.15 on Linux. Sign in with
+or with CPython 3.12. The Python client is qualified on CPython 3.12.15/Linux and requires POSIX
+`O_NOFOLLOW`/`O_NONBLOCK` file checks. Native Windows is rejected before dispatch; other
+platforms are not qualified by this proof. Sign in with
 `gh auth login --hostname github.com` using an account authorised to dispatch workflows and retrieve
 artifacts in the application repository. The supported sign-in uses GitHub CLI's OAuth flow because
 `gh run watch` needs Checks access. Clone the compiler separately and check it out at the same
@@ -122,7 +124,10 @@ node /path/to/pinned/compiler/scripts/remote-node-generation.mjs \
   OWNER/APP BRANCH_OR_TAG "$(git rev-parse HEAD)" COMPILER_SHA ./generated-next
 ```
 
-The Python client dispatches the same workflow and retrieves the same TypeScript and projection files.
+This is a Python **build client**, not a Python application generator. It submits the same DSL
+and binding inputs to the existing Java compiler on GitHub Actions, then verifies and downloads
+`application.ts`, `models.ts` and `projection.json`. Python application bindings are a separate
+compiler increment; using this client does not turn the generated application into Python.
 It runs on Python's standard library, Git, and GitHub CLI. Java and Node run on the remote build host.
 Use the Node binding instructions below to consume the result.
 
