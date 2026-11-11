@@ -327,3 +327,25 @@ test('surfaces non-404 read errors without retrying or watching', () => {
   }), /Could not read generation run 123456.*Forbidden \(HTTP 403\)/);
   assert.equal(reads, 1);
 });
+
+for (const statusLine of ['HTTP/2.0 503 Service Unavailable', '']) {
+  test(`readiness decoding failure retains ${statusLine || 'unavailable status'} without retry`, () => {
+    let reads = 0;
+    assert.throws(() => watchRun(repository, runId, {
+      execute(command, args) {
+        assert.equal(command, 'gh');
+        assert.equal(args[0], 'api');
+        reads++;
+        return { status: 1, stdout: Buffer.from(`${statusLine}\nX-Private: do-not-echo\n`),
+          stderr: Buffer.from('unexpected end of JSON input') };
+      },
+      pause: () => assert.fail('Unclassified errors must not be retried.'),
+    }), error => {
+      assert.match(error.message, statusLine ? /HTTP 503/ : /HTTP status unavailable/);
+      assert.match(error.message, /unexpected end of JSON input.*before dispatching again/);
+      assert.doesNotMatch(error.message, /do-not-echo/);
+      return true;
+    });
+    assert.equal(reads, 1);
+  });
+}
