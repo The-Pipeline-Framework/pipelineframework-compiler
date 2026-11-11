@@ -8,5 +8,17 @@
     "compilerClass": "org.pipelineframework.compiler.python.PythonLocalCompiler",
     "kind": "compiler-python-local",
     "files": ["application.py", "models.py", "projection.json"]
+  },
+  "node-worker": {
+    "compilerClass": "org.pipelineframework.compiler.polyglot.NativeWorkerCompiler",
+    "compilerArgs": ["node-worker"],
+    "kind": "compiler-node-local",
+    "files": ["application.ts", "compiled-truth.zip", "models.ts", "pipeline-contract.json", "projection.json"]
+  },
+  "python-worker": {
+    "compilerClass": "org.pipelineframework.compiler.polyglot.NativeWorkerCompiler",
+    "compilerArgs": ["python-worker"],
+    "kind": "compiler-python-local",
+    "files": ["application.py", "compiled-truth.zip", "models.py", "pipeline-contract.json", "projection.json"]
   }
 }

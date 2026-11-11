@@ -82,9 +82,9 @@ on:
         type: string
         required: true
       target:
-        description: Generated binding language
+        description: Generated binding target
         type: choice
-        options: [node, python]
+        options: [node, python, node-worker, python-worker]
         default: node
       project:
         description: Repository-relative project directory
@@ -109,7 +109,7 @@ a hosted runner and a read-only token. It checks out both exact commits, reads t
 named `pipeline.yaml` and `native-bindings.json`, and builds the compiler with the pinned Java and Maven
 toolchain and released Contracts dependencies. It runs no application build scripts and requires no
 application secrets, cross-repository token or TPF Cloud account. Keep credentials out of committed
-inputs and omit `secrets: inherit` from the caller. To generate Python output, register and forward the
+inputs and omit `secrets: inherit` from the caller. To select a generation target, register and forward the
 `target` input as shown. An existing Node-only caller can continue to use the default.
 
 ### Generate and retrieve
@@ -160,6 +160,38 @@ installs the verified files together. If the run fails or its output differs, th
 with an error. Inspect the linked run and its diagnostics. Fix authored inputs or host configuration
 before dispatching a new generation. A rerun (attempt greater than 1) or expired artifact requires
 a new dispatch.
+
+### Generate metadata for a whole-bundle native worker
+
+Select `--target node-worker` or `--target python-worker` in either client. The Node client uses
+`unzip` to read the worker archive during verification. The Python client uses its standard library.
+
+```sh
+node /path/to/pinned/compiler/scripts/remote-node-generation.mjs \
+  OWNER/APP BRANCH_OR_TAG "$(git rev-parse HEAD)" COMPILER_SHA ./generated_worker --target node-worker
+```
+
+The compiler admits the existing LOCAL/COMPUTE unary profile and requires exact canonical type IDs
+at the pipeline endpoints and between steps. Each worker target adds `pipeline-contract.json` and
+`compiled-truth.zip` to its language's application, models and `projection.json`. The archive has
+two resources and both clients compare their bytes with the standalone files before installing:
+
+- `META-INF/pipeline/pipeline-contract.json` contains the emitted coordinator Contract.
+- `META-INF/pipeline/native-execution-projection.json` contains the exact emitted `projection.json`.
+
+The Contract describes a monolithic pipeline with local and REST transition worker capabilities.
+It uses the released schema 2. The native `contractHash` preimage starts with the emitted Contract
+object in property order, with `contractVersion` and `contractHash` removed. Its final property
+`nativeExecutionPolicy` is an object with `profile` and then `retryLimits`, using the profile and
+ordered step retry limits from the exact projection. The compiler hashes the compact UTF-8 JSON
+with SHA-256 using its ordinary Contract encoding. A Node and Python build of the same logical
+pipeline and policy produce identical Contract bytes. The projection still carries language-specific
+binding details and source digests.
+
+Use the archive as the Compiled Truth carrier in a Release Descriptor. The runtime binding must
+verify the runnable artefact and Compiled Truth against their own descriptor digests, then compare
+the loaded projection against the verified resource bytes. Generating metadata supplies the
+compiler artefacts for this binding. Worker hosting and deployment are separate steps.
 
 ### Resume an interrupted generation
 
