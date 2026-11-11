@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
   checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, profile,
@@ -13,6 +15,24 @@ import { generateRemote, watchRun } from './remote-node-generation.mjs';
 const repository = 'owner/app';
 const compilerSha = 'a'.repeat(40);
 const runId = '123456';
+
+test('CLI enters argument validation through both real and symlinked script paths', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'tpf-client-entry-'));
+  t.after(() => rmSync(directory, {recursive: true, force: true}));
+  // No GitHub account or network is involved: validation only needs the CLI version.
+  writeFileSync(join(directory, 'gh'), '#!/bin/sh\nprintf "gh version 2.100.0\\n"\n', {mode: 0o755});
+  const source = fileURLToPath(new URL('./remote-node-generation.mjs', import.meta.url));
+  const alias = join(directory, 'client.mjs');
+  symlinkSync(source, alias);
+  for (const path of [source, alias]) {
+    const result = spawnSync(process.execPath, [path], {
+      env: {...process.env, PATH: directory}, encoding: 'utf8', timeout: 10_000,
+    });
+    assert.equal(result.status, 1, `${path}: must not silently succeed without entering the CLI`);
+    assert.match(result.stderr, /Usage: node remote-node-generation.mjs/);
+    assert.equal(result.stdout, '');
+  }
+});
 
 function fixture(t, { symlinkInput = false } = {}) {
   const cwd = mkdtempSync(join(tmpdir(), 'tpf-generation-test-'));
