@@ -86,6 +86,45 @@ class StepArtifactGenerationServiceTest {
     }
 
     @Test
+    void recordsOnlyRenderedAwaitFactsInTheirOwningCompilation() throws Exception {
+        var ctx = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        ctx.setGeneratedSourcesRoot(tempDir);
+        ctx.setTransportMode(org.pipelineframework.processor.ir.PipelineTransport.LOCAL);
+        var model = new PipelineStepModel.Builder().serviceName("ReviewService")
+            .generatedName("ReviewService").servicePackage("example")
+            .serviceClassName(ClassName.get("example", "ReviewService"))
+            .inputMapping(TypeMapping.canonical(ClassName.get("example", "Input"), "RequestAlias"))
+            .outputMapping(TypeMapping.canonical(ClassName.get("example", "Pending"), "PendingAlias"))
+            .streamingShape(StreamingShape.UNARY_UNARY).executionMode(ExecutionMode.DEFAULT)
+            .enabledTargets(Set.of(GenerationTarget.DEFERRED_COMPLETION_STEP))
+            .deferredCompletionSelection(new org.pipelineframework.processor.ir.DeferredCompletionSelection(
+                ClassName.get("example", "Result"), "ResultAlias", java.util.Optional.of("CompletionAlias"),
+                java.time.Duration.ofMinutes(1), java.util.List.of(), "interactionId", "interaction-api", java.util.Map.of(),
+                java.util.Optional.of(ClassName.get("example", "Reply")), java.util.Optional.of(ClassName.get("example", "Projector"))))
+            .build();
+        assertTrue(ctx.awaitRuntimeDescriptor("ReviewService").isEmpty());
+        service.generateArtifactsForModel(ctx, model, null, null, null,
+            new java.util.HashSet<>(), Set.of(), null, null, new RoleMetadataGenerator(processingEnv),
+            mock(GrpcServiceAdapterRenderer.class), mock(ClientStepRenderer.class), mock(LocalClientStepRenderer.class),
+            mock(RestClientStepRenderer.class), mock(RestResourceRenderer.class), mock(RestFunctionHandlerRenderer.class),
+            mock(BlockingReactiveBridgeRenderer.class), mock(RemoteOperatorAdapterRenderer.class));
+        var facts = ctx.awaitRuntimeDescriptor("ReviewService").orElseThrow();
+        assertEquals("example.Pending", facts.get("inputTypeId"));
+        assertEquals("PendingAlias", facts.get("canonicalInputTypeId"));
+        assertEquals("ResultAlias", facts.get("canonicalOutputTypeId"));
+        assertEquals("CompletionAlias", facts.get("completionPayloadTypeId"));
+        assertEquals("example.Reply", facts.get("transportOutputTypeId"));
+        assertEquals("example.Projector", facts.get("completionProjectorId"));
+        assertEquals(true, facts.get("requestAwareCompletion"));
+        var other = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        assertTrue(other.awaitRuntimeDescriptor("ReviewService").isEmpty());
+        assertDoesNotThrow(() -> ctx.recordAwaitRuntimeDescriptor("ReviewService", facts));
+        assertThrows(UnsupportedOperationException.class, () -> facts.put("stepId", "foreign"));
+        assertThrows(IllegalStateException.class,
+            () -> ctx.recordAwaitRuntimeDescriptor("ReviewService", java.util.Map.of("stepId", "foreign")));
+    }
+
+    @Test
     void resolvedFunctionPlatformReachesBothRenderersWithoutProcessorOption() throws Exception {
         var ctx = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());
         ctx.setGeneratedSourcesRoot(tempDir);

@@ -97,6 +97,45 @@ public class PipelineCompilationContext {
         org.pipelineframework.processor.representation.ResolvedProviderBoundary> resolvedProviderBoundaries
         = new java.util.LinkedHashMap<>();
     
+    @Getter(AccessLevel.NONE)
+    private final Map<String, Map<String, Object>> awaitRuntimeDescriptors = new java.util.LinkedHashMap<>();
+
+    /** Records exactly the descriptor emitted by a renderer in this compilation. */
+    public void recordAwaitRuntimeDescriptor(String stepId, Map<String, Object> descriptor) {
+        if (descriptor.isEmpty()) return;
+        var immutable = java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(descriptor));
+        var previous = awaitRuntimeDescriptors.putIfAbsent(stepId, immutable);
+        if (previous != null && !previous.equals(immutable)) {
+            throw new IllegalStateException("Conflicting compiled Await descriptors for " + stepId);
+        }
+    }
+
+    public Optional<Map<String, Object>> awaitRuntimeDescriptor(String stepId) {
+        return Optional.ofNullable(awaitRuntimeDescriptors.get(stepId));
+    }
+
+    /** The exact child order injected into one generated invocation class. */
+    public record GeneratedInvocationOrder(String invocationClass, String definitionId, String callsiteId,
+                                           List<String> order) {
+        public GeneratedInvocationOrder { order = List.copyOf(order); }
+    }
+
+    @Getter(AccessLevel.NONE)
+    private final Map<String, GeneratedInvocationOrder> generatedInvocationOrders = new java.util.LinkedHashMap<>();
+
+    public void recordGeneratedInvocationOrder(String invocationClass, String definitionId, String callsiteId,
+                                               List<String> order) {
+        var value = new GeneratedInvocationOrder(invocationClass, definitionId, callsiteId, order);
+        var previous = generatedInvocationOrders.putIfAbsent(invocationClass, value);
+        if (previous != null && !previous.equals(value)) {
+            throw new IllegalStateException("Conflicting compiled invocation order for " + invocationClass);
+        }
+    }
+
+    public List<GeneratedInvocationOrder> generatedInvocationOrders() {
+        return List.copyOf(generatedInvocationOrders.values());
+    }
+
     // Resolved generation targets
     @Setter
     private Set<GenerationTarget> resolvedTargets;

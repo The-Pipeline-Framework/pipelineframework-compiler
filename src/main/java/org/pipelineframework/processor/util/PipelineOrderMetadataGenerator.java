@@ -108,7 +108,7 @@ public class PipelineOrderMetadataGenerator {
             return;
         }
 
-        PipelineOrderMetadata metadata = new PipelineOrderMetadata(expanded);
+        PipelineOrderMetadata metadata = new PipelineOrderMetadata(ctx, expanded);
         if (processingEnv != null) {
             javax.tools.FileObject resourceFile = processingEnv.getFiler()
                 .createResource(StandardLocation.CLASS_OUTPUT, "", ORDER_RESOURCE, (javax.lang.model.element.Element[]) null);
@@ -157,7 +157,7 @@ public class PipelineOrderMetadataGenerator {
             throw new IllegalStateException("Explicit root pipeline order is missing generated side-effect client steps: "
                 + missingSideEffects);
         }
-        PipelineOrderMetadata metadata = new PipelineOrderMetadata(expandedOrder);
+        PipelineOrderMetadata metadata = new PipelineOrderMetadata(ctx, expandedOrder);
         javax.tools.FileObject resourceFile = processingEnv.getFiler()
             .createResource(StandardLocation.CLASS_OUTPUT, "", ORDER_RESOURCE, (javax.lang.model.element.Element[]) null);
         try (var writer = resourceFile.openWriter()) {
@@ -479,14 +479,23 @@ public class PipelineOrderMetadataGenerator {
 
     private static class PipelineOrderMetadata {
         List<String> order;
+        Integer boundarySchemaVersion;
+        List<PipelineOrderBoundaryMetadata.Boundary> stepBoundaries;
+        List<PipelineOrderBoundaryMetadata.DefinitionBoundary> definitionBoundaries;
 
         /**
          * Creates a PipelineOrderMetadata that holds the resolved pipeline execution order.
          *
          * @param order the ordered list of fully qualified step class names to include in the metadata; may be empty
          */
-        PipelineOrderMetadata(List<String> order) {
+        PipelineOrderMetadata(PipelineCompilationContext ctx, List<String> order) {
             this.order = order;
+            PipelineOrderBoundaryMetadata.project(ctx, order).ifPresent(boundaries ->
+                PipelineOrderBoundaryMetadata.projectDefinitions(ctx).ifPresent(definitions -> {
+                    boundarySchemaVersion = 1;
+                    stepBoundaries = boundaries;
+                    definitionBoundaries = definitions;
+                }));
         }
     }
 }

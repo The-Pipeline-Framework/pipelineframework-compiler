@@ -70,6 +70,7 @@ public class PipelineContractMetadataGenerator {
         PipelineCompositionDescriptor composition = ctx.getResolvedPipelineDefinitionGraph()
             .map(graph -> new PipelineCompositionContractProjector().project(graph))
             .orElseGet(PipelineCompositionDescriptor::empty);
+        Map<String, Object> rootBoundary = rootBoundary(ctx, composition);
         PipelineYamlConfig effectiveConfig = loadPipelineConfig(ctx);
         List<Map<String, Object>> capabilityImports = new ConnectorOperationProvenanceProjector().project(
             effectiveConfig, ctx.getModuleDir(),
@@ -80,7 +81,7 @@ public class PipelineContractMetadataGenerator {
         List<Map<String, Object>> importedDefinitions = importedDefinitions(ctx);
         List<Map<String, Object>> httpPayloadBoundaries = httpPayloadBoundaries(ctx);
         int schemaVersion = composition.present() || hasContributedTypes || !importedDefinitions.isEmpty()
-            || !capabilityImports.isEmpty() || !httpPayloadBoundaries.isEmpty()
+            || !capabilityImports.isEmpty() || !httpPayloadBoundaries.isEmpty() || !rootBoundary.isEmpty()
             ? 3 : canonicalTypes.isEmpty() ? 1 : 2;
         String canonicalCatalogFingerprint = sha256(CANONICAL_GSON.toJson(canonicalTypes));
         contractWithoutHash.put("schemaVersion", schemaVersion);
@@ -93,6 +94,7 @@ public class PipelineContractMetadataGenerator {
         contractWithoutHash.put("steps", steps);
         contractWithoutHash.put("canonicalTypes", canonicalTypes);
         contractWithoutHash.put("canonicalCatalogFingerprint", canonicalCatalogFingerprint);
+        if (!rootBoundary.isEmpty()) contractWithoutHash.put("rootBoundary", rootBoundary);
         if (composition.present()) {
             contractWithoutHash.put("composition", composition);
         }
@@ -119,6 +121,7 @@ public class PipelineContractMetadataGenerator {
         finalContract.put("steps", steps);
         finalContract.put("canonicalTypes", canonicalTypes);
         finalContract.put("canonicalCatalogFingerprint", canonicalCatalogFingerprint);
+        if (!rootBoundary.isEmpty()) finalContract.put("rootBoundary", rootBoundary);
         if (composition.present()) {
             finalContract.put("composition", composition);
         }
@@ -363,6 +366,25 @@ public class PipelineContractMetadataGenerator {
         throw new IllegalArgumentException("Unsupported canonical type expression: " + reference);
     }
 
+    private Map<String, Object> rootBoundary(PipelineCompilationContext ctx, PipelineCompositionDescriptor composition) {
+        var template = ctx.getPipelineTemplateConfig();
+        if (template == null || template.dialect() != org.pipelineframework.config.template.PipelineTemplateDialect.V3)
+            return Map.of();
+        String input;
+        String output;
+        if (composition.present()) {
+            var root = composition.definition(composition.rootDefinitionId());
+            input = root.inputContractId();
+            output = root.outputContractId();
+        } else {
+            if (template.steps().isEmpty()) return Map.of();
+            input = template.inputContract() == null ? template.steps().getFirst().inputTypeName() : template.inputContract();
+            output = template.outputContract() == null ? template.steps().getLast().outputTypeName() : template.outputContract();
+        }
+        if (input == null || input.isBlank() || output == null || output.isBlank()) return Map.of();
+        return immutableSortedMap(Map.of("schemaVersion", 1, "inputCanonicalTypeId", input, "outputCanonicalTypeId", output));
+    }
+
     private List<Map<String, Object>> stepDescriptors(PipelineCompilationContext ctx) {
         PipelineYamlConfig config = loadPipelineConfig(ctx);
         Map<String, PipelineYamlStep> yamlByName = indexYamlSteps(config);
@@ -390,7 +412,7 @@ public class PipelineContractMetadataGenerator {
                     "maxRecords", yamlStep.paging().orElseThrow().maxRecords()));
             }
             model.deferredCompletionSelection().ifPresent(selection ->
-                descriptor.put("deferredCompletion", deferredCompletion(model, selection)));
+                descriptor.put("deferredCompletion", deferredCompletion(model, selection, ctx)));
             descriptors.add(descriptor);
         }
         return descriptors;
@@ -584,9 +606,11 @@ public class PipelineContractMetadataGenerator {
 
     private static Map<String, Object> deferredCompletion(
         PipelineStepModel model,
-        org.pipelineframework.processor.ir.DeferredCompletionSelection completion
+        org.pipelineframework.processor.ir.DeferredCompletionSelection completion,
+        PipelineCompilationContext ctx
     ) {
         Map<String, Object> value = new LinkedHashMap<>();
+        ctx.awaitRuntimeDescriptor(model.serviceName()).ifPresent(descriptor -> value.put("runtimeDescriptor", descriptor));
         value.put("operationOutputTypeId", typeId(model.outputMapping().domainType()));
         value.put("finalOutputTypeId", typeId(completion.finalOutputType()));
         value.put("timeout", completion.timeout().toString());

@@ -174,6 +174,10 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                         + stepModel.serviceName() + "'. Use distinct step names.");
                 }
             }
+            stepModel = stepModel.toBuilder()
+                .inputMapping(withCanonicalIdentity(stepModel.inputMapping(), authoredCanonicalType(ctx, definition, stepDef, true)))
+                .outputMapping(withCanonicalIdentity(stepModel.outputMapping(), authoredCanonicalType(ctx, definition, stepDef, false)))
+                .build();
             stepModels.add(stepModel);
         }
 
@@ -383,8 +387,8 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             .servicePackage(servicePackage)
             .serviceClassName(ClassName.get("org.pipelineframework.command", "CommandStepDescriptor"))
             .deferredCompletionSelection(commandCompletion)
-            .inputMapping(TypeMapping.withoutMapper(inputType))
-            .outputMapping(TypeMapping.withoutMapper(outputType))
+            .inputMapping(TypeMapping.canonical(inputType, authoredCanonicalType(ctx, definition, stepDef, true).orElse(null)))
+            .outputMapping(TypeMapping.canonical(outputType, authoredCanonicalType(ctx, definition, stepDef, false).orElse(null)))
             .streamingShape(StreamingShape.UNARY_UNARY)
             .enabledTargets(commandCompletion.filter(value -> value.callback().isEmpty()).isPresent()
                 ? java.util.Set.of(GenerationTarget.COMMAND_CLIENT_STEP, GenerationTarget.DEFERRED_COMPLETION_STEP)
@@ -673,8 +677,10 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             .serviceName(serviceName)
             .generatedName(serviceName)
             .serviceClassName(extractedModel.serviceClassName())
-            .inputMapping(new TypeMapping(inputType, java.util.Optional.ofNullable(inboundMapper), inboundMapper != null, inputType))
-            .outputMapping(new TypeMapping(outputType, java.util.Optional.ofNullable(outboundMapper), outboundMapper != null, outputType))
+            .inputMapping(new TypeMapping(inputType, java.util.Optional.ofNullable(inboundMapper), inboundMapper != null,
+                inputType, authoredCanonicalType(ctx, definition, stepDef, true)))
+            .outputMapping(new TypeMapping(outputType, java.util.Optional.ofNullable(outboundMapper), outboundMapper != null,
+                outputType, authoredCanonicalType(ctx, definition, stepDef, false)))
             .streamingShape(serviceSignature.shape())
             .pagedSource(isPagedSource(ctx, definition, stepDef.name()))
             .executionMode(resolvedExecutionMode)
@@ -694,6 +700,29 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                 definitionValue.completion().map(DeferredCompletionDefinition.CompletionProjectionDefinition::projector))
                 .withBranchSelection(completionBinding.orElseThrow().branchSelection())));
         return builder.build();
+    }
+
+    private static TypeMapping withCanonicalIdentity(TypeMapping mapping, Optional<String> canonicalName) {
+        return canonicalName.isEmpty() ? mapping : new TypeMapping(mapping.domainType(), mapping.mapperType(),
+            mapping.hasMapper(), mapping.entityType(), canonicalName);
+    }
+
+    /** Preserve authored boundary identities instead of rediscovering them from Java class names. */
+    private Optional<String> authoredCanonicalType(PipelineCompilationContext ctx, PipelineReference definition,
+        StepDefinition step, boolean input) {
+        var template = ctx.getPipelineTemplateConfig();
+        if (template == null
+            || template.dialect() != org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
+            return Optional.empty();
+        }
+        if (!input && step.deferredCompletion().isPresent())
+            return Optional.of(step.deferredCompletion().orElseThrow().operationOutputType());
+        var steps = ROOT.equals(definition) ? template.steps()
+            : Optional.ofNullable(template.pipelines().get(definition.logicalId()))
+                .orElseThrow(() -> new IllegalArgumentException("Unknown pipeline definition '" + definition.logicalId() + "'"))
+                .steps();
+        return steps.stream().filter(candidate -> candidate != null && step.name().equals(candidate.name()))
+            .findFirst().map(candidate -> input ? candidate.inputTypeName() : candidate.outputTypeName());
     }
 
     TypeName resolveDeferredOperationOutputModelType(
@@ -818,12 +847,12 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                 inputType,
                 java.util.Optional.ofNullable(stepDef.inboundMapper()),
                 stepDef.inboundMapper() != null,
-                inputType))
+                inputType, authoredCanonicalType(ctx, definition, stepDef, true)))
             .outputMapping(new TypeMapping(
                 outputType,
                 java.util.Optional.ofNullable(stepDef.outboundMapper()),
                 stepDef.outboundMapper() != null,
-                outputType))
+                outputType, authoredCanonicalType(ctx, definition, stepDef, false)))
             .streamingShape(streamingShape)
             .pagedSource(isPagedSource(ctx, ROOT, stepDef.name()))
             .enabledTargets(targets)

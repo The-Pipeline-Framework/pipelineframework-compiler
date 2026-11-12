@@ -289,6 +289,39 @@ class PipelineContractMetadataGeneratorTest {
     }
 
     @Test
+    void renderedTransportConfigurationMatchesThePinnedFingerprintWithoutResolvingReferences() throws Exception {
+        Path output = tempDir.resolve("rendered-config");
+        var env = processingEnv(output, Map.of());
+        var ctx = new PipelineCompilationContext(env, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        Map<String, Object> nested = new LinkedHashMap<>();
+        nested.put("z", List.of("${UNRESOLVED_REFERENCE}", "literal"));
+        nested.put("a", "first");
+        Map<String, Object> config = Map.of("endpoint", "${UNRESOLVED_ENDPOINT}", "headers", nested);
+        var model = deferredStep(config);
+        var rendering = org.pipelineframework.processor.renderer.Jsr269GenerationContext.create(
+            null, output.resolve("sources"), org.pipelineframework.processor.ir.DeploymentRole.ORCHESTRATOR_CLIENT,
+            Set.of(), null, null, PipelineTransport.LOCAL, "org.example", null, false);
+        var facts = new org.pipelineframework.processor.renderer.DeferredCompletionStepRenderer()
+            .renderWithDescriptorMetadata(model, rendering, null);
+        assertEquals(config, facts.get("transportConfig"));
+        nested.put("later", "must not mutate captured configuration");
+        @SuppressWarnings("unchecked") var captured = (Map<String, Object>) facts.get("transportConfig");
+        assertFalse(((Map<?, ?>) captured.get("headers")).containsKey("later"));
+        assertThrows(UnsupportedOperationException.class, () -> captured.put("endpoint", "changed"));
+        nested.remove("later");
+        ctx.setStepModels(List.of(model));
+        ctx.recordAwaitRuntimeDescriptor(model.serviceName(), facts);
+        new PipelineContractMetadataGenerator(env).writePipelineContract(ctx);
+        var completion = readContract(output).getAsJsonArray("steps").get(0).getAsJsonObject().getAsJsonObject("deferredCompletion");
+        var emitted = completion.getAsJsonObject("runtimeDescriptor").getAsJsonObject("transportConfig");
+        assertEquals("${UNRESOLVED_ENDPOINT}", emitted.get("endpoint").getAsString());
+        var canonical = new com.google.gson.GsonBuilder().disableHtmlEscaping().create().toJson(emitted);
+        var digest = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+            .digest(canonical.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertEquals(completion.get("transportConfigFingerprint").getAsString(), digest);
+    }
+
+    @Test
     void callbackAuthorityAndAllThreeContractsParticipateInTheReleaseHash() throws IOException {
         var operation = org.pipelineframework.processor.ir.ConnectorOperationSelection.command("StartJob",
             org.pipelineframework.connector.ConnectorBindingName.of("jobs"),
@@ -323,9 +356,42 @@ class PipelineContractMetadataGeneratorTest {
             context.setStepModels(List.of(step("StartJob", "StartJobRequest", variant.immediate(), StreamingShape.UNARY_UNARY,
                 Set.of(GenerationTarget.COMMAND_CLIENT_STEP)).toBuilder().connectorOperationSelection(operation)
                 .deferredCompletionSelection(completion).build()));
+            var sourceModel = context.getStepModels().getFirst();
+            var renderedModel = sourceModel.toBuilder()
+                .inputMapping(TypeMapping.canonical(sourceModel.inboundDomainType(), "RequestAlias"))
+                .outputMapping(TypeMapping.canonical(sourceModel.outboundDomainType(), "AcknowledgementAlias"))
+                .cacheKeyGenerator(ClassName.get("org.example", "IdGenerator")).build();
+            var rendering = org.pipelineframework.processor.renderer.Jsr269GenerationContext.create(
+                null, output.resolve("sources"), org.pipelineframework.processor.ir.DeploymentRole.ORCHESTRATOR_CLIENT,
+                Set.of(), null, null, PipelineTransport.LOCAL, "org.example", null, false);
+            var facts = new org.pipelineframework.processor.renderer.CommandClientStepRenderer()
+                .renderWithDescriptorMetadata(renderedModel, rendering);
+            context.setStepModels(List.of(renderedModel));
+            context.recordAwaitRuntimeDescriptor(renderedModel.serviceName(), facts);
             new PipelineContractMetadataGenerator(processing).writePipelineContract(context);
             var contract = readContract(output);
             var node = contract.getAsJsonArray("steps").get(0).getAsJsonObject().getAsJsonObject("deferredCompletion");
+            var descriptor = node.getAsJsonObject("runtimeDescriptor");
+            assertEquals(1, descriptor.get("schemaVersion").getAsInt());
+            assertEquals(renderedModel.serviceName(), descriptor.get("stepId").getAsString());
+            assertEquals(variant.payload(), descriptor.get("completionPayloadTypeId").getAsString());
+            assertEquals(variant.result(), descriptor.get("canonicalOutputTypeId").getAsString());
+            assertEquals("RequestAlias", descriptor.get("canonicalInputTypeId").getAsString());
+            assertEquals(variant.acknowledgementAware(), descriptor.get("acknowledgementAwareCommandCompletion").getAsBoolean());
+            var callbackContract = descriptor.getAsJsonObject("callbackContract");
+            assertEquals("completed", callbackContract.get("callback").getAsString());
+            assertEquals(variant.payload(), callbackContract.get("payloadType").getAsString());
+            assertEquals("org.example." + variant.authenticator(), callbackContract.get("authenticator").getAsString());
+            assertEquals(true, callbackContract.get("required").getAsBoolean());
+            if (variant.acknowledgementAware()) {
+                assertEquals("org.example.restaurant.domain.JobAccepted", descriptor.get("commandAcknowledgementTypeId").getAsString());
+                assertEquals("AcknowledgementAlias", descriptor.get("canonicalCommandAcknowledgementTypeId").getAsString());
+            } else {
+                assertFalse(descriptor.has("commandAcknowledgementTypeId"));
+            }
+            var firstBytes = Files.readString(output.resolve("META-INF/pipeline/pipeline-contract.json"));
+            new PipelineContractMetadataGenerator(processing).writePipelineContract(context);
+            assertEquals(firstBytes, Files.readString(output.resolve("META-INF/pipeline/pipeline-contract.json")));
             assertEquals("CONNECTOR_CALLBACK", node.get("mode").getAsString());
             assertEquals("org.example.restaurant.domain." + variant.immediate(), node.get("operationOutputTypeId").getAsString());
             assertEquals("org.example." + variant.result(), node.get("finalOutputTypeId").getAsString());

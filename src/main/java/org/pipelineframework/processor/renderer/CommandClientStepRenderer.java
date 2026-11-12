@@ -35,6 +35,11 @@ public class CommandClientStepRenderer {
     }
 
     public void render(PipelineStepModel model, GenerationContext ctx) throws IOException {
+        renderWithDescriptorMetadata(model, ctx);
+    }
+
+    /** Renders the step, returning completion facts only for callback Commands. */
+    public Map<String, Object> renderWithDescriptorMetadata(PipelineStepModel model, GenerationContext ctx) throws IOException {
         if (model.cacheKeyGenerator() == null) {
             throw new IllegalArgumentException("Command step " + model.serviceName() + " is missing command id generator");
         }
@@ -117,8 +122,9 @@ public class CommandClientStepRenderer {
         if (connectorSelection.isEmpty()) {
             typeBuilder.addField(descriptorFactory);
         }
+        Map<String, Object> completionMetadata = Map.of();
         if (model.deferredCompletionSelection().filter(completion -> completion.callback().isPresent()).isPresent()) {
-            addCallbackCompletion(typeBuilder, model);
+            completionMetadata = addCallbackCompletion(typeBuilder, model);
         }
         if (inputMapper != null) {
             typeBuilder.addField(inputMapper);
@@ -155,6 +161,7 @@ public class CommandClientStepRenderer {
         JavaFile.builder(model.servicePackage() + NamingPolicy.PIPELINE_PACKAGE_SUFFIX, type)
             .build()
             .writeTo(ctx.outputDir());
+        return completionMetadata;
     }
 
     private com.squareup.javapoet.CodeBlock applyBody(
@@ -216,7 +223,7 @@ public class CommandClientStepRenderer {
         return body.build();
     }
 
-    private void addCallbackCompletion(TypeSpec.Builder type, PipelineStepModel model) {
+    private Map<String, Object> addCallbackCompletion(TypeSpec.Builder type, PipelineStepModel model) {
         var completion = model.deferredCompletionSelection().orElseThrow();
         var callback = completion.callback().orElseThrow();
         var selected = callback.operation();
@@ -269,6 +276,7 @@ public class CommandClientStepRenderer {
             completion.completionProjector().orElseThrow(), Optional.class, callbackSelection);
         type.addMethod(MethodSpec.methodBuilder("registerCompletion").addAnnotation(ClassName.get("jakarta.annotation", "PostConstruct"))
             .addStatement("completion = completionRegistry.register($L)", descriptor).build());
+        return AwaitRuntimeDescriptorMetadata.command(model);
     }
 
     private CodeBlock nativeDescriptor(
