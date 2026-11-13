@@ -92,6 +92,8 @@ public final class LocalPipelineInvocationRenderer {
         if (expandedOrder.isEmpty()) {
             expandedOrder = authoredOrder;
         }
+        ctx.recordGeneratedInvocationOrder(invocationTypes.get(binding.invocationLocation()).canonicalName(),
+            binding.target().logicalId(), binding.invocationLocation().definitionLocalLocation().localStepId(), expandedOrder);
         Map<String, Boolean> recursiveTypes = new LinkedHashMap<>();
         authoredChildren.forEach(child -> recursiveTypes.put(child.type().canonicalName(), child.recursive()));
         List<String> childFields = new ArrayList<>();

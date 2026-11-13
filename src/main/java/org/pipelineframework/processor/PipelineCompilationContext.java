@@ -25,6 +25,7 @@ import org.pipelineframework.processor.routing.PipelineBranchingPlan;
 import org.pipelineframework.processor.representation.ResolvedRepresentationRegistry;
 import org.pipelineframework.representation.spi.ResolvedOperationRepresentation;
 import org.pipelineframework.processor.composition.ResolvedPipelineDefinitionGraph;
+import org.pipelineframework.processor.composition.PipelineReference;
 import org.pipelineframework.processor.parser.ParsedPipelineDefinitionCatalog;
 import org.pipelineframework.processor.block.ImportedPipelineDefinition;
 import org.pipelineframework.config.pipeline.PipelineYamlConfig;
@@ -97,6 +98,57 @@ public class PipelineCompilationContext {
         org.pipelineframework.processor.representation.ResolvedProviderBoundary> resolvedProviderBoundaries
         = new java.util.LinkedHashMap<>();
     
+    private record AwaitDescriptorKey(PipelineReference definition, String stepId) { }
+
+    @Getter(AccessLevel.NONE)
+    private final Map<AwaitDescriptorKey, Map<String, Object>> awaitRuntimeDescriptors = new java.util.LinkedHashMap<>();
+
+    /** Records exactly the descriptor emitted by a renderer in this compilation. */
+    public void recordAwaitRuntimeDescriptor(PipelineStepModel model, Map<String, Object> descriptor) {
+        if (descriptor.isEmpty()) return;
+        var immutable = java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(descriptor));
+        var previous = awaitRuntimeDescriptors.putIfAbsent(new AwaitDescriptorKey(model.definition(), model.serviceName()), immutable);
+        if (previous != null && !previous.equals(immutable)) {
+            throw new IllegalStateException("Conflicting compiled Await descriptors for " + model.definition() + "/" + model.serviceName());
+        }
+    }
+
+    public Optional<Map<String, Object>> awaitRuntimeDescriptor(PipelineStepModel model) {
+        return Optional.ofNullable(awaitRuntimeDescriptors.get(new AwaitDescriptorKey(model.definition(), model.serviceName())));
+    }
+
+    private List<String> physicalRootOrder = List.of();
+
+    public void recordPhysicalRootOrder(List<String> order) {
+        physicalRootOrder = List.copyOf(order);
+    }
+
+    public List<String> physicalRootOrder() {
+        return physicalRootOrder;
+    }
+
+    /** The exact child order injected into one generated invocation class. */
+    public record GeneratedInvocationOrder(String invocationClass, String definitionId, String callsiteId,
+                                           List<String> order) {
+        public GeneratedInvocationOrder { order = List.copyOf(order); }
+    }
+
+    @Getter(AccessLevel.NONE)
+    private final Map<String, GeneratedInvocationOrder> generatedInvocationOrders = new java.util.LinkedHashMap<>();
+
+    public void recordGeneratedInvocationOrder(String invocationClass, String definitionId, String callsiteId,
+                                               List<String> order) {
+        var value = new GeneratedInvocationOrder(invocationClass, definitionId, callsiteId, order);
+        var previous = generatedInvocationOrders.putIfAbsent(invocationClass, value);
+        if (previous != null && !previous.equals(value)) {
+            throw new IllegalStateException("Conflicting compiled invocation order for " + invocationClass);
+        }
+    }
+
+    public List<GeneratedInvocationOrder> generatedInvocationOrders() {
+        return List.copyOf(generatedInvocationOrders.values());
+    }
+
     // Resolved generation targets
     @Setter
     private Set<GenerationTarget> resolvedTargets;

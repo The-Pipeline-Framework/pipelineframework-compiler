@@ -30,10 +30,17 @@ class DeferredCompletionStepRendererTest {
     void rendersCompletionModifierWithDirectDescriptor() throws Exception {
         PipelineStepModel model = model(StreamingShape.UNARY_UNARY);
 
-        new DeferredCompletionStepRenderer().render(model, context(PipelineTransport.LOCAL));
+        var facts = new DeferredCompletionStepRenderer().renderWithDescriptorMetadata(model, context(PipelineTransport.LOCAL), null);
 
         String source = Files.readString(tempDir.resolve(
             "com/example/approval/pipeline/CreateApprovalDeferredCompletionStep.java"));
+        assertEquals(1, facts.get("schemaVersion"));
+        assertEquals("CreateApproval", facts.get("stepId"));
+        assertEquals("com.example.approval.PendingApproval", facts.get("inputTypeId"));
+        assertEquals(false, facts.get("requestAwareCompletion"));
+        for (String field : List.of("inputTypeId", "outputTypeId", "transportInputTypeId", "transportOutputTypeId")) {
+            assertTrue(source.contains("\"" + facts.get(field) + "\""), field + ": " + source);
+        }
         assertTrue(!source.contains("CreateApprovalLocalClientStep operation"));
         assertTrue(source.contains("StepOneToOne<PendingApproval, ApprovalDecision>"));
         assertTrue(source.contains("completionSupport.<PendingApproval, ApprovalDecision>awaitOneToOne(completion, operationOutput)"));
@@ -118,7 +125,12 @@ class DeferredCompletionStepRendererTest {
             .deferredCompletionSelection(new DeferredCompletionSelection(after, "After", Optional.empty(),
                 Duration.ofMinutes(5), List.of(), "interactionId", "interaction-api", Map.of(),
                 Optional.empty(), Optional.empty()).withBranchSelection(Optional.of(branch))).build();
-        new DeferredCompletionStepRenderer().render(model, context(PipelineTransport.LOCAL));
+        var facts = new DeferredCompletionStepRenderer().renderWithDescriptorMetadata(model, context(PipelineTransport.LOCAL), null);
+        assertEquals("Review", facts.get("canonicalInputTypeId"));
+        assertEquals("Reply", facts.get("canonicalOutputTypeId"));
+        assertEquals("Reply", facts.get("completionPayloadTypeId"));
+        assertEquals("com.example.approval.domain.Review", facts.get("inputTypeId"));
+        assertEquals("com.example.approval.domain.Reply", facts.get("outputTypeId"));
         String source = Files.readString(tempDir.resolve(
             "com/example/approval/pipeline/CreateApprovalDeferredCompletionStep.java"));
         assertTrue(source.contains("StepOneToOne<Before, After>"), source);
@@ -127,6 +139,20 @@ class DeferredCompletionStepRendererTest {
         assertTrue(source.contains("map(reply -> new After.Answered(reply))"), source);
         assertTrue(source.contains("\"com.example.approval.domain.Review\", \"com.example.approval.domain.Reply\""), source);
         assertTrue(!source.contains("PipelineDomainProtoAdapters"), source);
+    }
+
+    @Test
+    void retainsExplicitLegacyPayloadIdentityWhenNoCanonicalAliasWasNormalized() throws Exception {
+        var model = model(StreamingShape.UNARY_UNARY).toBuilder()
+            .deferredCompletionSelection(new DeferredCompletionSelection(
+                ClassName.get("example", "Result"), "Result", Optional.empty(), Duration.ofMinutes(1),
+                List.of(), "interactionId", "interaction-api", Map.of(),
+                Optional.of(ClassName.get("example", "Reply")), Optional.of(ClassName.get("example", "Projector"))))
+            .build();
+        var facts = new DeferredCompletionStepRenderer().renderWithDescriptorMetadata(model, context(PipelineTransport.LOCAL), null);
+        assertEquals("example.Reply", facts.get("completionPayloadTypeId"));
+        assertEquals("Result", facts.get("canonicalOutputTypeId"));
+        assertEquals("example.Projector", facts.get("completionProjectorId"));
     }
 
     @Test

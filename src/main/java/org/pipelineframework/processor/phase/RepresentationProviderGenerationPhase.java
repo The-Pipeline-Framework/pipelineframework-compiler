@@ -100,10 +100,12 @@ public final class RepresentationProviderGenerationPhase implements PipelineComp
         ResolvedProviderBoundary boundary
     ) {
         return model.withProviderFacade(facade, facadeApiKind, facadeStreamingShape).toBuilder()
-            .inputMapping(TypeMapping.withoutMapper(
-                ClassName.bestGuess(boundary.boundary().inputType().targetTypeName())))
-            .outputMapping(TypeMapping.withoutMapper(
-                ClassName.bestGuess(boundary.boundary().outputType().targetTypeName())))
+            .inputMapping(TypeMapping.canonical(
+                ClassName.bestGuess(boundary.boundary().inputType().targetTypeName()),
+                model.inputMapping().canonicalTypeName().orElse(null)))
+            .outputMapping(TypeMapping.canonical(
+                ClassName.bestGuess(boundary.boundary().outputType().targetTypeName()),
+                model.outputMapping().canonicalTypeName().orElse(null)))
             .build();
     }
 }

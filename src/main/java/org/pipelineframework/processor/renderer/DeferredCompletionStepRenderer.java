@@ -40,6 +40,12 @@ public class DeferredCompletionStepRenderer {
     }
 
     public void render(PipelineStepModel model, GenerationContext ctx, GrpcBinding grpcBinding) throws IOException {
+        renderWithDescriptorMetadata(model, ctx, grpcBinding);
+    }
+
+    /** Renders the step and returns the value-only facts used by its completion descriptor. */
+    public java.util.Map<String, Object> renderWithDescriptorMetadata(
+        PipelineStepModel model, GenerationContext ctx, GrpcBinding grpcBinding) throws IOException {
         DeferredCompletionSelection completion = model.deferredCompletionSelection().orElseThrow(() ->
             new IllegalArgumentException("Deferred completion target requires a resolved completion selection"));
         if (completion.branchSelection().isPresent() && ctx.transportMode() != PipelineTransport.LOCAL) {
@@ -60,6 +66,15 @@ public class DeferredCompletionStepRenderer {
             ? new CompletionBoundary(completion.completionPayloadType()
                 .orElse(completion.branchSelection().orElseThrow().completionType()), Optional.empty())
             : completionBoundary(completion, ctx, finalOutputType);
+
+        var selected = completion.branchSelection();
+        TypeName descriptorInput = selected.<TypeName>map(value -> value.requestType()).orElse(operationOutputType);
+        TypeName descriptorOutput = selected.<TypeName>map(value -> value.completionType()).orElse(finalOutputType);
+        TypeName transportInput = selected.isPresent() ? descriptorInput : operationBoundary.transportOutputType();
+        TypeName transportOutput = selected.isPresent()
+            ? completion.completionPayloadType().orElse(descriptorOutput) : completionBoundary.transportType();
+        var descriptorMetadata = AwaitRuntimeDescriptorMetadata.ordinary(
+            model, descriptorInput, descriptorOutput, transportInput, transportOutput);
 
         FieldSpec support = FieldSpec.builder(
                 ClassName.get("org.pipelineframework.awaitable", "AwaitCompletionSupport"), "completionSupport")
@@ -102,7 +117,8 @@ public class DeferredCompletionStepRenderer {
             .addField(descriptor)
             .addMethod(MethodSpec.constructorBuilder().addModifiers(Modifier.PUBLIC).build())
             .addMethod(registerDescriptor(
-                model, completion, operationBoundary, completionBoundary, operationOutputType, finalOutputType, ctx.transportMode()))
+                model, completion, operationBoundary, completionBoundary, operationOutputType,
+                descriptorInput, descriptorOutput, transportInput, transportOutput, ctx.transportMode()))
             .addMethod(MethodSpec.methodBuilder("cacheKeyTargetType")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
@@ -113,6 +129,7 @@ public class DeferredCompletionStepRenderer {
             .addMethod(applyAwaitPerItem(completion, operationOutputType, finalOutputType));
 
         JavaFile.builder(pipelinePackage, type.build()).build().writeTo(ctx.outputDir());
+        return descriptorMetadata;
     }
 
     private MethodSpec applyOneToOne(DeferredCompletionSelection completion, TypeName inputType, TypeName outputType) {
@@ -161,18 +178,16 @@ public class DeferredCompletionStepRenderer {
         TransportBoundaryResolver.RepresentationBoundary operationBoundary,
         CompletionBoundary completionBoundary,
         TypeName operationOutputType,
-        TypeName finalOutputType,
+        TypeName descriptorInput,
+        TypeName descriptorOutput,
+        TypeName transportInput,
+        TypeName transportOutput,
         PipelineTransport transport
     ) {
         var selected = completion.branchSelection();
         if (selected.isPresent() && transport != PipelineTransport.LOCAL) {
             throw new IllegalArgumentException("Selected Await requires LOCAL transport");
         }
-        TypeName descriptorInput = selected.<TypeName>map(value -> value.requestType()).orElse(operationOutputType);
-        TypeName descriptorOutput = selected.<TypeName>map(value -> value.completionType()).orElse(finalOutputType);
-        TypeName transportInput = selected.isPresent() ? descriptorInput : operationBoundary.transportOutputType();
-        TypeName transportOutput = selected.isPresent()
-            ? completion.completionPayloadType().orElse(descriptorOutput) : completionBoundary.transportType();
         CodeBlock inputToTransport = selected.isEmpty() && operationBoundary.outputConvertsAtBoundary()
             ? CodeBlock.of(transport == PipelineTransport.REST
                 ? "value -> new $T().toExternal(($T) value)" : "value -> $T.toProto(($T) value)",

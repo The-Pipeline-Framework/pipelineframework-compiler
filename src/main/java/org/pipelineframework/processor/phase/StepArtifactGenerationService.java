@@ -108,7 +108,7 @@ class StepArtifactGenerationService {
                     String baseName = ResourceNameUtils.normalizeBaseName(model.generatedName());
                     String commandClientClassName = model.servicePackage() + PIPELINE_DOT + baseName + "CommandClientStep";
                     DeploymentRole clientRole = resolveClientRole(model.deploymentRole());
-                    commandClientStepRenderer.render(model, org.pipelineframework.processor.renderer.Jsr269GenerationContext.create(
+                    var descriptorMetadata = commandClientStepRenderer.renderWithDescriptorMetadata(model, org.pipelineframework.processor.renderer.Jsr269GenerationContext.create(
                         ctx.getProcessingEnv(),
                         pathResolver.resolveRoleOutputDir(ctx, clientRole),
                         clientRole,
@@ -119,13 +119,14 @@ class StepArtifactGenerationService {
                         template == null ? null : template.basePackage(),
                         null,
                         v3GeneratedDomainTypes, canonicalTypeModel));
+                    ctx.recordAwaitRuntimeDescriptor(model, descriptorMetadata);
                     roleMetadataGenerator.recordClassWithRole(commandClientClassName, clientRole.name());
                 }
                 case DEFERRED_COMPLETION_STEP -> {
                     String baseName = ResourceNameUtils.normalizeBaseName(model.generatedName());
                     String awaitClientClassName = model.servicePackage() + PIPELINE_DOT + baseName + "DeferredCompletionStep";
                     DeploymentRole clientRole = resolveClientRole(model.deploymentRole());
-                    awaitClientStepRenderer.render(model, org.pipelineframework.processor.renderer.Jsr269GenerationContext.create(
+                    var descriptorMetadata = awaitClientStepRenderer.renderWithDescriptorMetadata(model, org.pipelineframework.processor.renderer.Jsr269GenerationContext.create(
                         ctx.getProcessingEnv(),
                         pathResolver.resolveRoleOutputDir(ctx, clientRole),
                         clientRole,
@@ -136,6 +137,7 @@ class StepArtifactGenerationService {
                         template == null ? null : template.basePackage(),
                         null,
                         v3GeneratedDomainTypes, canonicalTypeModel), grpcBinding);
+                    ctx.recordAwaitRuntimeDescriptor(model, descriptorMetadata);
                     roleMetadataGenerator.recordClassWithRole(awaitClientClassName, clientRole.name());
                 }
                 case QUERY_CLIENT_STEP -> {

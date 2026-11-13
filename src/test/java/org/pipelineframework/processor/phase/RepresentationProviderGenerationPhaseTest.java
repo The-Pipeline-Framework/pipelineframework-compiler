@@ -16,6 +16,7 @@ import org.pipelineframework.processor.ir.ExecutionMode;
 import org.pipelineframework.processor.ir.GenerationTarget;
 import org.pipelineframework.processor.ir.PipelineStepModel;
 import org.pipelineframework.processor.ir.StreamingShape;
+import org.pipelineframework.processor.ir.TypeMapping;
 import org.pipelineframework.processor.representation.ResolvedProviderBoundary;
 import org.pipelineframework.representation.spi.BoundaryClaim;
 import org.pipelineframework.representation.spi.BoundaryRequest;
@@ -25,6 +26,29 @@ import org.pipelineframework.representation.spi.ProviderExecutionStyle;
 import org.pipelineframework.representation.spi.ProviderStepContract;
 
 class RepresentationProviderGenerationPhaseTest {
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"$root", "org.example/document-block"})
+    void facadeReplacementPreservesAuthoredCanonicalIdentities(String definition) {
+        var original = model("ProcessExtractDocumentService", definition).toBuilder()
+            .inputMapping(TypeMapping.canonical(ClassName.get("example", "OriginalRequest"), "DocumentRequest"))
+            .outputMapping(TypeMapping.canonical(ClassName.get("example", "OriginalResult"), "DocumentResult"))
+            .build();
+        var context = new org.pipelineframework.processor.PipelineCompilationContext(null, null);
+        context.setStepModels(List.of(original));
+        context.setLocalDefinitionStepModels(Map.of(definition, List.of(original)));
+
+        RepresentationProviderGenerationPhase.replaceServiceWithFacade(context,
+            boundary("Extract document", definition));
+
+        for (var facade : List.of(context.getStepModels().getFirst(),
+            context.getLocalDefinitionStepModels().get(definition).getFirst())) {
+            assertEquals(ClassName.get("example", "Document"), facade.inputMapping().domainType());
+            assertEquals(ClassName.get("example", "Document"), facade.outputMapping().domainType());
+            assertEquals(Optional.of("DocumentRequest"), facade.inputMapping().canonicalTypeName());
+            assertEquals(Optional.of("DocumentResult"), facade.outputMapping().canonicalTypeName());
+        }
+    }
 
     @Test
     void matchesTheExactBoundaryStepWhenDefinitionsReuseAServiceClass() {
