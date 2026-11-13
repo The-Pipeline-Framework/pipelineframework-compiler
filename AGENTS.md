@@ -2,7 +2,7 @@
 
 ## Development dependency policy
 
-- Development on `main` uses this component’s active snapshot, currently `26.11.2-SNAPSHOT`. Component versions are independent of the product BOM version; follow each dependency’s active snapshot rather than assuming one version across repositories.
+- Development on `main` uses this component’s active snapshot, currently `26.11.3-SNAPSHOT`. Component versions are independent of the product BOM version; follow each dependency’s active snapshot rather than assuming one version across repositories.
 - Maven requires a version: do not use `LATEST`, `RELEASE`, or version ranges to stand in for Git `main`. Applications should select the snapshot product BOM; retained component properties are compatibility-test override points, not separate application version choices.
 - `.mvn/maven.config` includes `-U` so cached snapshot metadata is refreshed. Every Maven invocation still needs the isolated local repository required below.
 - Maven-producing repositories publish Central snapshots on pushes to `main` and manually for recovery. Nightly full-train testing remains separate; snapshot publication is not scheduled nightly. Publication is asynchronous, not an atomic cross-repository transaction; a green merge alone does not mean publication completed. Check the publisher before retrying dependent builds.
