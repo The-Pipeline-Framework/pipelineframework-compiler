@@ -1,18 +1,53 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
   checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, profile,
   receiptFile, sha256, sourceIdentity, workflowPath,
 } from './node-generation-common.mjs';
 import { stageGitInputs } from './node-generation-host.mjs';
-import { generateRemote } from './remote-node-generation.mjs';
+import { generateRemote, watchRun } from './remote-node-generation.mjs';
 
 const repository = 'owner/app';
 const compilerSha = 'a'.repeat(40);
 const runId = '123456';
+
+test('CLI enters argument validation through both real and symlinked script paths', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'tpf-client-entry-'));
+  t.after(() => rmSync(directory, {recursive: true, force: true}));
+  // No GitHub account or network is involved: validation only needs the CLI version.
+  writeFileSync(join(directory, 'gh'), '#!/bin/sh\nprintf "gh version 2.100.0\\n"\n', {mode: 0o755});
+  const source = fileURLToPath(new URL('./remote-node-generation.mjs', import.meta.url));
+  const alias = join(directory, 'client.mjs');
+  symlinkSync(source, alias);
+  for (const path of [source, alias]) {
+    const result = spawnSync(process.execPath, [path], {
+      env: {...process.env, PATH: directory}, encoding: 'utf8', timeout: 10_000,
+    });
+    assert.equal(result.status, 1, `${path}: must not silently succeed without entering the CLI`);
+    assert.match(result.stderr, /Usage: node remote-node-generation.mjs/);
+    assert.equal(result.stdout, '');
+  }
+});
+
+test('module import tolerates an unresolvable entry-point argument', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'tpf-client-import-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const source = new URL('./remote-node-generation.mjs', import.meta.url).href;
+  for (const argument of ['-', join(directory, 'missing.mjs')]) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval',
+      `process.argv[1] = ${JSON.stringify(argument)}; await import(${JSON.stringify(source)});`], {
+      cwd: directory, env: { ...process.env, PATH: directory }, encoding: 'utf8', timeout: 10_000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout, '');
+  }
+});
 
 function fixture(t, { symlinkInput = false } = {}) {
   const cwd = mkdtempSync(join(tmpdir(), 'tpf-generation-test-'));
@@ -242,3 +277,75 @@ test('stages committed Git blobs at authored paths, including nested projects', 
     });
   }
 });
+
+test('waits for the exact dispatched run to become visible before watching it', () => {
+  const calls = [];
+  const delays = [];
+  watchRun(repository, runId, {
+    execute(command, args) {
+      assert.equal(command, 'gh');
+      calls.push(args);
+      if (calls.length === 1) return { status: 1, stdout: Buffer.from('HTTP/2.0 404 Not Found\n') };
+      return { status: 0 };
+    },
+    pause: delay => delays.push(delay),
+  });
+  const read = ['api', '--hostname', 'github.com', '--include', '--silent',
+    `repos/${repository}/actions/runs/${runId}?exclude_pull_requests=true`];
+  assert.deepEqual(calls, [read, read,
+    ['run', 'watch', '--repo', `github.com/${repository}`, runId, '--interval', '10']]);
+  assert.deepEqual(delays, [1000]);
+});
+
+test('bounds retries when a dispatched run remains invisible', () => {
+  const delays = [];
+  let reads = 0;
+  assert.throws(() => watchRun(repository, runId, {
+    execute(command, args) {
+      assert.equal(command, 'gh');
+      assert.equal(args[0], 'api');
+      reads++;
+      return { status: 1, stdout: Buffer.from('HTTP/2.0 404 Not Found\n') };
+    },
+    pause: delay => delays.push(delay),
+  }), /not visible yet.*before dispatching again/);
+  assert.equal(reads, 5);
+  assert.deepEqual(delays, [1000, 2000, 4000, 8000]);
+});
+
+test('surfaces non-404 read errors without retrying or watching', () => {
+  let reads = 0;
+  assert.throws(() => watchRun(repository, runId, {
+    execute(command, args) {
+      assert.equal(command, 'gh');
+      assert.equal(args[0], 'api');
+      reads++;
+      return { status: 1, stdout: Buffer.from('HTTP/2.0 403 Forbidden\n'),
+        stderr: Buffer.from('gh: Forbidden (HTTP 403)\n') };
+    },
+    pause: () => assert.fail('Forbidden responses must not be retried.'),
+  }), /Could not read generation run 123456.*Forbidden \(HTTP 403\)/);
+  assert.equal(reads, 1);
+});
+
+for (const statusLine of ['HTTP/2.0 503 Service Unavailable', '']) {
+  test(`readiness decoding failure retains ${statusLine || 'unavailable status'} without retry`, () => {
+    let reads = 0;
+    assert.throws(() => watchRun(repository, runId, {
+      execute(command, args) {
+        assert.equal(command, 'gh');
+        assert.equal(args[0], 'api');
+        reads++;
+        return { status: 1, stdout: Buffer.from(`${statusLine}\nX-Private: do-not-echo\n`),
+          stderr: Buffer.from('unexpected end of JSON input') };
+      },
+      pause: () => assert.fail('Unclassified errors must not be retried.'),
+    }), error => {
+      assert.match(error.message, statusLine ? /HTTP 503/ : /HTTP status unavailable/);
+      assert.match(error.message, /unexpected end of JSON input.*before dispatching again/);
+      assert.doesNotMatch(error.message, /do-not-echo/);
+      return true;
+    });
+    assert.equal(reads, 1);
+  });
+}
