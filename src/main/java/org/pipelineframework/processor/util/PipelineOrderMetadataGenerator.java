@@ -490,6 +490,7 @@ public class PipelineOrderMetadataGenerator {
          */
         PipelineOrderMetadata(PipelineCompilationContext ctx, List<String> order) {
             this.order = order;
+            ctx.recordPhysicalRootOrder(order);
             PipelineOrderBoundaryMetadata.project(ctx, order).ifPresent(boundaries ->
                 PipelineOrderBoundaryMetadata.projectDefinitions(ctx).ifPresent(definitions -> {
                     boundarySchemaVersion = 1;

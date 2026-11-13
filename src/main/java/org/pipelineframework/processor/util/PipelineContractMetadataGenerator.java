@@ -610,7 +610,23 @@ public class PipelineContractMetadataGenerator {
         PipelineCompilationContext ctx
     ) {
         Map<String, Object> value = new LinkedHashMap<>();
-        ctx.awaitRuntimeDescriptor(model.serviceName()).ifPresent(descriptor -> value.put("runtimeDescriptor", descriptor));
+        ctx.awaitRuntimeDescriptor(model).ifPresent(descriptor -> {
+            var facts = new LinkedHashMap<>(descriptor);
+            String runtimeStep = clientClass(model, ctx);
+            if ("$root".equals(model.definition().logicalId())) {
+                int index = runtimeStep == null ? -1 : ctx.physicalRootOrder().indexOf(runtimeStep);
+                if (index >= 0) facts.put("positions", List.of(Map.of("stepIndex", index)));
+            } else {
+                var positions = ctx.generatedInvocationOrders().stream()
+                    .filter(order -> order.definitionId().equals(model.definition().logicalId()))
+                    .filter(order -> runtimeStep != null && order.order().contains(runtimeStep))
+                    .map(order -> Map.<String, Object>of("definitionId", order.definitionId(),
+                        "callsiteId", order.callsiteId(), "stepIndex", order.order().indexOf(runtimeStep))).distinct().toList();
+                if (!positions.isEmpty()) facts.put("positions", positions);
+            }
+            value.put("runtimeStepId", model.serviceName());
+            value.put("runtimeDescriptor", facts);
+        });
         value.put("operationOutputTypeId", typeId(model.outputMapping().domainType()));
         value.put("finalOutputTypeId", typeId(completion.finalOutputType()));
         value.put("timeout", completion.timeout().toString());

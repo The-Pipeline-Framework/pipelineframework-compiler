@@ -119,7 +119,7 @@ class StepArtifactGenerationService {
                         template == null ? null : template.basePackage(),
                         null,
                         v3GeneratedDomainTypes, canonicalTypeModel));
-                    ctx.recordAwaitRuntimeDescriptor(model.serviceName(), descriptorMetadata);
+                    ctx.recordAwaitRuntimeDescriptor(model, descriptorMetadata);
                     roleMetadataGenerator.recordClassWithRole(commandClientClassName, clientRole.name());
                 }
                 case DEFERRED_COMPLETION_STEP -> {
@@ -137,7 +137,7 @@ class StepArtifactGenerationService {
                         template == null ? null : template.basePackage(),
                         null,
                         v3GeneratedDomainTypes, canonicalTypeModel), grpcBinding);
-                    ctx.recordAwaitRuntimeDescriptor(model.serviceName(), descriptorMetadata);
+                    ctx.recordAwaitRuntimeDescriptor(model, descriptorMetadata);
                     roleMetadataGenerator.recordClassWithRole(awaitClientClassName, clientRole.name());
                 }
                 case QUERY_CLIENT_STEP -> {

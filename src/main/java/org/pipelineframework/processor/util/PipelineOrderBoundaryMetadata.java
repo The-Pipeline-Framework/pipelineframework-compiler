@@ -74,13 +74,13 @@ final class PipelineOrderBoundaryMetadata {
             if (model.enabledTargets().contains(GenerationTarget.DEFERRED_COMPLETION_STEP)) {
                 if (!put(boundaries, ClientStepClassNames.operationClassName(model, ctx.getTransportMode()), input, output))
                     return Optional.empty();
-                var descriptor = ctx.awaitRuntimeDescriptor(model.serviceName());
+                var descriptor = ctx.awaitRuntimeDescriptor(model);
                 if (descriptor.isEmpty()) return Optional.empty();
-                input = (String) descriptor.orElseThrow().get("canonicalInputTypeId");
-                output = (String) descriptor.orElseThrow().get("canonicalOutputTypeId");
+                input = output;
+                output = model.deferredCompletionSelection().orElseThrow().finalOutputCanonicalType();
             } else if (model.deferredCompletionSelection().isPresent()) {
                 // Callback Commands perform their operation and completion in one generated step.
-                var descriptor = ctx.awaitRuntimeDescriptor(model.serviceName());
+                var descriptor = ctx.awaitRuntimeDescriptor(model);
                 if (descriptor.isEmpty()) return Optional.empty();
                 input = (String) descriptor.orElseThrow().get("canonicalInputTypeId");
                 output = (String) descriptor.orElseThrow().get("canonicalOutputTypeId");

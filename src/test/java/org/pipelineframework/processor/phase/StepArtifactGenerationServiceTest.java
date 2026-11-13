@@ -102,13 +102,13 @@ class StepArtifactGenerationServiceTest {
                 java.time.Duration.ofMinutes(1), java.util.List.of(), "interactionId", "interaction-api", java.util.Map.of(),
                 java.util.Optional.of(ClassName.get("example", "Reply")), java.util.Optional.of(ClassName.get("example", "Projector"))))
             .build();
-        assertTrue(ctx.awaitRuntimeDescriptor("ReviewService").isEmpty());
+        assertTrue(ctx.awaitRuntimeDescriptor(model).isEmpty());
         service.generateArtifactsForModel(ctx, model, null, null, null,
             new java.util.HashSet<>(), Set.of(), null, null, new RoleMetadataGenerator(processingEnv),
             mock(GrpcServiceAdapterRenderer.class), mock(ClientStepRenderer.class), mock(LocalClientStepRenderer.class),
             mock(RestClientStepRenderer.class), mock(RestResourceRenderer.class), mock(RestFunctionHandlerRenderer.class),
             mock(BlockingReactiveBridgeRenderer.class), mock(RemoteOperatorAdapterRenderer.class));
-        var facts = ctx.awaitRuntimeDescriptor("ReviewService").orElseThrow();
+        var facts = ctx.awaitRuntimeDescriptor(model).orElseThrow();
         assertEquals("example.Pending", facts.get("inputTypeId"));
         assertEquals("PendingAlias", facts.get("canonicalInputTypeId"));
         assertEquals("ResultAlias", facts.get("canonicalOutputTypeId"));
@@ -117,11 +117,11 @@ class StepArtifactGenerationServiceTest {
         assertEquals("example.Projector", facts.get("completionProjectorId"));
         assertEquals(true, facts.get("requestAwareCompletion"));
         var other = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());
-        assertTrue(other.awaitRuntimeDescriptor("ReviewService").isEmpty());
-        assertDoesNotThrow(() -> ctx.recordAwaitRuntimeDescriptor("ReviewService", facts));
+        assertTrue(other.awaitRuntimeDescriptor(model).isEmpty());
+        assertDoesNotThrow(() -> ctx.recordAwaitRuntimeDescriptor(model, facts));
         assertThrows(UnsupportedOperationException.class, () -> facts.put("stepId", "foreign"));
         assertThrows(IllegalStateException.class,
-            () -> ctx.recordAwaitRuntimeDescriptor("ReviewService", java.util.Map.of("stepId", "foreign")));
+            () -> ctx.recordAwaitRuntimeDescriptor(model, java.util.Map.of("stepId", "foreign")));
     }
 
     @Test

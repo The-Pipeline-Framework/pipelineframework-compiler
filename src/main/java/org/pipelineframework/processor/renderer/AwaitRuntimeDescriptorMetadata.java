@@ -18,7 +18,6 @@ final class AwaitRuntimeDescriptorMetadata {
         value.put("canonicalOutputTypeId", completion.branchSelection().map(branch -> branch.completionCanonicalType())
             .orElse(completion.finalOutputCanonicalType()));
         value.put("acknowledgementAwareCommandCompletion", false);
-        value.put("transportConfig", immutableConfigValue(completion.transportConfig()));
         return java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(value));
     }
 
@@ -47,24 +46,11 @@ final class AwaitRuntimeDescriptorMetadata {
         return java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(value));
     }
 
-    private static Object immutableConfigValue(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            Map<String, Object> sorted = new java.util.TreeMap<>();
-            map.forEach((key, nested) -> sorted.put(java.util.Objects.toString(key), immutableConfigValue(nested)));
-            return java.util.Collections.unmodifiableMap(sorted);
-        }
-        if (value instanceof java.util.List<?> list) {
-            return list.stream().map(AwaitRuntimeDescriptorMetadata::immutableConfigValue).toList();
-        }
-        return value;
-    }
-
     private static Map<String, Object> base(PipelineStepModel model, TypeName input, TypeName output,
                                            TypeName transportInput, TypeName transportOutput) {
         var completion = model.deferredCompletionSelection().orElseThrow();
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("schemaVersion", 1);
-        value.put("transportConfig", Map.of());
         value.put("stepId", model.serviceName());
         value.put("inputTypeId", input.toString());
         value.put("outputTypeId", output.toString());

@@ -621,7 +621,7 @@ class LocalOrdinaryAwaitLoweringTest {
                 ctx.getProcessingEnv(), generated, model.deploymentRole(), java.util.Set.of(), null, null,
                 org.pipelineframework.processor.ir.PipelineTransport.LOCAL, "proof", null, false,
                 java.util.Optional.of(ctx.getPipelineTemplateConfig().typeModel()));
-            ctx.recordAwaitRuntimeDescriptor(model.serviceName(),
+            ctx.recordAwaitRuntimeDescriptor(model,
                 new org.pipelineframework.processor.renderer.DeferredCompletionStepRenderer()
                     .renderWithDescriptorMetadata(model, rendering, null));
         }

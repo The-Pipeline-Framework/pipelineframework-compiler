@@ -289,7 +289,7 @@ class PipelineContractMetadataGeneratorTest {
     }
 
     @Test
-    void renderedTransportConfigurationMatchesThePinnedFingerprintWithoutResolvingReferences() throws Exception {
+    void compiledContractRetainsFingerprintWithoutPublishingTransportConfiguration() throws Exception {
         Path output = tempDir.resolve("rendered-config");
         var env = processingEnv(output, Map.of());
         var ctx = new PipelineCompilationContext(env, org.pipelineframework.processor.Jsr269SourceInventory.empty());
@@ -303,22 +303,14 @@ class PipelineContractMetadataGeneratorTest {
             Set.of(), null, null, PipelineTransport.LOCAL, "org.example", null, false);
         var facts = new org.pipelineframework.processor.renderer.DeferredCompletionStepRenderer()
             .renderWithDescriptorMetadata(model, rendering, null);
-        assertEquals(config, facts.get("transportConfig"));
-        nested.put("later", "must not mutate captured configuration");
-        @SuppressWarnings("unchecked") var captured = (Map<String, Object>) facts.get("transportConfig");
-        assertFalse(((Map<?, ?>) captured.get("headers")).containsKey("later"));
-        assertThrows(UnsupportedOperationException.class, () -> captured.put("endpoint", "changed"));
-        nested.remove("later");
+        assertFalse(facts.containsKey("transportConfig"));
         ctx.setStepModels(List.of(model));
-        ctx.recordAwaitRuntimeDescriptor(model.serviceName(), facts);
+        ctx.recordAwaitRuntimeDescriptor(model, facts);
         new PipelineContractMetadataGenerator(env).writePipelineContract(ctx);
         var completion = readContract(output).getAsJsonArray("steps").get(0).getAsJsonObject().getAsJsonObject("deferredCompletion");
-        var emitted = completion.getAsJsonObject("runtimeDescriptor").getAsJsonObject("transportConfig");
-        assertEquals("${UNRESOLVED_ENDPOINT}", emitted.get("endpoint").getAsString());
-        var canonical = new com.google.gson.GsonBuilder().disableHtmlEscaping().create().toJson(emitted);
-        var digest = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
-            .digest(canonical.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-        assertEquals(completion.get("transportConfigFingerprint").getAsString(), digest);
+        assertFalse(completion.getAsJsonObject("runtimeDescriptor").has("transportConfig"));
+        assertFalse(completion.toString().contains("UNRESOLVED_ENDPOINT"));
+        assertTrue(completion.get("transportConfigFingerprint").getAsString().matches("[0-9a-f]{64}"));
     }
 
     @Test
@@ -367,7 +359,7 @@ class PipelineContractMetadataGeneratorTest {
             var facts = new org.pipelineframework.processor.renderer.CommandClientStepRenderer()
                 .renderWithDescriptorMetadata(renderedModel, rendering);
             context.setStepModels(List.of(renderedModel));
-            context.recordAwaitRuntimeDescriptor(renderedModel.serviceName(), facts);
+            context.recordAwaitRuntimeDescriptor(renderedModel, facts);
             new PipelineContractMetadataGenerator(processing).writePipelineContract(context);
             var contract = readContract(output);
             var node = contract.getAsJsonArray("steps").get(0).getAsJsonObject().getAsJsonObject("deferredCompletion");
