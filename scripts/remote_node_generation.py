@@ -1,4 +1,4 @@
-"""Retrieve verified Node generation output using only Python, Git and GitHub CLI."""
+"""Retrieve verified native binding generation using only Python, Git and GitHub CLI."""
 
 import argparse
 import hashlib
@@ -21,7 +21,8 @@ WORKFLOW_PATH = f".github/workflows/{WORKFLOW}"
 PROFILE = "tpf-polyglot-unary-policy/1"
 RECEIPT = "generation-receipt.json"
 DIAGNOSTICS = "diagnostics.txt"
-GENERATED_FILES = ("application.ts", "models.ts", "projection.json")
+TARGETS = json.loads(Path(__file__).with_name("native-generation-targets.json").read_bytes())
+GENERATED_FILES = tuple(TARGETS["node"]["files"])
 INPUT_NAMES = ("pipeline.yaml", "native-bindings.json")
 LIMIT = 8 * 1024 * 1024
 
@@ -220,10 +221,13 @@ def read_regular_file(path):
     return content
 
 
-def verify_download(directory, source, compiler_sha, run_id, conclusion):
+def verify_download(directory, source, compiler_sha, run_id, conclusion, target="node"):
+    require(target in TARGETS, "Unsupported generation target.")
+    binding = TARGETS[target]
     require(stat.S_ISDIR(directory.lstat().st_mode), "Expected a regular artifact directory.")
     receipt_bytes = read_regular_file(directory / RECEIPT)
     receipt = json_object(receipt_bytes, RECEIPT)
+    require(receipt.get("target", "node") == target, "Generation receipt does not match the requested target.")
     compiler = record(receipt.get("compiler"))
     run = record(receipt.get("run"))
     require(json_number_one(receipt.get("schemaVersion"))
@@ -241,7 +245,7 @@ def verify_download(directory, source, compiler_sha, run_id, conclusion):
         require(all(received_source.get(key) == source[key] for key in ("repository", "sha", "project"))
                 and ("inputs" not in received_source or received_source["inputs"] == source["inputs"]),
                 "Failed generation receipt does not match the requested source revision.")
-    expected = (*GENERATED_FILES, DIAGNOSTICS) if success else (DIAGNOSTICS,)
+    expected = (*binding["files"], DIAGNOSTICS) if success else (DIAGNOSTICS,)
     checksums = record(receipt.get("files"))
     require({path.name for path in directory.iterdir()} == {*expected, RECEIPT} and set(checksums) == set(expected),
             "Generation artifact contains an unexpected set of files.")
@@ -254,7 +258,7 @@ def verify_download(directory, source, compiler_sha, run_id, conclusion):
         projection = json_object(files["projection.json"], "projection.json")
         provenance = record(projection.get("provenance"))
         require(json_number_one(projection.get("schemaVersion"))
-                and projection.get("profile") == PROFILE and projection.get("kind") == "compiler-node-local"
+                and projection.get("profile") == PROFILE and projection.get("kind") == binding["kind"]
                 and provenance.get("dslSha256") == source["inputs"][0]["sha256"]
                 and provenance.get("bindingsSha256") == source["inputs"][1]["sha256"],
                 "Compiler projection does not match the requested profile or committed inputs.")
@@ -266,7 +270,8 @@ def require_new_output(output):
 
 
 def generate_remote(repository, ref, source_sha, compiler_sha, output_arg, project=".", *,
-                    cwd=None, api=gh_api, watch=watch_run, download=download_run):
+                    cwd=None, api=gh_api, watch=watch_run, download=download_run, target="node"):
+    require(isinstance(target, str) and target in TARGETS, "Unsupported generation target.")
     # Fail before Git/network work: secure artifact reads require POSIX open flags.
     require(os.name == "posix" and all(hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_NONBLOCK")),
             "The Python client requires POSIX O_NOFOLLOW/O_NONBLOCK support; native Windows is unsupported.")
@@ -288,7 +293,8 @@ def generate_remote(repository, ref, source_sha, compiler_sha, output_arg, proje
     try:
         dispatch = api(f"{endpoint}/actions/workflows/{WORKFLOW}/dispatches", {
             "ref": ref, "return_run_details": True,
-            "inputs": {"source_sha": source_sha, "compiler_sha": compiler_sha, "project": project},
+            "inputs": {"source_sha": source_sha, "compiler_sha": compiler_sha, "project": project,
+                       **({"target": target} if target != "node" else {})},
         })
         run_id = str(dispatch.get("workflow_run_id"))
         require(matches(r"[0-9]+", run_id), "GitHub did not return the dispatched run ID.")
@@ -307,7 +313,7 @@ def generate_remote(repository, ref, source_sha, compiler_sha, output_arg, proje
             download(repository, run_id, unpacked)
         except GenerationError as error:
             raise GenerationError(f"Could not retrieve the generation artifact. Inspect {run_url}. {error}") from None
-        files = verify_download(unpacked, source, compiler_sha, run_id, run["conclusion"])
+        files = verify_download(unpacked, source, compiler_sha, run_id, run["conclusion"], target)
         latest = api(run_endpoint)
         verify_run(latest, source, compiler_sha, run_id)
         require(latest["conclusion"] == run["conclusion"], "The generation run conclusion changed during download.")
@@ -334,12 +340,14 @@ def main():
     parser.add_argument("compiler_sha")
     parser.add_argument("output", metavar="NEW_OUTPUT_DIR")
     parser.add_argument("project", nargs="?", default=".", metavar="PROJECT_DIR")
+    parser.add_argument("--target", choices=tuple(TARGETS), default="node",
+                        help="explicit compiler output target (default: node)")
     args = parser.parse_args()
     try:
         version = re.match(rb"gh version (\d+)\.(\d+)", checked(["gh", "--version"]))
         require(version and tuple(map(int, version.groups())) >= (2, 100),
                 "Install GitHub CLI 2.100 or newer and sign in with gh auth login.")
-        output = generate_remote(args.repository, args.ref, args.source_sha, args.compiler_sha, args.output, args.project)
+        output = generate_remote(args.repository, args.ref, args.source_sha, args.compiler_sha, args.output, args.project, target=args.target)
         print(safe_text(f"Verified generated bindings in {output}"))
         return 0
     except (GenerationError, OSError) as error:

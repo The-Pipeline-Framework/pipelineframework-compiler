@@ -1,0 +1,12 @@
+{
+  "node": {
+    "compilerClass": "org.pipelineframework.compiler.node.NodeLocalCompiler",
+    "kind": "compiler-node-local",
+    "files": ["application.ts", "models.ts", "projection.json"]
+  },
+  "python": {
+    "compilerClass": "org.pipelineframework.compiler.python.PythonLocalCompiler",
+    "kind": "compiler-python-local",
+    "files": ["application.py", "models.py", "projection.json"]
+  }
+}

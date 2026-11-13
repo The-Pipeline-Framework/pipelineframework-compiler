@@ -1,4 +1,4 @@
-name: TPF Node generation
+name: TPF native binding generation
 
 on:
   workflow_call:
@@ -9,6 +9,9 @@ on:
       compiler_sha:
         type: string
         required: true
+      target:
+        type: string
+        default: node
       project:
         type: string
         required: true
@@ -25,6 +28,7 @@ jobs:
       TPF_SOURCE_SHA: ${{ inputs.source_sha }}
       TPF_COMPILER_SHA: ${{ inputs.compiler_sha }}
       TPF_PROJECT: ${{ inputs.project }}
+      TPF_BINDING_TARGET: ${{ inputs.target }}
     steps:
       - name: Validate requested revisions
         run: |
