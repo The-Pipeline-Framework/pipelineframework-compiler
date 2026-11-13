@@ -621,7 +621,7 @@ public class PipelineContractMetadataGenerator {
                     .filter(order -> order.definitionId().equals(model.definition().logicalId()))
                     .filter(order -> runtimeStep != null && order.order().contains(runtimeStep))
                     .map(order -> Map.<String, Object>of("definitionId", order.definitionId(),
-                        "callsiteId", order.callsiteId(), "stepIndex", order.order().indexOf(runtimeStep))).distinct().toList();
+                        "callsiteId", order.callsiteId(), "invocationClass", order.invocationClass(), "stepIndex", order.order().indexOf(runtimeStep))).distinct().toList();
                 if (!positions.isEmpty()) facts.put("positions", positions);
             }
             value.put("runtimeStepId", model.serviceName());

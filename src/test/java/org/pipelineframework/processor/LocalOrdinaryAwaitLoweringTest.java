@@ -317,6 +317,7 @@ class LocalOrdinaryAwaitLoweringTest {
                 new LocalPipelineInvocationRenderer().render(ctx, generated);
                 recordAwaitDescriptors(ctx, generated);
                 new PipelineOrderMetadataGenerator(ctx.getProcessingEnv()).writeOrderMetadata(ctx);
+                new org.pipelineframework.processor.util.PipelineContractMetadataGenerator(ctx.getProcessingEnv()).writePipelineContract(ctx);
             }
         });
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
@@ -352,6 +353,21 @@ class LocalOrdinaryAwaitLoweringTest {
                 assertTrue(linkedSource.contains(className.substring(className.lastIndexOf('.') + 1) + " child" + child), linkedSource);
             }
         }
+        var compiledContract = JsonParser.parseString(
+            Files.readString(directory.resolve("classes/META-INF/pipeline/pipeline-contract.json"))).getAsJsonObject();
+        var compiledPositions = compiledContract.getAsJsonArray("steps").asList().stream()
+            .map(value -> value.getAsJsonObject().getAsJsonObject("deferredCompletion"))
+            .filter(java.util.Objects::nonNull)
+            .map(value -> value.getAsJsonObject("runtimeDescriptor"))
+            .filter(java.util.Objects::nonNull)
+            .filter(value -> value.has("positions"))
+            .flatMap(value -> value.getAsJsonArray("positions").asList().stream())
+            .map(value -> value.getAsJsonObject())
+            .filter(value -> value.has("invocationClass"))
+            .map(value -> value.get("invocationClass").getAsString())
+            .collect(java.util.stream.Collectors.toSet());
+        assertEquals(leafClasses, compiledPositions);
+
     }
 
     @ParameterizedTest
