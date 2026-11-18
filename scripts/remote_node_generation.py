@@ -167,7 +167,7 @@ def committed_source(cwd, repository, sha, project):
     return {"repository": repository.lower(), "sha": sha, "project": project, "inputs": inputs}
 
 
-def verify_run(run, source, compiler_sha, run_id):
+def verify_run(run, source, compiler_sha, run_id, *, completed=True):
     repository = record(run.get("head_repository")).get("full_name")
     path = run.get("path")
     require(
@@ -179,15 +179,17 @@ def verify_run(run, source, compiler_sha, run_id):
     )
     require(json_number_one(run.get("run_attempt")),
             "This run was retried. Dispatch a new generation.")
-    require(run.get("status") == "completed", "The generation run has not completed.")
+    if completed:
+        require(run.get("status") == "completed", "The generation run has not completed.")
     pinned = f"{COMPILER_REPOSITORY}/{WORKFLOW_PATH}@{compiler_sha}"
     references = run.get("referenced_workflows")
     require(isinstance(references, list) and any(
         record(reference).get("path") == pinned and record(reference).get("sha") == compiler_sha
         for reference in references
     ), "The run did not use the requested compiler workflow revision.")
-    require(isinstance(run.get("conclusion"), str) and run["conclusion"],
-            "The completed generation run has no conclusion.")
+    if completed:
+        require(isinstance(run.get("conclusion"), str) and run["conclusion"],
+                "The completed generation run has no conclusion.")
 
 
 def verify_compiler(compiler):
@@ -270,8 +272,9 @@ def require_new_output(output):
 
 
 def generate_remote(repository, ref, source_sha, compiler_sha, output_arg, project=".", *,
-                    cwd=None, api=gh_api, watch=watch_run, download=download_run, target="node"):
+                    cwd=None, api=gh_api, watch=watch_run, download=download_run, target="node", run_id=None):
     require(isinstance(target, str) and target in TARGETS, "Unsupported generation target.")
+    require(run_id is None or matches(r"[1-9][0-9]*", run_id), "Provide a positive decimal --run-id.")
     # Fail before Git/network work: secure artifact reads require POSIX open flags.
     require(os.name == "posix" and all(hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_NONBLOCK")),
             "The Python client requires POSIX O_NOFOLLOW/O_NONBLOCK support; native Windows is unsupported.")
@@ -288,21 +291,29 @@ def generate_remote(repository, ref, source_sha, compiler_sha, output_arg, proje
     require(output.parent.is_dir(), "The output parent directory must exist.")
     source = committed_source(cwd, repository, source_sha, project)
     endpoint = f"repos/{repository}"
-    remote = api(f"{endpoint}/commits/{quote(ref, safe='')}")
-    require(remote.get("sha") == source_sha, "Push the committed revision and use a ref pointing to its exact SHA.")
-    try:
-        dispatch = api(f"{endpoint}/actions/workflows/{WORKFLOW}/dispatches", {
-            "ref": ref, "return_run_details": True,
-            "inputs": {"source_sha": source_sha, "compiler_sha": compiler_sha, "project": project,
-                       **({"target": target} if target != "node" else {})},
-        })
-        run_id = str(dispatch.get("workflow_run_id"))
-        require(matches(r"[0-9]+", run_id), "GitHub did not return the dispatched run ID.")
-    except GenerationError as error:
-        raise GenerationError(f"{error} Check Actions before dispatching again.") from None
+    resuming = run_id is not None
+    # Recovery never resolves the mutable ref or dispatches another workflow.
+    if run_id is None:
+        remote = api(f"{endpoint}/commits/{quote(ref, safe='')}")
+        require(remote.get("sha") == source_sha, "Push the committed revision and use a ref pointing to its exact SHA.")
+        try:
+            dispatch = api(f"{endpoint}/actions/workflows/{WORKFLOW}/dispatches", {
+                "ref": ref, "return_run_details": True,
+                "inputs": {"source_sha": source_sha, "compiler_sha": compiler_sha, "project": project,
+                           **({"target": target} if target != "node" else {})},
+            })
+            run_id = str(dispatch.get("workflow_run_id"))
+            require(matches(r"[0-9]+", run_id), "GitHub did not return the dispatched run ID.")
+        except GenerationError as error:
+            raise GenerationError(f"{error} Check Actions before dispatching again.") from None
     run_endpoint = f"{endpoint}/actions/runs/{run_id}"
     run_url = f"https://github.com/{repository}/actions/runs/{run_id}"
     print(f"Generation run {run_url}", flush=True)
+    print(f"To resume without dispatching, repeat this command with --run-id {run_id} and the same source/compiler/project/target.", flush=True)
+    if resuming:
+        # Check identity before waiting too; completion and artifact checks below
+        # still run even if the first read already reports success.
+        verify_run(api(run_endpoint), source, compiler_sha, run_id, completed=False)
     watch(repository, run_id)
     run = api(run_endpoint)
     verify_run(run, source, compiler_sha, run_id)
@@ -342,19 +353,20 @@ def main():
     parser.add_argument("project", nargs="?", default=".", metavar="PROJECT_DIR")
     parser.add_argument("--target", choices=tuple(TARGETS), default="node",
                         help="explicit compiler output target (default: node)")
+    parser.add_argument("--run-id", help="resume verification/retrieval of an existing run; never dispatch")
     args = parser.parse_args()
     try:
         version = re.match(rb"gh version (\d+)\.(\d+)", checked(["gh", "--version"]))
         require(version and tuple(map(int, version.groups())) >= (2, 100),
                 "Install GitHub CLI 2.100 or newer and sign in with gh auth login.")
-        output = generate_remote(args.repository, args.ref, args.source_sha, args.compiler_sha, args.output, args.project, target=args.target)
+        output = generate_remote(args.repository, args.ref, args.source_sha, args.compiler_sha, args.output, args.project, target=args.target, run_id=args.run_id)
         print(safe_text(f"Verified generated bindings in {output}"))
         return 0
     except (GenerationError, OSError) as error:
         print(safe_text(str(error)), file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("Interrupted. Check Actions before dispatching again.", file=sys.stderr)
+        print("Interrupted. Resume the printed run with --run-id; check Actions before dispatching again.", file=sys.stderr)
         return 130
 
 
