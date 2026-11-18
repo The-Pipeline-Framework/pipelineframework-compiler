@@ -53,6 +53,8 @@ function verifyDownload(download, source, compilerSha, id, conclusion) {
   requireCondition(lstatSync(download).isDirectory(), 'Expected a regular artifact directory.');
   const receiptBytes = readRegularFile(join(download, receiptFile));
   const receipt = JSON.parse(receiptBytes);
+  requireCondition(!Object.hasOwn(receipt, 'target') || receipt.target === 'node',
+    'Generation receipt does not match the requested target.');
   requireCondition(receipt.schemaVersion === 1 && receipt.profile === profile &&
     receipt.run?.id === id && receipt.run.attempt === '1' &&
     receipt.compiler?.repository === compilerRepository && receipt.compiler?.sha === compilerSha,
