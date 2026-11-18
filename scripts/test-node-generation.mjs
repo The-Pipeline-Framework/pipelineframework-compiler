@@ -349,3 +349,47 @@ for (const statusLine of ['HTTP/2.0 503 Service Unavailable', '']) {
     assert.equal(reads, 1);
   });
 }
+
+async function testSharedRetrievalCases(t) {
+  const vectors = JSON.parse(readFileSync(new URL('./node-generation-client-cases.json', import.meta.url)));
+  for (const { name, change, error } of vectors.cases) {
+    await t.test(name, t => {
+      const { args, files, mock, output, receipt, run } = fixture(t);
+      files['application.ts'] = vectors.application;
+      files['models.ts'] = vectors.models;
+      for (const file of generatedFiles) receipt.files[file] = sha256(files[file]);
+      if (change) {
+        const [target, path, value] = change;
+        if (target === 'file') files[path] = value;
+        else {
+          const projection = JSON.parse(files['projection.json']);
+          const latest = structuredClone(run);
+          const root = { receipt, run, projection, latest }[target];
+          const keys = path.split('.');
+          const leaf = keys.pop();
+          keys.reduce((object, key) => object[key], root)[leaf] = value;
+          if (target === 'projection') {
+            files['projection.json'] = JSON.stringify(projection);
+            receipt.files['projection.json'] = sha256(files['projection.json']);
+          }
+          if (target === 'latest') {
+            const api = mock.api;
+            let reads = 0;
+            mock.api = (path, body) => path.endsWith(`/runs/${runId}`) && ++reads === 2 ? latest : api(path, body);
+          }
+        }
+      }
+      if (error) {
+        assert.throws(() => generateRemote(args, mock), { message: new RegExp(error) });
+        absent(output);
+      } else {
+        assert.equal(generateRemote(args, mock), output);
+        for (const [name, bytes] of Object.entries(files)) {
+          assert.deepEqual(readFileSync(join(output, name)), Buffer.from(bytes));
+        }
+      }
+    });
+  }
+}
+
+test('accepts and rejects the shared Node/Python retrieval cases', testSharedRetrievalCases);
