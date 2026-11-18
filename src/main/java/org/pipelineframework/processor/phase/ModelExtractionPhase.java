@@ -178,6 +178,7 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
                 .inputMapping(withCanonicalIdentity(stepModel.inputMapping(), authoredCanonicalType(ctx, definition, stepDef, true)))
                 .outputMapping(withCanonicalIdentity(stepModel.outputMapping(), authoredCanonicalType(ctx, definition, stepDef, false)))
                 .build();
+            ctx.recordAwaitDescriptorOrigin(stepModel, stepDef);
             stepModels.add(stepModel);
         }
 
