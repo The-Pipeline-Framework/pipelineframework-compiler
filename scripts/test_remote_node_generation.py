@@ -407,10 +407,6 @@ class RemoteGenerationTest(unittest.TestCase):
         self.assertEqual((fixture.output / "models.ts").read_bytes(), fixture.files["models.ts"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class PlatformPreflight(unittest.TestCase):
     def test_unsupported_platform_fails_before_git_or_dispatch(self):
         for operating_system in (SimpleNamespace(name="nt"), SimpleNamespace(name="posix")):
@@ -421,3 +417,7 @@ class PlatformPreflight(unittest.TestCase):
                         client.generate_remote(REPOSITORY, REF, "a" * 40, COMPILER_SHA, "output", api=api)
                 checked.assert_not_called()
                 api.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()
