@@ -188,9 +188,6 @@ public class PipelineDiscoveryPhase implements PipelineCompilationPhase {
                     effectiveConfigPath, diagnostics, imported.definitions().stream()
                         .map(org.pipelineframework.processor.block.ImportedPipelineDefinition::qualifiedId)
                         .collect(java.util.stream.Collectors.toUnmodifiableSet()));
-                if (templateConfig != null) {
-                    new org.pipelineframework.processor.awaitable.NestedAwaitValidator().validate(templateConfig, parsedDefinitions);
-                }
                 ctx.setParsedPipelineDefinitionCatalog(parsedDefinitions);
                 ctx.setStepDefinitions(parsedDefinitions.rootSteps());
                 validateCheckpointBoundaries(templateConfig, ctx, diagnostics);

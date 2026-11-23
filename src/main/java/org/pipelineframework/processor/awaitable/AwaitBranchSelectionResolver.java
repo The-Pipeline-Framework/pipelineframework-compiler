@@ -23,7 +23,8 @@ final class AwaitBranchSelectionResolver {
         StepDefinition step) {
         try {
             var completion = step.deferredCompletion().orElseThrow();
-            if (ctx.getTransportMode() != PipelineTransport.LOCAL || completion.callback().isPresent()) {
+            boolean localInSegment = org.pipelineframework.processor.mapping.PipelinePlacementResolver.isModuleColocated(ctx);
+            if (!localInSegment || completion.callback().isPresent()) {
                 throw new IllegalArgumentException("selected Await requires LOCAL post-operation transport completion");
             }
             var template = definitionSteps.stream().filter(value -> value.name().equals(step.name()))

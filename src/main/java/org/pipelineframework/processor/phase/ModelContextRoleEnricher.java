@@ -28,7 +28,7 @@ class ModelContextRoleEnricher {
         if (isRuntimeMappedStepModule(ctx, hasOrchestrator)) {
             return handleRuntimeMappedStepModule(baseModels);
         }
-        boolean colocatedPlugins = ctx.isTransportModeLocal() || isMonolithLayout(ctx);
+        boolean colocatedPlugins = org.pipelineframework.processor.mapping.PipelinePlacementResolver.hasColocatedSynthetics(ctx);
         boolean hasConfiguredColocatedAspect = colocatedPlugins
             && ctx.getAspectModels().stream().anyMatch(this::hasPluginImplementation);
         if (!ctx.isPluginHost() && !hasOrchestrator && !hasConfiguredColocatedAspect) {
@@ -77,7 +77,7 @@ class ModelContextRoleEnricher {
         List<PipelineStepModel> clientModels = expanded.stream()
             .map(model -> withDeploymentRole(model, DeploymentRole.ORCHESTRATOR_CLIENT))
             .toList();
-        List<PipelineStepModel> serverModels = isMonolithLayout(ctx)
+        List<PipelineStepModel> serverModels = isMonolithLayout(ctx) && !ctx.isPlatformModeFunction()
             ? expanded.stream()
                 .filter(this::isMonolithServerCandidate)
                 .map(model -> withDeploymentRole(model, DeploymentRole.PIPELINE_SERVER))

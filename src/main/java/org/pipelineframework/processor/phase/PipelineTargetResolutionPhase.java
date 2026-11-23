@@ -78,16 +78,19 @@ public class PipelineTargetResolutionPhase implements PipelineCompilationPhase {
         // Apply transport targets and resolve client/server roles for each step model
         List<PipelineStepModel> updatedModels = new ArrayList<>();
         for (PipelineStepModel model : ctx.getStepModels()) {
-            Set<GenerationTarget> targets = resolveTargetsForModel(ctx, model, transportMode, springRestEntrypoint);
+            PipelineTransport stepTransport = ctx.getPlacementModel().isStepLocalInSegment(model)
+                ? PipelineTransport.LOCAL
+                : transportMode;
+            Set<GenerationTarget> targets = resolveTargetsForModel(ctx, model, stepTransport, springRestEntrypoint);
             if (model.deferredCompletionSelection().filter(completion -> completion.callback().isEmpty()).isPresent()) {
                 LinkedHashSet<GenerationTarget> decoratedTargets = new LinkedHashSet<>(targets);
                 if (!targets.contains(GenerationTarget.COMMAND_CLIENT_STEP)) {
-                    decoratedTargets.add(operationClientTarget(transportMode));
+                    decoratedTargets.add(operationClientTarget(stepTransport));
                 }
                 decoratedTargets.add(GenerationTarget.DEFERRED_COMPLETION_STEP);
                 targets = Collections.unmodifiableSet(decoratedTargets);
             }
-            if (transportMode == PipelineTransport.LOCAL
+            if (stepTransport == PipelineTransport.LOCAL
                 && localDefinitionServices.contains(serviceIdentity(model))
                 && usesOrdinaryLocalClient(targets)) {
                 LinkedHashSet<GenerationTarget> childTargets = new LinkedHashSet<>(targets);

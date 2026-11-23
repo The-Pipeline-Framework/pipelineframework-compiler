@@ -6,6 +6,7 @@ import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.PipelineCompilationPhase;
 import org.pipelineframework.processor.ir.DeploymentRole;
 import org.pipelineframework.processor.ir.PipelineStepModel;
+import org.pipelineframework.processor.mapping.PipelinePlacementResolver;
 import org.pipelineframework.processor.mapping.PipelineRuntimeMapping;
 import org.pipelineframework.processor.mapping.PipelineRuntimeMappingResolution;
 import org.pipelineframework.processor.mapping.PipelineRuntimeMappingResolver;
@@ -54,6 +55,7 @@ public class PipelineRuntimeMappingPhase implements PipelineCompilationPhase {
     public void execute(PipelineCompilationContext ctx) throws Exception {
         PipelineRuntimeMapping mapping = ctx.getRuntimeMapping();
         if (mapping == null) {
+            ctx.setPlacementModel(new PipelinePlacementResolver().resolve(ctx));
             return;
         }
 
@@ -71,6 +73,7 @@ public class PipelineRuntimeMappingPhase implements PipelineCompilationPhase {
                 ctx.getCompilerDiagnostics().warning(
                     "pipeline.module not provided; runtime mapping is ignored for this module");
             }
+            ctx.setPlacementModel(new PipelinePlacementResolver().resolve(ctx));
             return;
         }
 
@@ -84,6 +87,7 @@ public class PipelineRuntimeMappingPhase implements PipelineCompilationPhase {
                 moduleName, originalCount, filtered.size());
         }
         ctx.setStepModels(filtered);
+        ctx.setPlacementModel(new PipelinePlacementResolver().resolve(ctx));
     }
 
     /**

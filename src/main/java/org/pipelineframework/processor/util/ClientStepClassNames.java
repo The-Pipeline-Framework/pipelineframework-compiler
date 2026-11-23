@@ -11,16 +11,18 @@ public final class ClientStepClassNames {
     }
 
     public static String className(PipelineStepModel model, PipelineTransport transportMode) {
+        PipelineTransport effective = transportMode == null ? PipelineTransport.GRPC : transportMode;
         return model.servicePackage() + ".pipeline."
             + stripTrailingService(model.generatedName())
-            + suffix(model, transportMode.clientStepSuffix());
+            + suffix(model, effective.clientStepSuffix());
     }
 
     /** Runtime class for the operation before its optional completion decorator. */
     public static String operationClassName(PipelineStepModel model, PipelineTransport transport) {
+        PipelineTransport effective = transport == null ? PipelineTransport.GRPC : transport;
         String suffix = model.enabledTargets().contains(GenerationTarget.COMMAND_CLIENT_STEP) ? "CommandClientStep"
             : model.enabledTargets().contains(GenerationTarget.QUERY_CLIENT_STEP) ? "QueryClientStep"
-            : transport.clientStepSuffix();
+            : resolvedTransportSuffix(model, effective.clientStepSuffix());
         return model.servicePackage() + ".pipeline." + stripTrailingService(model.generatedName()) + suffix;
     }
 
@@ -36,6 +38,15 @@ public final class ClientStepClassNames {
         }
         if (model.enabledTargets().contains(GenerationTarget.DYNAMIC_OPERATION_CLIENT_STEP)) {
             return "DynamicOperationClientStep";
+        }
+        return resolvedTransportSuffix(model, defaultSuffix);
+    }
+
+    private static String resolvedTransportSuffix(PipelineStepModel model, String defaultSuffix) {
+        if (model.enabledTargets().contains(GenerationTarget.LOCAL_CLIENT_STEP)
+            && !model.enabledTargets().contains(GenerationTarget.REST_CLIENT_STEP)
+            && !model.enabledTargets().contains(GenerationTarget.CLIENT_STEP)) {
+            return "LocalClientStep";
         }
         return defaultSuffix;
     }
