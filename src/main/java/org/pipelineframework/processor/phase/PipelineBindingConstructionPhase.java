@@ -96,13 +96,14 @@ public class PipelineBindingConstructionPhase implements PipelineCompilationPhas
         bindingsMap.putAll(stepBindingConstructionService.buildBindings(ctx, descriptorSet));
         
         // Process orchestrator models if present
-        if (!ctx.getOrchestratorModels().isEmpty()) {
+        if (!ctx.getOrchestratorModels().isEmpty() || ctx.isOrchestratorGenerated()) {
             PipelineTemplateConfig config = ctx.getPipelineTemplateConfig();
             OrchestratorBinding orchestratorBinding = OrchestratorBindingBuilder.buildOrchestratorBinding(
                 config,
                 ctx.getSourceInventory().pipelineOrchestratorElements(),
                 ctx.getTransportMode() != null ? ctx.getTransportMode().name() : null,
-                ctx.getStepDefinitions()
+                ctx.getStepDefinitions(),
+                ctx.getResolvedPipelineDefinitionGraph()
             );
             if (orchestratorBinding != null) {
                 bindingsMap.put("orchestrator", orchestratorBinding);

@@ -165,7 +165,9 @@ public class ModelExtractionPhase implements PipelineCompilationPhase {
             if (stepModel == null) {
                 continue;
             }
-            if (ctx.isTransportModeLocal() && stepModel.connectorOperationSelection().isEmpty()
+            if ((ctx.isTransportModeLocal()
+                    || org.pipelineframework.processor.mapping.PipelinePlacementResolver.isModuleColocated(ctx))
+                    && stepModel.connectorOperationSelection().isEmpty()
                     && stepModel.dynamicOperationSelection().isEmpty()) {
                 String previous = localServiceOwners.putIfAbsent(stepModel.artifactBindingName(), stepDef.name());
                 if (previous != null && !previous.equals(stepDef.name())) {

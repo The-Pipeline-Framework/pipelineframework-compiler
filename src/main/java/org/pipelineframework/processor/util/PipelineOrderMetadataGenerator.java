@@ -123,9 +123,7 @@ public class PipelineOrderMetadataGenerator {
     }
 
     private String ordinaryOperationClientStepName(PipelineStepModel model, PipelineTransport transport) {
-        PipelineTransport effectiveTransport = transport == null ? PipelineTransport.GRPC : transport;
-        return model.servicePackage() + ".pipeline."
-            + stripTrailingService(model.generatedName()) + effectiveTransport.clientStepSuffix();
+        return ClientStepClassNames.operationClassName(model, transport == null ? PipelineTransport.GRPC : transport);
     }
 
     /**
@@ -146,6 +144,9 @@ public class PipelineOrderMetadataGenerator {
         }
         PipelineYamlConfig config = loadPipelineConfig(ctx);
         if (config != null) {
+            if (ctx.getPlacementModel().colocatedSynthetics()) {
+                config = config.withTransport("LOCAL");
+            }
             expanded = List.copyOf(PipelineOrderExpander.expand(
                 expanded, config, PipelineOrderMetadataGenerator.class.getClassLoader()));
         }
@@ -338,11 +339,14 @@ public class PipelineOrderMetadataGenerator {
                     + stripTrailingService(model.generatedName()) + "DynamicOperationClientStep");
                 continue;
             }
+            if (model.enabledTargets().contains(GenerationTarget.LOCAL_CLIENT_STEP)) {
+                generated.add(ClientStepClassNames.className(model, ctx.getTransportMode()));
+                continue;
+            }
             if (clientTarget != null && !model.enabledTargets().contains(clientTarget)) {
                 continue;
             }
-            generated.add(model.servicePackage() + ".pipeline."
-                + stripTrailingService(model.generatedName()) + suffix);
+            generated.add(ClientStepClassNames.className(model, ctx.getTransportMode()));
         }
         return generated;
     }
@@ -358,19 +362,7 @@ public class PipelineOrderMetadataGenerator {
     }
 
     private String specialClientSuffix(PipelineStepModel model, String defaultSuffix) {
-        if (model.enabledTargets().contains(GenerationTarget.DEFERRED_COMPLETION_STEP)) {
-            return "DeferredCompletionStep";
-        }
-        if (model.enabledTargets().contains(GenerationTarget.COMMAND_CLIENT_STEP)) {
-            return "CommandClientStep";
-        }
-        if (model.enabledTargets().contains(GenerationTarget.QUERY_CLIENT_STEP)) {
-            return "QueryClientStep";
-        }
-        if (model.enabledTargets().contains(GenerationTarget.DYNAMIC_OPERATION_CLIENT_STEP)) {
-            return "DynamicOperationClientStep";
-        }
-        return defaultSuffix;
+        return ClientStepClassNames.suffix(model, defaultSuffix);
     }
 
     private boolean isSideEffectClientStep(String className) {
