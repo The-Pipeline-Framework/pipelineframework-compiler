@@ -5,6 +5,9 @@ import java.io.OutputStream;
 import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +44,7 @@ import org.pipelineframework.config.template.PipelineTemplateTypeModel;
 import org.pipelineframework.config.template.PipelineTemplateTypeReference;
 import org.pipelineframework.config.template.PipelineTemplateWrapperConstraints;
 import org.pipelineframework.connector.ConnectorProviderId;
+import org.pipelineframework.orchestrator.release.PipelineContractDescriptor;
 import org.pipelineframework.processor.PipelineCompilationContext;
 import org.pipelineframework.processor.composition.PipelineDefinition;
 import org.pipelineframework.processor.composition.PipelineDefinitionLinker;
@@ -70,7 +74,7 @@ class PipelineContractMetadataGeneratorTest {
     Path tempDir;
 
     @Test
-    void writesDeterministicContractWithOrderedStepsAndAwaitTransport() throws IOException {
+    void writesDeterministicContractWithOrderedStepsAndAwaitTransport() throws IOException, NoSuchAlgorithmException {
         Path pipelineYaml = writePipelineYaml();
         Path firstOutput = tempDir.resolve("first");
         Path secondOutput = tempDir.resolve("second");
@@ -78,6 +82,10 @@ class PipelineContractMetadataGeneratorTest {
         writeMetadata(pipelineYaml, firstOutput);
         writeMetadata(pipelineYaml, secondOutput);
 
+        // Pin the ordinary Java output captured before native worker metadata was introduced.
+        byte[] contract = Files.readAllBytes(firstOutput.resolve(PipelineContractDescriptor.RESOURCE_PATH));
+        assertEquals("ec5aa31b4a6f12e26ccb110114eabfb1428a4716a65ca439ecdd1da185ea3bce",
+            HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(contract)));
         JsonObject first = readContract(firstOutput);
         JsonObject second = readContract(secondOutput);
         assertEquals(first.get("contractHash").getAsString(), second.get("contractHash").getAsString());
