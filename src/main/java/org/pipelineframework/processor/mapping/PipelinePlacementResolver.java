@@ -44,15 +44,33 @@ public final class PipelinePlacementResolver {
         PlatformMode platform = Objects.requireNonNullElse(ctx.getPlatformMode(), PlatformMode.COMPUTE);
         PipelineRuntimeMapping mapping = ctx.getRuntimeMapping();
         PipelineRuntimeMappingResolution resolution = ctx.getRuntimeMappingResolution();
+        boolean orchestratorModule = isOrchestratorModule(ctx);
         String currentModule = normalize(ctx.getModuleName());
         String currentRuntime = resolveCurrentRuntime(currentModule, mapping, resolution, transport);
 
         IdentityHashMap<PipelineStepModel, StepPlacement> stepPlacements = new IdentityHashMap<>();
         Map<String, List<StepPlacement>> stepsByDefinition = new LinkedHashMap<>();
 
-        for (PipelineStepModel model : ctx.getStepModels()) {
+        List<PipelineStepModel> allModels = new ArrayList<>();
+        IdentityHashMap<PipelineStepModel, Boolean> seen = new IdentityHashMap<>();
+        if (ctx.getStepModels() != null) {
+            for (PipelineStepModel model : ctx.getStepModels()) {
+                if (model != null && seen.putIfAbsent(model, Boolean.TRUE) == null) {
+                    allModels.add(model);
+                }
+            }
+        }
+        if (resolution != null && resolution.moduleAssignments() != null) {
+            for (PipelineStepModel model : resolution.moduleAssignments().keySet()) {
+                if (model != null && seen.putIfAbsent(model, Boolean.TRUE) == null) {
+                    allModels.add(model);
+                }
+            }
+        }
+
+        for (PipelineStepModel model : allModels) {
             StepPlacement placement = resolveStepPlacement(
-                model, transport, platform, mapping, resolution, currentModule, currentRuntime);
+                model, transport, platform, mapping, resolution, orchestratorModule, currentModule, currentRuntime);
             stepPlacements.put(model, placement);
             if (!model.sideEffect()) {
                 String defId = model.definition() == null ? "$root" : model.definition().logicalId();
@@ -64,9 +82,10 @@ public final class PipelinePlacementResolver {
         stepsByDefinition.forEach((defId, placements) ->
             definitionPlacements.put(defId, aggregateDefinitionPlacement(placements, currentModule, currentRuntime, transport)));
 
-        boolean colocatedSynthetics = isColocatedSynthetics(transport, mapping, resolution, currentModule, currentRuntime);
+        boolean colocatedLocalSynthetics = isColocatedLocalSynthetics(
+            transport, platform, mapping, resolution, orchestratorModule, currentModule, currentRuntime);
         return new PipelinePlacementModel(
-            stepPlacements, definitionPlacements, List.of(), currentModule, currentRuntime, colocatedSynthetics);
+            stepPlacements, definitionPlacements, List.of(), currentModule, currentRuntime, colocatedLocalSynthetics);
     }
 
     /** Enriches a base placement model with resolved locality for every linked invocation binding. */
@@ -106,6 +125,31 @@ public final class PipelinePlacementResolver {
     }
 
     /**
+     * Determines whether this compilation owns orchestrator generation (works in both early
+     * extraction phases and post-semantic-analysis phases).
+     */
+    public static boolean isOrchestratorModule(PipelineCompilationContext ctx) {
+        if (ctx == null) {
+            return false;
+        }
+        if (ctx.isOrchestratorGenerated()) {
+            return true;
+        }
+        if (ctx.getSourceInventory() != null
+            && ctx.getSourceInventory().pipelineOrchestratorElements() != null
+            && !ctx.getSourceInventory().pipelineOrchestratorElements().isEmpty()) {
+            return true;
+        }
+        if (ctx.getCompilerOptions() != null) {
+            String option = ctx.getCompilerOptions().asMap().get("pipeline.orchestrator.generate");
+            if (option != null && ("true".equalsIgnoreCase(option.trim()) || "1".equals(option.trim()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Quick check for early phases (before PipelineRuntimeMappingPhase) to determine whether
      * the compilation configuration admits colocated in-segment execution for the current module.
      */
@@ -115,6 +159,9 @@ public final class PipelinePlacementResolver {
         }
         if (ctx.isTransportModeLocal()) {
             return true;
+        }
+        if (!isOrchestratorModule(ctx)) {
+            return false;
         }
         PipelineRuntimeMapping mapping = ctx.getRuntimeMapping();
         if (mapping == null) {
@@ -135,13 +182,12 @@ public final class PipelinePlacementResolver {
             }
             String currentRuntime = resolveCurrentRuntime(currentModule, mapping, ctx.getRuntimeMappingResolution(),
                 Objects.requireNonNullElse(ctx.getTransportMode(), PipelineTransport.GRPC));
-            String defaultRuntime = normalize(mapping.defaults().runtime());
-            return !currentRuntime.isEmpty() && currentRuntime.equals(defaultRuntime);
+            return !currentRuntime.isEmpty();
         }
         return false;
     }
 
-    /** Checks whether synthetic side-effect steps are colocated in the current compilation module. */
+    /** Checks whether synthetic side-effect beans are colocated in the current compilation module. */
     public static boolean hasColocatedSynthetics(PipelineCompilationContext ctx) {
         if (ctx == null) {
             return false;
@@ -162,9 +208,24 @@ public final class PipelinePlacementResolver {
         }
         String currentRuntime = resolveCurrentRuntime(currentModule, mapping, ctx.getRuntimeMappingResolution(),
             Objects.requireNonNullElse(ctx.getTransportMode(), PipelineTransport.GRPC));
-        return isColocatedSynthetics(
+        return isColocatedSyntheticsInModule(
             Objects.requireNonNullElse(ctx.getTransportMode(), PipelineTransport.GRPC),
             mapping, ctx.getRuntimeMappingResolution(), currentModule, currentRuntime);
+    }
+
+    /** Checks whether synthetic side-effect steps execute via local in-segment client steps. */
+    public static boolean hasLocalInSegmentSynthetics(PipelineCompilationContext ctx) {
+        if (ctx == null) {
+            return false;
+        }
+        PipelineTransport transport = Objects.requireNonNullElse(ctx.getTransportMode(), PipelineTransport.GRPC);
+        PlatformMode platform = Objects.requireNonNullElse(ctx.getPlatformMode(), PlatformMode.COMPUTE);
+        PipelineRuntimeMapping mapping = ctx.getRuntimeMapping();
+        String currentModule = normalize(ctx.getModuleName());
+        String currentRuntime = resolveCurrentRuntime(currentModule, mapping, ctx.getRuntimeMappingResolution(), transport);
+        return isColocatedLocalSynthetics(
+            transport, platform, mapping, ctx.getRuntimeMappingResolution(),
+            isOrchestratorModule(ctx), currentModule, currentRuntime);
     }
 
     private StepPlacement resolveStepPlacement(
@@ -173,6 +234,7 @@ public final class PipelinePlacementResolver {
         PlatformMode platform,
         PipelineRuntimeMapping mapping,
         PipelineRuntimeMappingResolution resolution,
+        boolean orchestratorModule,
         String currentModule,
         String currentRuntime
     ) {
@@ -195,7 +257,8 @@ public final class PipelinePlacementResolver {
             ? resolution.runtimeForModule(assignedModule, mapping).orElse("")
             : resolveRuntime(assignedModule, mapping);
 
-        boolean sameUnit = !currentModule.isEmpty()
+        boolean sameUnit = orchestratorModule
+            && !currentModule.isEmpty()
             && assignedModule.equals(currentModule)
             && !currentRuntime.isEmpty()
             && assignedRuntime.equals(currentRuntime);
@@ -337,7 +400,7 @@ public final class PipelinePlacementResolver {
         return first;
     }
 
-    private static boolean isColocatedSynthetics(
+    private static boolean isColocatedSyntheticsInModule(
         PipelineTransport transport,
         PipelineRuntimeMapping mapping,
         PipelineRuntimeMappingResolution resolution,
@@ -363,6 +426,27 @@ public final class PipelinePlacementResolver {
             }
         }
         return false;
+    }
+
+    private static boolean isColocatedLocalSynthetics(
+        PipelineTransport transport,
+        PlatformMode platform,
+        PipelineRuntimeMapping mapping,
+        PipelineRuntimeMappingResolution resolution,
+        boolean orchestratorModule,
+        String currentModule,
+        String currentRuntime
+    ) {
+        if (transport == PipelineTransport.LOCAL) {
+            return true;
+        }
+        if (!orchestratorModule || mapping == null) {
+            return false;
+        }
+        if (mapping.layout() == PipelineRuntimeMapping.Layout.MONOLITH) {
+            return platform == PlatformMode.FUNCTION;
+        }
+        return isColocatedSyntheticsInModule(transport, mapping, resolution, currentModule, currentRuntime);
     }
 
     private static String fallbackModule(

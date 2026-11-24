@@ -88,8 +88,8 @@ class OrchestratorBindingBuilder {
         String firstServiceNameFormatted = NamingPolicy.formatForClassName(NamingPolicy.stripProcessPrefix(first.name()));
         String firstServiceName = "Process" + firstServiceNameFormatted + "Service";
         StreamingShape firstStreamingShape = StreamingShapeResolver.streamingShape(first.cardinality());
-        TypeMapping inputMapping = rootMapping(config, stepDefinitions, true, inputType);
-        TypeMapping outputMapping = rootMapping(config, stepDefinitions, false, outputType);
+        TypeMapping inputMapping = rootMapping(config, stepDefinitions, first, true, inputType);
+        TypeMapping outputMapping = rootMapping(config, stepDefinitions, last, false, outputType);
 
         PipelineStepModel model = new PipelineStepModel(
             "OrchestratorService",
@@ -134,10 +134,25 @@ class OrchestratorBindingBuilder {
     private static TypeMapping rootMapping(
             PipelineTemplateConfig config,
             List<StepDefinition> stepDefinitions,
+            PipelineTemplateStep edgeStep,
             boolean input,
             String canonicalTypeName) {
+        String stepContract = edgeStep == null
+            ? null
+            : (input ? edgeStep.inputTypeName() : edgeStep.outputTypeName());
+        boolean explicitContractDiffers = config.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3
+            && canonicalTypeName != null
+            && !canonicalTypeName.isBlank()
+            && stepContract != null
+            && !canonicalTypeName.equals(stepContract);
         Optional<ClassName> javaType = Optional.empty();
-        if (config.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
+        if (!explicitContractDiffers && !stepDefinitions.isEmpty()) {
+            javaType = Optional.ofNullable(input
+                ? stepDefinitions.getFirst().inputType()
+                : stepDefinitions.getLast().outputType());
+        }
+        if (javaType.isEmpty()
+            && config.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
             javaType = new org.pipelineframework.processor.routing.V3JavaTypeResolver(config)
                 .resolve(canonicalTypeName);
         }

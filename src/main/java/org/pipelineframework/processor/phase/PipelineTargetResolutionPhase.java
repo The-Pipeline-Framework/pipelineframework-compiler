@@ -78,7 +78,9 @@ public class PipelineTargetResolutionPhase implements PipelineCompilationPhase {
         // Apply transport targets and resolve client/server roles for each step model
         List<PipelineStepModel> updatedModels = new ArrayList<>();
         for (PipelineStepModel model : ctx.getStepModels()) {
-            PipelineTransport stepTransport = ctx.getPlacementModel().isStepLocalInSegment(model)
+            boolean isSpringRootEntrypoint = springRestEntrypoint.isPresent() && springRestEntrypoint.orElseThrow() == model;
+            PipelineTransport stepTransport = !isSpringRootEntrypoint
+                && ctx.getPlacementModel().isStepLocalInSegment(model)
                 ? PipelineTransport.LOCAL
                 : transportMode;
             Set<GenerationTarget> targets = resolveTargetsForModel(ctx, model, stepTransport, springRestEntrypoint);

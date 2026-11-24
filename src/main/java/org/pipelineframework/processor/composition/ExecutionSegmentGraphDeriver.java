@@ -71,8 +71,9 @@ public final class ExecutionSegmentGraphDeriver {
         Set<String> rootInputTypes = resolveRootInputTypes(template, definitions.get(ROOT_ID));
 
         Map<String, AwaitOrigin> discoveredAwaits = new LinkedHashMap<>();
+        Map<String, MutableSegment> segmentsById = new LinkedHashMap<>();
         Deque<SegmentWork> queue = new ArrayDeque<>();
-        Set<String> queuedSegments = new HashSet<>();
+        Set<String> queuedWorkKeys = new HashSet<>();
 
         SegmentWork entryWork = new SegmentWork(
             "entry",
@@ -84,26 +85,28 @@ public final class ExecutionSegmentGraphDeriver {
             List.of(),
             List.of());
         queue.add(entryWork);
-        queuedSegments.add(entryWork.segmentId());
+        queuedWorkKeys.add(workKey(entryWork));
 
-        List<ExecutionSegment> segments = new ArrayList<>();
         while (!queue.isEmpty()) {
             SegmentWork work = queue.removeFirst();
             SegmentTrace trace = traceSegment(work, definitions, discoveredAwaits);
             for (String awaitId : trace.nextAwaitBoundaries()) {
                 String resumeSegmentId = "resume:" + awaitId;
-                if (queuedSegments.add(resumeSegmentId)) {
-                    AwaitOrigin origin = discoveredAwaits.get(awaitId);
-                    if (origin != null) {
-                        queue.addLast(new SegmentWork(
+                AwaitOrigin origin = discoveredAwaits.get(awaitId);
+                if (origin != null) {
+                    for (List<CallerFrame> stackVariant : origin.callerStacks()) {
+                        SegmentWork resumeWork = new SegmentWork(
                             resumeSegmentId,
                             PipelinePlacementDescriptor.AWAIT_RESUME,
                             awaitId,
                             origin.definitionId(),
                             origin.stepIndex() + 1,
                             origin.resumedTypes(),
-                            origin.callerStack(),
-                            origin.callsiteChain()));
+                            stackVariant,
+                            origin.callsiteChain());
+                        if (queuedWorkKeys.add(workKey(resumeWork))) {
+                            queue.addLast(resumeWork);
+                        }
                     }
                 }
             }
@@ -114,16 +117,14 @@ public final class ExecutionSegmentGraphDeriver {
             String runtime = defPlacement.map(PipelinePlacementModel.StepPlacement::runtime)
                 .filter(value -> !value.isBlank())
                 .orElse(placementModel.currentRuntime());
-            segments.add(new ExecutionSegment(
-                work.segmentId(),
-                work.startKind(),
-                work.resumeAwaitBoundaryId(),
-                module,
-                runtime,
-                trace.canCompleteRoot(),
-                List.copyOf(trace.reachableDefinitions()),
-                List.copyOf(trace.nextAwaitBoundaries())));
+            MutableSegment segment = segmentsById.computeIfAbsent(work.segmentId(), id -> new MutableSegment(
+                id, work.startKind(), work.resumeAwaitBoundaryId(), module, runtime));
+            segment.merge(trace);
         }
+
+        List<ExecutionSegment> segments = segmentsById.values().stream()
+            .map(MutableSegment::toExecutionSegment)
+            .toList();
 
         if (invocations.isEmpty() && segments.isEmpty()) {
             return PipelinePlacementDescriptor.empty();
@@ -187,8 +188,16 @@ public final class ExecutionSegmentGraphDeriver {
                 if (!completion.accepts().isEmpty() && completion.selectedOutputType().isPresent()) {
                     Set<String> resumed = concreteTypes(typeModel, completion.selectedOutputType().orElseThrow());
                     awaitedResumedTypes = resumed.isEmpty() ? produced : resumed;
-                    Set<String> passThrough = new LinkedHashSet<>(produced);
-                    passThrough.removeAll(awaitedResumedTypes);
+                    Set<String> operationOutputs = concreteTypes(typeModel, completion.operationOutputType());
+                    Set<String> passThrough = new LinkedHashSet<>(operationOutputs.isEmpty() ? produced : operationOutputs);
+                    for (String acceptedAwaitType : completion.accepts()) {
+                        Set<String> selected = concreteTypes(typeModel, acceptedAwaitType);
+                        if (selected.isEmpty()) {
+                            passThrough.remove(acceptedAwaitType);
+                        } else {
+                            passThrough.removeAll(selected);
+                        }
+                    }
                     nonAwaitedPassThroughTypes = Set.copyOf(passThrough);
                 } else {
                     awaitedResumedTypes = produced;
@@ -302,10 +311,10 @@ public final class ExecutionSegmentGraphDeriver {
                 List<String> nextChain = step.recursive()
                     ? current.callsiteChain()
                     : append(current.callsiteChain(), step.stepName());
+                CallerFrame callFrame = new CallerFrame(current.definitionId(), current.stepIndex(), current.callsiteChain());
                 List<CallerFrame> nextCallers = step.recursive()
-                    ? current.callerStack()
-                    : appendFrame(current.callerStack(),
-                        new CallerFrame(current.definitionId(), current.stepIndex(), current.callsiteChain()));
+                    ? appendRecursiveFrame(current.callerStack(), callFrame)
+                    : appendFrame(current.callerStack(), callFrame);
 
                 // Trace into target definition; also explore caller continuation if target can complete without suspending.
                 Set<String> targetOutputs = traceNestedCall(
@@ -352,7 +361,7 @@ public final class ExecutionSegmentGraphDeriver {
                 String awaitId = awaitBoundaryId(current.definitionId(), current.callsiteChain(), step.stepName());
                 nextAwaits.add(awaitId);
                 discoveredAwaits.merge(awaitId,
-                    new AwaitOrigin(
+                    AwaitOrigin.single(
                         awaitId,
                         current.definitionId(),
                         current.stepIndex(),
@@ -419,7 +428,7 @@ public final class ExecutionSegmentGraphDeriver {
                 current.stepIndex(),
                 current.concreteType(),
                 current.callsiteChain(),
-                "depth=" + current.relativeDepth());
+                callerSignature(current.callerStack()) + "|depth=" + current.relativeDepth());
             if (!localVisited.add(state)) {
                 continue;
             }
@@ -458,14 +467,22 @@ public final class ExecutionSegmentGraphDeriver {
             if (step.targetDefinitionId().isPresent()) {
                 String nestedTarget = step.targetDefinitionId().orElseThrow();
                 if (step.recursive()) {
-                    // Recursive self-call re-enters the same definition with the same static chain.
+                    // Recursive self-call re-enters the same definition with the same static chain,
+                    // keeping at most one return frame per static callsite so post-self-call steps
+                    // remain reachable on resume without unbounded stack growth.
+                    CallerFrame selfFrame = new CallerFrame(
+                        current.definitionId(), current.stepIndex(), current.callsiteChain());
+                    List<CallerFrame> nextCallers = appendRecursiveFrame(current.callerStack(), selfFrame);
+                    int nextDepth = nextCallers.size() > current.callerStack().size()
+                        ? current.relativeDepth() + 1
+                        : current.relativeDepth();
                     stack.push(new LocalWork(
                         nestedTarget,
                         0,
                         current.concreteType(),
-                        current.callerStack(),
+                        nextCallers,
                         current.callsiteChain(),
-                        current.relativeDepth()));
+                        nextDepth));
                 } else {
                     List<String> nextChain = append(current.callsiteChain(), step.stepName());
                     List<CallerFrame> nextCallers = appendFrame(current.callerStack(),
@@ -485,7 +502,7 @@ public final class ExecutionSegmentGraphDeriver {
                 String awaitId = awaitBoundaryId(current.definitionId(), current.callsiteChain(), step.stepName());
                 nextAwaits.add(awaitId);
                 discoveredAwaits.merge(awaitId,
-                    new AwaitOrigin(
+                    AwaitOrigin.single(
                         awaitId,
                         current.definitionId(),
                         current.stepIndex(),
@@ -543,6 +560,59 @@ public final class ExecutionSegmentGraphDeriver {
         return List.copyOf(next);
     }
 
+    private static List<CallerFrame> appendRecursiveFrame(List<CallerFrame> list, CallerFrame frame) {
+        for (CallerFrame existing : list) {
+            if (existing.definitionId().equals(frame.definitionId())
+                && existing.callerStepIndex() == frame.callerStepIndex()) {
+                return list;
+            }
+        }
+        return appendFrame(list, frame);
+    }
+
+    private static String workKey(SegmentWork work) {
+        return work.segmentId() + "|" + callerSignature(work.callerStack()) + "|" + new TreeSet<>(work.initialTypes());
+    }
+
+    private static final class MutableSegment {
+        private final String segmentId;
+        private final String startKind;
+        private final String resumeAwaitBoundaryId;
+        private final String module;
+        private final String runtime;
+        private boolean canCompleteRoot;
+        private final Set<String> reachableDefinitions = new LinkedHashSet<>();
+        private final Set<String> nextAwaitBoundaries = new LinkedHashSet<>();
+
+        private MutableSegment(
+            String segmentId, String startKind, String resumeAwaitBoundaryId, String module, String runtime
+        ) {
+            this.segmentId = segmentId;
+            this.startKind = startKind;
+            this.resumeAwaitBoundaryId = resumeAwaitBoundaryId;
+            this.module = module;
+            this.runtime = runtime;
+        }
+
+        private void merge(SegmentTrace trace) {
+            this.canCompleteRoot |= trace.canCompleteRoot();
+            this.reachableDefinitions.addAll(trace.reachableDefinitions());
+            this.nextAwaitBoundaries.addAll(trace.nextAwaitBoundaries());
+        }
+
+        private ExecutionSegment toExecutionSegment() {
+            return new ExecutionSegment(
+                segmentId,
+                startKind,
+                resumeAwaitBoundaryId,
+                module,
+                runtime,
+                canCompleteRoot,
+                List.copyOf(reachableDefinitions),
+                List.copyOf(nextAwaitBoundaries));
+        }
+    }
+
     private static String callerSignature(List<CallerFrame> frames) {
         if (frames.isEmpty()) {
             return "";
@@ -584,13 +654,29 @@ public final class ExecutionSegmentGraphDeriver {
         String definitionId,
         int stepIndex,
         Set<String> resumedTypes,
-        List<CallerFrame> callerStack,
+        Set<List<CallerFrame>> callerStacks,
         List<String> callsiteChain
     ) {
+        static AwaitOrigin single(
+            String awaitId,
+            String definitionId,
+            int stepIndex,
+            Set<String> resumedTypes,
+            List<CallerFrame> callerStack,
+            List<String> callsiteChain
+        ) {
+            Set<List<CallerFrame>> stacks = new LinkedHashSet<>();
+            stacks.add(List.copyOf(callerStack));
+            return new AwaitOrigin(awaitId, definitionId, stepIndex, Set.copyOf(resumedTypes), Set.copyOf(stacks), callsiteChain);
+        }
+
         AwaitOrigin merge(AwaitOrigin other) {
-            Set<String> combined = new LinkedHashSet<>(resumedTypes);
-            combined.addAll(other.resumedTypes);
-            return new AwaitOrigin(awaitId, definitionId, stepIndex, Set.copyOf(combined), callerStack, callsiteChain);
+            Set<String> combinedTypes = new LinkedHashSet<>(resumedTypes);
+            combinedTypes.addAll(other.resumedTypes);
+            Set<List<CallerFrame>> combinedStacks = new LinkedHashSet<>(callerStacks);
+            combinedStacks.addAll(other.callerStacks);
+            return new AwaitOrigin(
+                awaitId, definitionId, stepIndex, Set.copyOf(combinedTypes), Set.copyOf(combinedStacks), callsiteChain);
         }
     }
 

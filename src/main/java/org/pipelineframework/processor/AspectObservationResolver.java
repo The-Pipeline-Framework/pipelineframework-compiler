@@ -23,7 +23,8 @@ public final class AspectObservationResolver {
     public List<Observation> resolve(PipelineStepModel model, PipelineAspectModel aspect) {
         var pipelineTemplate = ctx.getPipelineTemplateConfig();
         boolean localInSegment = ctx.isTransportModeLocal()
-            || org.pipelineframework.processor.mapping.PipelinePlacementResolver.isModuleColocated(ctx);
+            || (org.pipelineframework.processor.mapping.PipelinePlacementResolver.isModuleColocated(ctx)
+                && org.pipelineframework.processor.mapping.PipelinePlacementResolver.hasLocalInSegmentSynthetics(ctx));
         if (pipelineTemplate == null
             || pipelineTemplate.dialect() != PipelineTemplateDialect.V3 || !localInSegment) {
             throw new IllegalArgumentException("Aspect '" + aspect.name() + "': targetTypes requires canonical v3 LOCAL pipelines");

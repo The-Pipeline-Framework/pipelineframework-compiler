@@ -215,9 +215,100 @@ class RestFunctionNestedCompositionTest {
             Files.createDirectories(splitDir.resolve("generated")),
             false, splitDiagnostics);
         assertFalse(splitOk, "Cross-module nested invocation must be rejected");
-        assertTrue(splitDiagnostics.getDiagnostics().stream().anyMatch(d ->
+        // Case 3: Split placement under pipeline-runtime (same runtime, different module) -> must fail closed!
+        Path splitPrDir = Files.createDirectories(directory.resolve("split-pipeline-runtime"));
+        Path splitPrYaml = Files.writeString(splitPrDir.resolve("pipeline.yaml"), pipelineYaml());
+        writeRuntimeMapping(splitPrDir, """
+            layout: pipeline-runtime
+            validation: strict
+            runtimes:
+              application: {}
+            modules:
+              app:
+                runtime: application
+              remote-svc:
+                runtime: application
+            defaults:
+              runtime: application
+              module: app
+              synthetic:
+                module: app
+            steps:
+              ProcessNestedWaitService: remote-svc
+            """);
+        var splitPrDiagnostics = new DiagnosticCollector<JavaFileObject>();
+        boolean splitPrOk = compile(splitPrDir, splitPrYaml,
+            Files.createDirectories(splitPrDir.resolve("classes")),
+            Files.createDirectories(splitPrDir.resolve("target/generated-sources/pipeline")),
+            false, splitPrDiagnostics);
+        assertFalse(splitPrOk, "Split module under pipeline-runtime must be rejected even in the same runtime");
+        assertTrue(splitPrDiagnostics.getDiagnostics().stream().anyMatch(d ->
             d.getMessage(null).contains("crosses a deployed boundary")),
-            splitDiagnostics.getDiagnostics().toString());
+            splitPrDiagnostics.getDiagnostics().toString());
+    }
+
+    @Test
+    void remotePipelineRuntimeStepModuleKeepsServerAdaptersWhenOrchestratorIsNotGenerated() throws Exception {
+        Path moduleDir = Files.createDirectories(directory.resolve("remote-step-module"));
+        Path yaml = Files.writeString(moduleDir.resolve("pipeline.yaml"), """
+            version: 3
+            appName: Remote Step Module Proof
+            basePackage: remotestep
+            transport: REST
+            platform: COMPUTE
+            contract: { input: WorkRequest, output: WorkReceipt }
+            types:
+              WorkRequest: { java: rfproof.Types.WorkRequest, fields: [[id, string]] }
+              WorkReceipt: { java: rfproof.Types.WorkReceipt, fields: [[id, string], [status, string]] }
+            steps:
+              - name: Handle Work
+                service: rfproof.Types.DirectSvc
+                cardinality: ONE_TO_ONE
+                input: WorkRequest
+                output: WorkReceipt
+                java: { input: rfproof.Types.DirectWork, output: rfproof.Types.WorkReceipt }
+            """);
+        writeRuntimeMapping(moduleDir, """
+            layout: pipeline-runtime
+            validation: strict
+            runtimes:
+              orchestrator: {}
+              pipeline: {}
+            modules:
+              orchestrator-svc:
+                runtime: orchestrator
+              pipeline-svc:
+                runtime: pipeline
+            defaults:
+              runtime: pipeline
+              module: pipeline-svc
+            """);
+        Path classes = Files.createDirectories(moduleDir.resolve("classes"));
+        Path generated = Files.createDirectories(moduleDir.resolve("target/generated-sources/pipeline"));
+        var diagnostics = new DiagnosticCollector<JavaFileObject>();
+        var compiler = ToolProvider.getSystemJavaCompiler();
+        try (var manager = compiler.getStandardFileManager(diagnostics, null, null)) {
+            List<String> options = List.of(
+                "-proc:only",
+                "-classpath", System.getProperty("java.class.path"),
+                "-d", classes.toString(),
+                "-Apipeline.config=" + yaml,
+                "-Apipeline.module=pipeline-svc",
+                "-Apipeline.moduleDir=" + moduleDir,
+                "-Apipeline.generatedSourcesDir=" + generated,
+                "-Apipeline.orchestrator.generate=false");
+            var task = compiler.getTask(null, manager, diagnostics, options, null,
+                List.of(sourceFile("rfproof/Types.java", applicationSources())));
+            task.setProcessors(List.of(new PipelineStepProcessor()));
+            assertTrue(task.call(), diagnostics.getDiagnostics().toString());
+        }
+        // Remote step-host module must keep its REST server resource (not collapse to LocalClientStep).
+        List<Path> serverSources = new ArrayList<>();
+        try (Stream<Path> walk = Files.walk(generated.resolve("rest-server"))) {
+            walk.filter(path -> path.toString().endsWith(".java")).forEach(serverSources::add);
+        }
+        assertTrue(serverSources.stream().anyMatch(p -> p.getFileName().toString().endsWith("Resource.java")),
+            "Non-orchestrator pipeline-runtime step module must retain REST server resource: " + serverSources);
     }
 
     private boolean compile(
