@@ -19,8 +19,10 @@ import org.pipelineframework.processor.ir.PipelineOrchestratorModel;
 import org.pipelineframework.processor.ir.PipelineStepModel;
 import org.pipelineframework.processor.ir.StepDefinition;
 import org.pipelineframework.processor.ir.PipelineTransport;
+import org.pipelineframework.processor.mapping.PipelinePlacementModel;
 import org.pipelineframework.processor.mapping.PipelineRuntimeMapping;
 import org.pipelineframework.processor.mapping.PipelineRuntimeMappingResolution;
+import org.pipelineframework.orchestrator.release.PipelinePlacementDescriptor;
 import org.pipelineframework.processor.routing.PipelineBranchingPlan;
 import org.pipelineframework.processor.representation.ResolvedRepresentationRegistry;
 import org.pipelineframework.representation.spi.ResolvedOperationRepresentation;
@@ -179,6 +181,8 @@ public class PipelineCompilationContext {
 
     private PipelineRuntimeMapping runtimeMapping;
     private PipelineRuntimeMappingResolution runtimeMappingResolution;
+    private PipelinePlacementModel placementModel;
+    private PipelinePlacementDescriptor placementDescriptor;
     
     // Additional compilation flags and state
     private boolean pluginHost;
@@ -248,6 +252,8 @@ public class PipelineCompilationContext {
         this.resolvedOperationRepresentations = List.of();
         this.resolvedTargets = Set.of();
         this.rendererBindings = Map.of();
+        this.placementModel = PipelinePlacementModel.empty();
+        this.placementDescriptor = PipelinePlacementDescriptor.empty();
         this.pluginHost = false;
         this.orchestratorGenerated = false;
         this.functionHttpBridge = false;
@@ -525,6 +531,22 @@ public class PipelineCompilationContext {
     public void setRuntimeMappingResolution(
         org.pipelineframework.processor.mapping.PipelineRuntimeMappingResolution runtimeMappingResolution) {
         this.runtimeMappingResolution = runtimeMappingResolution;
+    }
+
+    public PipelinePlacementModel getPlacementModel() {
+        return placementModel == null ? PipelinePlacementModel.empty() : placementModel;
+    }
+
+    public void setPlacementModel(PipelinePlacementModel placementModel) {
+        this.placementModel = placementModel == null ? PipelinePlacementModel.empty() : placementModel;
+    }
+
+    public PipelinePlacementDescriptor getPlacementDescriptor() {
+        return placementDescriptor == null ? PipelinePlacementDescriptor.empty() : placementDescriptor;
+    }
+
+    public void setPlacementDescriptor(PipelinePlacementDescriptor placementDescriptor) {
+        this.placementDescriptor = placementDescriptor == null ? PipelinePlacementDescriptor.empty() : placementDescriptor;
     }
 
     /**

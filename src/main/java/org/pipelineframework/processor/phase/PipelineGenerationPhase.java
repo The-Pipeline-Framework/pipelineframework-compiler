@@ -345,6 +345,17 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
             }
         }
 
+        if (ctx.getResolvedPipelineDefinitionGraph().isPresent()
+            && (ctx.isTransportModeLocal() || ctx.getPlacementModel().hasLocalInvocations())) {
+            new LocalPipelineInvocationRenderer().render(
+                ctx,
+                generationPathResolver.resolveRoleOutputDir(ctx, DeploymentRole.ORCHESTRATOR_CLIENT));
+            for (var invocation : ctx.generatedInvocationOrders()) {
+                roleMetadataGenerator.recordClassWithRole(
+                    invocation.invocationClass(),
+                    DeploymentRole.ORCHESTRATOR_CLIENT.name());
+            }
+        }
         // Write role metadata
         try {
             roleMetadataGenerator.writeRoleMetadata();
@@ -357,11 +368,6 @@ public class PipelineGenerationPhase implements PipelineCompilationPhase {
         } catch (IOException e) {
             ctx.getCompilerDiagnostics().warning(
                 "Failed to write platform metadata: " + e.getMessage());
-        }
-        if (ctx.getResolvedPipelineDefinitionGraph() != null && ctx.isTransportModeLocal()) {
-            new LocalPipelineInvocationRenderer().render(
-                ctx,
-                generationPathResolver.resolveRoleOutputDir(ctx, DeploymentRole.ORCHESTRATOR_CLIENT));
         }
         try {
             PipelineOrderMetadataGenerator orderMetadataGenerator =

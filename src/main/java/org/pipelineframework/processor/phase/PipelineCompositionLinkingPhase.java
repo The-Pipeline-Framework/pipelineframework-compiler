@@ -17,6 +17,8 @@ import org.pipelineframework.processor.composition.PipelineReference;
 import org.pipelineframework.processor.composition.ResolvedPipelineDefinitionGraph;
 import org.pipelineframework.processor.ir.StepDefinition;
 import org.pipelineframework.processor.ir.StreamingShape;
+import org.pipelineframework.processor.mapping.PipelinePlacementModel;
+import org.pipelineframework.processor.mapping.PipelinePlacementResolver;
 import org.pipelineframework.processor.routing.BranchPlanPipelineDefinitionValidator;
 import org.pipelineframework.processor.routing.PipelineBranchRoutingPlanner;
 import org.pipelineframework.processor.routing.PipelineBranchingPlan;
@@ -36,10 +38,6 @@ final class PipelineCompositionLinkingPhase {
             && ctx.getBranchingPlan().terminalStepIndex() == -1;
         if (!invocation && !implicitCompletion) {
             return;
-        }
-        if (invocation && !ctx.isTransportModeLocal()) {
-            throw new IllegalArgumentException("Local pipeline invocation currently requires pipeline.transport=LOCAL; "
-                + "remote pipeline invocation is not implemented in this slice.");
         }
         Map<String, List<StepDefinition>> parsed = ctx.getParsedPipelineDefinitionCatalog().localDefinitions();
         Map<PipelineReference, PipelineBranchingPlan> branchPlans = new LinkedHashMap<>();
@@ -76,6 +74,23 @@ final class PipelineCompositionLinkingPhase {
             reference -> Optional.ofNullable(definitions.get(reference)),
             new V3PipelineInvocationCompatibility(pipelineTemplate.typeModel()),
             new BranchPlanPipelineDefinitionValidator(branchPlans)).link(definitions.get(ROOT));
+        PipelinePlacementResolver placementResolver = new PipelinePlacementResolver();
+        PipelinePlacementModel basePlacement = ctx.getPlacementModel();
+        if (basePlacement.currentModule().isEmpty() && basePlacement.currentRuntime().isEmpty()
+            && !ctx.getStepModels().isEmpty()) {
+            basePlacement = placementResolver.resolve(ctx);
+        }
+        PipelinePlacementModel enrichedPlacement = placementResolver.resolveInvocations(ctx, basePlacement, graph);
+        for (PipelinePlacementModel.InvocationPlacement invocationPlacement : enrichedPlacement.invocationPlacements()) {
+            if (!invocationPlacement.localInSegment()) {
+                throw new IllegalArgumentException(
+                    "Pipeline invocation '" + invocationPlacement.callerDefinitionId() + "."
+                        + invocationPlacement.callsiteId() + " -> " + invocationPlacement.targetDefinitionId()
+                        + "' crosses a deployed boundary (" + invocationPlacement.boundaryReason()
+                        + "); remote pipeline invocation is not implemented in this slice.");
+            }
+        }
+        ctx.setPlacementModel(enrichedPlacement);
         ctx.setResolvedPipelineDefinitionGraph(graph);
         Map<PipelineReference, PipelineBranchingPlan> childPlans = new LinkedHashMap<>(branchPlans);
         childPlans.remove(ROOT);

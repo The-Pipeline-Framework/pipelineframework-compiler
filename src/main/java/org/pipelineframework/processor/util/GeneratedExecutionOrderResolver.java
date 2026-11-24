@@ -111,7 +111,8 @@ public final class GeneratedExecutionOrderResolver {
             .collect(java.util.stream.Collectors.toSet());
         return models.stream()
             .filter(model -> model.deploymentRole() == DeploymentRole.ORCHESTRATOR_CLIENT
-                || (ctx.isTransportModeLocal() && model.deploymentRole() == DeploymentRole.PIPELINE_SERVER
+                || ((ctx.isTransportModeLocal() || ctx.getPlacementModel().isStepLocalInSegment(model))
+                    && model.deploymentRole() == DeploymentRole.PIPELINE_SERVER
                     && !clientIdentities.contains(new ExecutionModelIdentity(model))))
             .toList();
     }

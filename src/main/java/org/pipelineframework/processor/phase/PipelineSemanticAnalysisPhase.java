@@ -80,7 +80,18 @@ public class PipelineSemanticAnalysisPhase implements PipelineCompilationPhase {
             ctx.setBranchingPlan(new PipelineBranchRoutingPlanner().plan(ctx)
                 .orElseGet(PipelineBranchingPlan::disabled));
         }
+        var placementResolver = new org.pipelineframework.processor.mapping.PipelinePlacementResolver();
+        ctx.setPlacementModel(placementResolver.resolve(ctx));
         new PipelineCompositionLinkingPhase().link(ctx);
+        if (ctx.getPipelineTemplateConfig() != null) {
+            new org.pipelineframework.processor.awaitable.NestedAwaitValidator().validate(
+                ctx.getPipelineTemplateConfig(),
+                ctx.getParsedPipelineDefinitionCatalog(),
+                ctx.getPlacementModel());
+            ctx.setPlacementDescriptor(
+                new org.pipelineframework.processor.composition.ExecutionSegmentGraphDeriver()
+                    .derive(ctx, ctx.getPlacementModel()));
+        }
 
         // Analyze streaming shapes and other semantic properties
         // This phase focuses on semantic analysis without building bindings or calling renderers

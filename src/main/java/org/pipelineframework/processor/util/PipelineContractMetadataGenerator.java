@@ -79,6 +79,7 @@ public class PipelineContractMetadataGenerator {
             .map(graph -> new PipelineCompositionContractProjector().project(graph))
             .orElseGet(PipelineCompositionDescriptor::empty);
         Map<String, Object> rootBoundary = rootBoundary(ctx, composition);
+        org.pipelineframework.orchestrator.release.PipelinePlacementDescriptor placement = ctx.getPlacementDescriptor();
         PipelineYamlConfig effectiveConfig = loadPipelineConfig(ctx);
         List<Map<String, Object>> capabilityImports = new ConnectorOperationProvenanceProjector().project(
             effectiveConfig, ctx.getModuleDir(),
@@ -88,7 +89,7 @@ public class PipelineContractMetadataGenerator {
             && !ctx.getPipelineTemplateConfig().typeModel().contributedTypeIdentities().isEmpty();
         List<Map<String, Object>> importedDefinitions = importedDefinitions(ctx);
         List<Map<String, Object>> httpPayloadBoundaries = httpPayloadBoundaries(ctx);
-        int schemaVersion = composition.present() || hasContributedTypes || !importedDefinitions.isEmpty()
+        int schemaVersion = composition.present() || placement.present() || hasContributedTypes || !importedDefinitions.isEmpty()
             || !capabilityImports.isEmpty() || !httpPayloadBoundaries.isEmpty() || !rootBoundary.isEmpty()
             ? 3 : canonicalTypes.isEmpty() ? 1 : 2;
         var contractWithoutHash = contractMetadata(schemaVersion, pipelineId,
@@ -100,6 +101,9 @@ public class PipelineContractMetadataGenerator {
         if (!rootBoundary.isEmpty()) contractWithoutHash.put("rootBoundary", rootBoundary);
         if (composition.present()) {
             contractWithoutHash.put("composition", composition);
+        }
+        if (placement.present()) {
+            contractWithoutHash.put("placement", placement);
         }
         if (schemaVersion == 3) {
             contractWithoutHash.put("importedDefinitions", importedDefinitions);

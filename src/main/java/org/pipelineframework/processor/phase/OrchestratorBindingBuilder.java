@@ -34,6 +34,15 @@ class OrchestratorBindingBuilder {
             Set<? extends Element> orchestratorElements,
             String resolvedTransport,
             List<StepDefinition> stepDefinitions) {
+        return buildOrchestratorBinding(config, orchestratorElements, resolvedTransport, stepDefinitions, Optional.empty());
+    }
+
+    static OrchestratorBinding buildOrchestratorBinding(
+            PipelineTemplateConfig config,
+            Set<? extends Element> orchestratorElements,
+            String resolvedTransport,
+            List<StepDefinition> stepDefinitions,
+            Optional<org.pipelineframework.processor.composition.ResolvedPipelineDefinitionGraph> resolvedGraph) {
         if (config == null) {
             return null;
         }
@@ -51,23 +60,36 @@ class OrchestratorBindingBuilder {
         if (first == null || last == null) {
             return null;
         }
-        String inputType = first.inputTypeName();
-        String outputType = last.outputTypeName();
+        String inputType = config.inputContract() != null && !config.inputContract().isBlank()
+            ? config.inputContract()
+            : first.inputTypeName();
+        String outputType = config.outputContract() != null && !config.outputContract().isBlank()
+            ? config.outputContract()
+            : last.outputTypeName();
         if (inputType == null || inputType.isBlank() || outputType == null || outputType.isBlank()) {
             return null;
         }
 
-        boolean inputStreaming = StreamingShapeResolver.isStreamingInputCardinality(first.cardinality());
-        boolean outputStreaming = inputStreaming;
-        for (PipelineTemplateStep step : steps) {
-            outputStreaming = StreamingShapeResolver.applyCardinalityToStreaming(step.cardinality(), outputStreaming);
+        boolean inputStreaming;
+        boolean outputStreaming;
+        if (resolvedGraph != null && resolvedGraph.isPresent()) {
+            var rootCardinality = resolvedGraph.orElseThrow().rootCardinality();
+            inputStreaming = StreamingShapeResolver.isStreamingInputCardinality(rootCardinality.name());
+            outputStreaming = rootCardinality == org.pipelineframework.config.CardinalitySemantics.ONE_TO_MANY
+                || rootCardinality == org.pipelineframework.config.CardinalitySemantics.MANY_TO_MANY;
+        } else {
+            inputStreaming = StreamingShapeResolver.isStreamingInputCardinality(first.cardinality());
+            outputStreaming = inputStreaming;
+            for (PipelineTemplateStep step : steps) {
+                outputStreaming = StreamingShapeResolver.applyCardinalityToStreaming(step.cardinality(), outputStreaming);
+            }
         }
 
         String firstServiceNameFormatted = NamingPolicy.formatForClassName(NamingPolicy.stripProcessPrefix(first.name()));
         String firstServiceName = "Process" + firstServiceNameFormatted + "Service";
         StreamingShape firstStreamingShape = StreamingShapeResolver.streamingShape(first.cardinality());
-        TypeMapping inputMapping = rootMapping(stepDefinitions, true, inputType);
-        TypeMapping outputMapping = rootMapping(stepDefinitions, false, outputType);
+        TypeMapping inputMapping = rootMapping(config, stepDefinitions, first, true, inputType);
+        TypeMapping outputMapping = rootMapping(config, stepDefinitions, last, false, outputType);
 
         PipelineStepModel model = new PipelineStepModel(
             "OrchestratorService",
@@ -110,14 +132,35 @@ class OrchestratorBindingBuilder {
     }
 
     private static TypeMapping rootMapping(
+            PipelineTemplateConfig config,
             List<StepDefinition> stepDefinitions,
+            PipelineTemplateStep edgeStep,
             boolean input,
             String canonicalTypeName) {
-        Optional<ClassName> javaType = stepDefinitions.isEmpty()
-            ? Optional.empty()
-            : Optional.ofNullable(input
+        String stepContract = edgeStep == null
+            ? null
+            : (input ? edgeStep.inputTypeName() : edgeStep.outputTypeName());
+        boolean explicitContractDiffers = config.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3
+            && canonicalTypeName != null
+            && !canonicalTypeName.isBlank()
+            && stepContract != null
+            && !canonicalTypeName.equals(stepContract);
+        Optional<ClassName> javaType = Optional.empty();
+        if (!explicitContractDiffers && !stepDefinitions.isEmpty()) {
+            javaType = Optional.ofNullable(input
                 ? stepDefinitions.getFirst().inputType()
                 : stepDefinitions.getLast().outputType());
+        }
+        if (javaType.isEmpty()
+            && config.dialect() == org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
+            javaType = new org.pipelineframework.processor.routing.V3JavaTypeResolver(config)
+                .resolve(canonicalTypeName);
+        }
+        if (javaType.isEmpty() && !stepDefinitions.isEmpty()) {
+            javaType = Optional.ofNullable(input
+                ? stepDefinitions.getFirst().inputType()
+                : stepDefinitions.getLast().outputType());
+        }
         return javaType
             .map(type -> TypeMapping.canonical(type, canonicalTypeName))
             .orElseGet(TypeMapping::unresolved);

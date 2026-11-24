@@ -102,6 +102,12 @@ class StepArtifactGenerationService {
         boolean v3GeneratedDomainTypes = template != null && template.dialect() == PipelineTemplateDialect.V3;
         Optional<PipelineTemplateTypeModel> canonicalTypeModel = v3GeneratedDomainTypes
             ? Optional.of(template.typeModel()) : Optional.empty();
+        org.pipelineframework.processor.ir.PipelineTransport stepTransport =
+            ctx.getPlacementModel().isStepLocalInSegment(model)
+                ? org.pipelineframework.processor.ir.PipelineTransport.LOCAL
+                : ctx.getTransportMode();
+        boolean localInSegment = ctx.isTransportModeLocal()
+            || stepTransport == org.pipelineframework.processor.ir.PipelineTransport.LOCAL;
         for (GenerationTarget target : model.enabledTargets()) {
             switch (target) {
                 case COMMAND_CLIENT_STEP -> {
@@ -115,7 +121,7 @@ class StepArtifactGenerationService {
                         enabledAspects,
                         cacheKeyGenerator,
                         descriptorSet,
-                        ctx.getTransportMode(),
+                        stepTransport,
                         template == null ? null : template.basePackage(),
                         null,
                         v3GeneratedDomainTypes, canonicalTypeModel));
@@ -133,7 +139,7 @@ class StepArtifactGenerationService {
                         enabledAspects,
                         cacheKeyGenerator,
                         descriptorSet,
-                        ctx.getTransportMode(),
+                        stepTransport,
                         template == null ? null : template.basePackage(),
                         null,
                         v3GeneratedDomainTypes, canonicalTypeModel), grpcBinding);
@@ -151,7 +157,7 @@ class StepArtifactGenerationService {
                         enabledAspects,
                         cacheKeyGenerator,
                         descriptorSet,
-                        ctx.getTransportMode(),
+                        stepTransport,
                         template == null ? null : template.basePackage(),
                         stepIndex,
                         v3GeneratedDomainTypes,
@@ -170,7 +176,7 @@ class StepArtifactGenerationService {
                         enabledAspects,
                         cacheKeyGenerator,
                         descriptorSet,
-                        ctx.getTransportMode(),
+                        stepTransport,
                         template == null ? null : template.basePackage(),
                         null,
                         v3GeneratedDomainTypes, canonicalTypeModel));
@@ -281,7 +287,7 @@ class StepArtifactGenerationService {
                         break;
                     }
                     if (model.sideEffect()) {
-                        DeploymentRole sideEffectRole = ctx.isTransportModeLocal()
+                        DeploymentRole sideEffectRole = localInSegment
                             ? DeploymentRole.ORCHESTRATOR_CLIENT
                             : resolveClientRole(model.deploymentRole());
                         if (sideEffectRole == null) {
@@ -306,7 +312,7 @@ class StepArtifactGenerationService {
                     String localClientClassName = model.servicePackage() + PIPELINE_DOT
                         + ResourceNameUtils.normalizeBaseName(model.generatedName())
                         + GeneratedTypeNames.LOCAL_CLIENT_STEP_SUFFIX;
-                    DeploymentRole localClientRole = ctx.isTransportModeLocal() && model.sideEffect()
+                    DeploymentRole localClientRole = localInSegment && model.sideEffect()
                         ? DeploymentRole.ORCHESTRATOR_CLIENT
                         : resolveClientRole(model.deploymentRole());
                     localClientRenderer.render(localBinding, org.pipelineframework.processor.renderer.Jsr269GenerationContext.create(
@@ -316,7 +322,7 @@ class StepArtifactGenerationService {
                         enabledAspects,
                         cacheKeyGenerator,
                         descriptorSet,
-                        ctx.getTransportMode(),
+                        stepTransport,
                         template == null ? null : template.basePackage(),
                         stepIndex,
                         v3GeneratedDomainTypes,

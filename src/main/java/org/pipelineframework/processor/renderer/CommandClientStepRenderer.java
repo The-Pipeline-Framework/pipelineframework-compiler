@@ -80,24 +80,30 @@ public class CommandClientStepRenderer {
         FieldSpec inputMapper = null;
         FieldSpec outputMapper = null;
         if (transportMapped) {
-            TypeName inputMapperType = normalizedTransport.input().<TypeName>map(binding -> binding.mapperType(transportMode))
-                .orElseGet(() -> mapperType(domainInputType, configHints.basePackage()));
-            TypeName outputMapperType = normalizedTransport.output().<TypeName>map(binding -> binding.mapperType(transportMode))
-                .orElseGet(() -> mapperType(domainOutputType, configHints.basePackage()));
-            FieldSpec.Builder inputMapperBuilder = FieldSpec.builder(inputMapperType, "inputMapper");
-            FieldSpec.Builder outputMapperBuilder = FieldSpec.builder(outputMapperType, "outputMapper");
-            if (normalizedTransport.input().isPresent()) {
-                inputMapperBuilder.addModifiers(Modifier.PRIVATE, Modifier.FINAL).initializer("new $T()", inputMapperType);
-            } else {
-                inputMapperBuilder.addAnnotation(RuntimeSymbols.INJECT);
+            boolean needsInputMapper = transportMode != PipelineTransport.REST || normalizedTransport.input().isEmpty();
+            boolean needsOutputMapper = transportMode != PipelineTransport.REST || normalizedTransport.output().isEmpty();
+            if (needsInputMapper) {
+                TypeName inputMapperType = normalizedTransport.input().<TypeName>map(binding -> binding.mapperType(transportMode))
+                    .orElseGet(() -> mapperType(domainInputType, configHints.basePackage()));
+                FieldSpec.Builder inputMapperBuilder = FieldSpec.builder(inputMapperType, "inputMapper");
+                if (normalizedTransport.input().isPresent()) {
+                    inputMapperBuilder.addModifiers(Modifier.PRIVATE, Modifier.FINAL).initializer("new $T()", inputMapperType);
+                } else {
+                    inputMapperBuilder.addAnnotation(RuntimeSymbols.INJECT);
+                }
+                inputMapper = inputMapperBuilder.build();
             }
-            if (normalizedTransport.output().isPresent()) {
-                outputMapperBuilder.addModifiers(Modifier.PRIVATE, Modifier.FINAL).initializer("new $T()", outputMapperType);
-            } else {
-                outputMapperBuilder.addAnnotation(RuntimeSymbols.INJECT);
+            if (needsOutputMapper) {
+                TypeName outputMapperType = normalizedTransport.output().<TypeName>map(binding -> binding.mapperType(transportMode))
+                    .orElseGet(() -> mapperType(domainOutputType, configHints.basePackage()));
+                FieldSpec.Builder outputMapperBuilder = FieldSpec.builder(outputMapperType, "outputMapper");
+                if (normalizedTransport.output().isPresent()) {
+                    outputMapperBuilder.addModifiers(Modifier.PRIVATE, Modifier.FINAL).initializer("new $T()", outputMapperType);
+                } else {
+                    outputMapperBuilder.addAnnotation(RuntimeSymbols.INJECT);
+                }
+                outputMapper = outputMapperBuilder.build();
             }
-            inputMapper = inputMapperBuilder.build();
-            outputMapper = outputMapperBuilder.build();
         }
 
         TypeSpec.Builder typeBuilder = TypeSpec.classBuilder(className)

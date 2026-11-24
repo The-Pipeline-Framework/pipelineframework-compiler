@@ -92,7 +92,8 @@ public class PipelineRuntimeMappingResolver {
             if (mapping.validation() == PipelineRuntimeMapping.Validation.STRICT) {
                 validateMonolithOverrides(mapping.steps(), mapping.synthetics(), monolithModule, errors);
             }
-            return finish(moduleAssignments, clientOverrides, moduleByServicePackage, errors, warnings, usedModules);
+            moduleRuntimes.putIfAbsent(monolithModule, mapping.defaults().runtime());
+            return finish(moduleAssignments, clientOverrides, moduleByServicePackage, errors, warnings, usedModules, moduleRuntimes);
         }
 
         List<PipelineStepModel> regularSteps = models.stream()
@@ -140,30 +141,17 @@ public class PipelineRuntimeMappingResolver {
             validateSingleRuntime(moduleAssignments, moduleRuntimes, errors, warnings);
         }
 
-        return finish(moduleAssignments, clientOverrides, moduleByServicePackage, errors, warnings, usedModules);
+        return finish(moduleAssignments, clientOverrides, moduleByServicePackage, errors, warnings, usedModules, moduleRuntimes);
     }
 
-    /**
-     * Finalizes the mapping resolution by emitting diagnostics (if a processing environment is present)
-     * and returning an immutable PipelineRuntimeMappingResolution with the provided data.
-     *
-     * @param moduleAssignments      mapping of pipeline steps to resolved module names
-     * @param clientOverrides        mapping of client names to their override module names
-     * @param moduleByServicePackage mapping of service-package identifiers to module names
-     * @param errors                 collected error messages
-     * @param warnings               collected warning messages
-     * @param usedModules            set of module names that were referenced or assigned
-     * @return an immutable PipelineRuntimeMappingResolution containing module assignments, client overrides,
-     *         service-package-to-module mappings, and the collected errors, warnings, and used modules
-     * @throws IllegalStateException if validation mode is STRICT and there is at least one recorded error
-     */
     private PipelineRuntimeMappingResolution finish(
         Map<PipelineStepModel, String> moduleAssignments,
         Map<String, String> clientOverrides,
         Map<String, String> moduleByServicePackage,
         List<String> errors,
         List<String> warnings,
-        Set<String> usedModules
+        Set<String> usedModules,
+        Map<String, String> moduleRuntimes
     ) {
         if (processingEnv != null) {
             var messager = processingEnv.getMessager();
@@ -186,7 +174,8 @@ public class PipelineRuntimeMappingResolver {
             moduleByServicePackage,
             errors,
             warnings,
-            usedModules
+            usedModules,
+            moduleRuntimes
         );
     }
 

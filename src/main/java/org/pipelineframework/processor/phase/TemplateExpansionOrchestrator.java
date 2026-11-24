@@ -44,7 +44,7 @@ class TemplateExpansionOrchestrator {
             return List.of();
         }
 
-        boolean colocatedPlugins = ctx.isTransportModeLocal() || isMonolithLayout(ctx);
+        boolean colocatedPlugins = org.pipelineframework.processor.mapping.PipelinePlacementResolver.hasColocatedSynthetics(ctx);
         if (ctx.isPluginHost() && !colocatedPlugins) {
             return expandRemotePluginModels(ctx, baseModels);
         }
