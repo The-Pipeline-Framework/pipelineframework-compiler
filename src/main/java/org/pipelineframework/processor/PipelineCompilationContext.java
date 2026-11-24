@@ -105,13 +105,27 @@ public class PipelineCompilationContext {
     @Getter(AccessLevel.NONE)
     private final Map<AwaitDescriptorKey, Map<String, Object>> awaitRuntimeDescriptors = new java.util.LinkedHashMap<>();
 
+    @Getter(AccessLevel.NONE)
+    private final Map<AwaitDescriptorKey, Set<String>> awaitDescriptorOrigins = new java.util.LinkedHashMap<>();
+
+    /** Retains authored names and kinds before role enrichment and generated-name deduplication. */
+    public void recordAwaitDescriptorOrigin(PipelineStepModel model, StepDefinition step) {
+        var key = new AwaitDescriptorKey(model.definition(), model.serviceName());
+        awaitDescriptorOrigins.computeIfAbsent(key, ignored -> new java.util.LinkedHashSet<>())
+            .add("'" + step.name() + "' (" + step.kind() + ")");
+    }
+
     /** Records exactly the descriptor emitted by a renderer in this compilation. */
     public void recordAwaitRuntimeDescriptor(PipelineStepModel model, Map<String, Object> descriptor) {
         if (descriptor.isEmpty()) return;
         var immutable = java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(descriptor));
-        var previous = awaitRuntimeDescriptors.putIfAbsent(new AwaitDescriptorKey(model.definition(), model.serviceName()), immutable);
+        var key = new AwaitDescriptorKey(model.definition(), model.serviceName());
+        var previous = awaitRuntimeDescriptors.putIfAbsent(key, immutable);
         if (previous != null && !previous.equals(immutable)) {
-            throw new IllegalStateException("Conflicting compiled Await descriptors for " + model.definition() + "/" + model.serviceName());
+            var origins = awaitDescriptorOrigins.get(key);
+            String authoredSteps = origins == null ? "" : " from authored steps " + String.join(" and ", origins);
+            throw new IllegalStateException("Conflicting compiled Await descriptors for " + model.definition() + "/"
+                + model.serviceName() + authoredSteps);
         }
     }
 

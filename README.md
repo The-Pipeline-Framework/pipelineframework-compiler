@@ -37,14 +37,14 @@ Set `-Dtpf.version=<version>` only when deliberately testing another published T
 `central-publishing` profile only to sign and deploy the canonical artifact. For the component map, see
 [TPF Components and Repositories](https://pipelineframework.org/architecture/components-and-repositories).
 
-## Generate Node bindings without local Java
+## Generate native bindings without local Java
 
-The compiler can generate TypeScript models, a typed handler registry and application API, and an ordered
-execution projection for the bounded `tpf-polyglot-unary-policy/1` profile. The generated application
-delegates execution to the runtime interface it exports. A compatible Node runtime is tracked in
-[runtime #84](https://github.com/The-Pipeline-Framework/pipelineframework-runtime/issues/84). The generation
-workflow covers the compiler output and its retrieval. Streaming, Connectors, Await, and distributed
-execution are outside this profile.
+The compiler generates models, a typed handler registry and application API, and an ordered execution
+projection for the bounded `tpf-polyglot-unary-policy/1` profile. The default target is `node`, which
+emits TypeScript. Select `python` to emit Python. The generated application delegates execution to the
+runtime interface it exports. Compatible runtimes are tracked in [runtime #84 for Node](https://github.com/The-Pipeline-Framework/pipelineframework-runtime/issues/84)
+and [runtime #85 for Python](https://github.com/The-Pipeline-Framework/pipelineframework-runtime/issues/85).
+Streaming, Connectors, Await, and distributed execution are outside this profile.
 
 ### Author the inputs
 
@@ -55,10 +55,10 @@ Provide `appName`, `basePackage`, and the pipeline input/output contract.
 
 In `native-bindings.json`, set `schemaVersion` to `1`, `profile` to
 `tpf-polyglot-unary-policy/1`, and `pipelineId` to the DSL's `appName`. Supply one entry in
-`handlers` per authored step. Each entry names the exact authored `step`, a distinct TypeScript
-`handler` identifier, its canonical `inputType` and `outputType` names, and a `retryLimit`
-from 0 through 2. The compiler derives execution order from the DSL. It emits the
-`compiler-node-local` projection format. Use that format with the generated application API.
+`handlers` per authored step. Each entry names the exact authored `step`, a distinct ASCII
+`handler` key in the registry, its canonical `inputType` and `outputType` names, and a `retryLimit`
+from 0 through 2. The compiler derives execution order from the DSL. Use the target's
+`compiler-node-local` or `compiler-python-local` projection with the corresponding generated application API.
 
 ### Set up the generation workflow
 
@@ -68,7 +68,7 @@ dispatch. Replace `COMPILER_SHA` in the `uses` line with the full commit SHA of 
 trust. The workflow must be present at that revision in the public compiler repository.
 
 ```yaml
-name: Generate TPF Node bindings
+name: Generate TPF native bindings
 
 on:
   workflow_dispatch:
@@ -81,6 +81,11 @@ on:
         description: Full compiler SHA matching the reusable workflow pin
         type: string
         required: true
+      target:
+        description: Generated binding language
+        type: choice
+        options: [node, python]
+        default: node
       project:
         description: Repository-relative project directory
         type: string
@@ -95,6 +100,7 @@ jobs:
     with:
       source_sha: ${{ inputs.source_sha }}
       compiler_sha: ${{ inputs.compiler_sha }}
+      target: ${{ inputs.target }}
       project: ${{ inputs.project }}
 ```
 
@@ -103,15 +109,20 @@ a hosted runner and a read-only token. It checks out both exact commits, reads t
 named `pipeline.yaml` and `native-bindings.json`, and builds the compiler with the pinned Java and Maven
 toolchain and released Contracts dependencies. It runs no application build scripts and requires no
 application secrets, cross-repository token or TPF Cloud account. Keep credentials out of committed
-inputs and omit `secrets: inherit` from the caller.
+inputs and omit `secrets: inherit` from the caller. To generate Python output, register and forward the
+`target` input as shown. An existing Node-only caller can continue to use the default.
 
 ### Generate and retrieve
 
-On the workstation, use Git, Node.js 22 or newer, and GitHub CLI 2.100 or newer. Sign in with
+On the workstation, use Git and GitHub CLI 2.100 or newer. Run the client with Node.js 22 or newer
+or with CPython 3.12. The Python client is qualified on CPython 3.12.15/Linux and requires POSIX
+`O_NOFOLLOW`/`O_NONBLOCK` file checks. Native Windows is rejected before dispatch; other
+platforms are not qualified by this proof. Sign in with
 `gh auth login --hostname github.com` using an account authorised to dispatch workflows and retrieve
 artifacts in the application repository. The supported sign-in uses GitHub CLI's OAuth flow because
 `gh run watch` needs Checks access. Clone the compiler separately and check it out at the same
-`COMPILER_SHA` used in the workflow. [GitHub CLI run watch](https://cli.github.com/manual/gh_run_watch)
+`COMPILER_SHA` used in the workflow. Run the scripts from that pinned checkout so they can read
+the adjacent `scripts/native-generation-targets.json` manifest. [GitHub CLI run watch](https://cli.github.com/manual/gh_run_watch)
 
 After editing the pipeline or handler bindings, commit and push your changes to an authorised branch
 or tag. Run from the application checkout at the commit being generated.
@@ -121,13 +132,60 @@ node /path/to/pinned/compiler/scripts/remote-node-generation.mjs \
   OWNER/APP BRANCH_OR_TAG "$(git rev-parse HEAD)" COMPILER_SHA ./generated-next
 ```
 
+The Python build client runs on Python's standard library, Git, and GitHub CLI. Java and Node run on the
+remote build host. Running the Python client with its default target retrieves the same
+`application.ts`, `models.ts`, and `projection.json` as the Node client.
+
+```sh
+python3.12 /path/to/pinned/compiler/scripts/remote_node_generation.py \
+  OWNER/APP BRANCH_OR_TAG "$(git rev-parse HEAD)" COMPILER_SHA ./generated-next
+```
+
+To retrieve `application.py`, `models.py`, and the Python `projection.json`, explicitly select the Python
+target. Use a valid Python identifier for the output directory. With its parent on Python's import
+path, import `generated_python.application` as part of the namespace package. The application imports
+its generated models relatively. Type-check handlers against `HandlerRegistry`. Execution requires
+an implementation of `PythonLocalRuntime`.
+
+```sh
+python3.12 /path/to/pinned/compiler/scripts/remote_node_generation.py \
+  OWNER/APP BRANCH_OR_TAG "$(git rev-parse HEAD)" COMPILER_SHA ./generated_python --target python
+```
+
 For a project in a subdirectory, append its repository-relative path after the output directory.
 The output directory must be new and its parent must exist. The tool sends the branch or tag and
 commit identities to Actions. It obtains the run ID directly from dispatch, verifies the exact source
 and compiler workflow revision, checks the output digests and the projection's input hashes, then
 installs the verified files together. If the run fails or its output differs, the command exits
-with an error. Inspect the linked run and its diagnostics, fix the inputs or host configuration,
-and dispatch again. A rerun or expired artifact requires a new dispatch.
+with an error. Inspect the linked run and its diagnostics. Fix authored inputs or host configuration
+before dispatching a new generation. A rerun (attempt greater than 1) or expired artifact requires
+a new dispatch.
+
+### Resume an interrupted generation
+
+If the command printed a run URL and then lost connectivity, timed out, or was interrupted, repeat
+it with `--run-id RUN_ID`. Both clients support this option. It waits for and retrieves that exact
+run; it never dispatches or reruns a workflow. Keep the original repository, source/compiler SHAs,
+project and target. Check out the original source commit with clean input files; the remote branch
+may have moved since dispatch. Use a new output directory with an existing parent.
+
+```sh
+python3.14 /path/to/compiler/scripts/remote_node_generation.py \
+  OWNER/APP ORIGINAL_REF ORIGINAL_SOURCE_SHA ORIGINAL_COMPILER_SHA ./recovered_python \
+  PROJECT_DIR --target python --run-id RUN_ID
+
+node /path/to/compiler/scripts/remote-node-generation.mjs \
+  OWNER/APP ORIGINAL_REF ORIGINAL_SOURCE_SHA ORIGINAL_COMPILER_SHA ./recovered_node \
+  PROJECT_DIR --run-id RUN_ID
+```
+
+Use a client revision that provides recovery and keep its adjacent target manifest. The compiler
+SHA argument still identifies the original build host, not the newer client revision. The run ID
+is only a locator: recovery rechecks workflow/repository/source/compiler identity, attempt 1,
+receipts, target, input/output hashes and the run again after downloading. It refuses existing
+output, stale or tampered files, and mismatched runs. Failed generation prints only verified
+diagnostics and installs no application. If dispatch failed before returning an ID, inspect Actions
+to locate the run before trying another dispatch; the client does not guess which run belongs to you.
 
 Use the retrieved `application.ts` and `models.ts` in the application's TypeScript project and type-check the
 handler registry with the project's pinned TypeScript toolchain. For an npm project with a committed
@@ -153,8 +211,9 @@ export const bind = (runtime: NodeLocalRuntime) => createApplication(runtime, ha
 ```
 
 The output includes `projection.json`, `diagnostics.txt`, and `generation-receipt.json` alongside the
-generated TypeScript. The receipt records source and compiler commits, Maven dependency versions and
-JAR digests, the profile, and generated file digests. These checks establish integrity for the
+target-language files. The receipt records source and compiler commits, Maven dependency versions and
+JAR digests, the profile, and generated file digests. Python receipts also identify the Python target.
+These checks establish integrity for the
 selected build result. The receipt carries generation metadata only. TPF Release identity comes from
 existing Release packaging and verification.
 
@@ -166,7 +225,13 @@ java --enable-preview -cp "$COMPILER_CLASSPATH" \
   org.pipelineframework.compiler.node.NodeLocalCompiler pipeline.yaml native-bindings.json ./generated-next
 ```
 
-Run the compiler-owned build tooling tests with `node --test scripts/test-node-generation.mjs`.
+Both client suites exercise the shared Node run, receipt, and artifact acceptance cases. The Python
+suite also exercises explicit Python selection and verifies its file set, projection kind, and receipts.
+
+```sh
+node --test scripts/test-node-generation.mjs
+python3.12 -B -m unittest discover -s scripts -p test_remote_node_generation.py
+```
 
 ## Canonical union REST representation
 

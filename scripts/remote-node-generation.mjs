@@ -1,11 +1,10 @@
-import { spawnSync } from 'node:child_process';
-import { lstatSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { isDeepStrictEqual } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual, parseArgs } from 'node:util';
 import {
   checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, inputPaths, profile, readRegularFile,
-  receiptFile, requireCondition, sha256, sourceIdentity, validDigest, validRepository, validSha, workflow, workflowPath,
+  receiptFile, requireCondition, run, sha256, sourceIdentity, validDigest, validRepository, validSha, workflow, workflowPath,
 } from './node-generation-common.mjs';
 
 function ghApi(endpoint, body) {
@@ -22,14 +21,14 @@ function requireNewOutput(output) {
     `Output already exists at ${output}. Choose a new directory for this generation.`);
 }
 
-function verifyRun(run, source, compilerSha, id) {
+function verifyRun(run, source, compilerSha, id, completed = true) {
   requireCondition(String(run.id) === id && run.event === 'workflow_dispatch' &&
     run.path?.split('@', 1)[0] === workflowPath && run.head_sha === source.sha &&
     run.head_repository?.full_name?.toLowerCase() === source.repository.toLowerCase(),
   'GitHub returned a run for a different workflow, repository or source revision.');
   requireCondition(run.run_attempt === 1, 'This run was retried. Dispatch a new generation.');
   const pinned = `${compilerRepository}/${workflowPath}@${compilerSha}`;
-  requireCondition(run.status === 'completed', 'The generation run has not completed.');
+  requireCondition(!completed || run.status === 'completed', 'The generation run has not completed.');
   requireCondition(run.referenced_workflows?.some(reference => reference.path === pinned && reference.sha === compilerSha),
     'The run did not use the requested compiler workflow revision.');
 }
@@ -54,6 +53,8 @@ function verifyDownload(download, source, compilerSha, id, conclusion) {
   requireCondition(lstatSync(download).isDirectory(), 'Expected a regular artifact directory.');
   const receiptBytes = readRegularFile(join(download, receiptFile));
   const receipt = JSON.parse(receiptBytes);
+  requireCondition(!Object.hasOwn(receipt, 'target') || receipt.target === 'node',
+    'Generation receipt does not match the requested target.');
   requireCondition(receipt.schemaVersion === 1 && receipt.profile === profile &&
     receipt.run?.id === id && receipt.run.attempt === '1' &&
     receipt.compiler?.repository === compilerRepository && receipt.compiler?.sha === compilerSha,
@@ -98,39 +99,70 @@ function committedInputs(cwd, sha, project) {
   return gitInputs(cwd, sha, project);
 }
 
+export function watchRun(repository, id, {
+  execute = run,
+  pause = milliseconds => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds),
+} = {}) {
+  // Dispatch may return the run ID before the Actions read endpoint can see it.
+  const endpoint = `repos/${repository}/actions/runs/${id}?exclude_pull_requests=true`;
+  for (const delay of [1000, 2000, 4000, 8000, 0]) {
+    const probe = execute('gh', ['api', '--hostname', 'github.com', '--include', '--silent', endpoint],
+      { timeout: 10_000 });
+    if (probe.status === 0) break;
+    // gh may fail while decoding an HTTP error body. Retain only the status code,
+    // not response headers, so the failure remains diagnosable without leaking metadata.
+    const status = /^HTTP\/\S+ (\d{3})\b/.exec(probe.stdout?.toString() ?? '')?.[1];
+    requireCondition(status === '404',
+      `Could not read generation run ${id} (${status ? `HTTP ${status}` : 'HTTP status unavailable'}): ` +
+      `${probe.error?.message ?? probe.stderr?.toString().trim()}. Inspect the linked run before dispatching again.`);
+    requireCondition(delay > 0,
+      `Generation run ${id} is not visible yet. Check the linked GitHub Actions run before dispatching again.`);
+    pause(delay);
+  }
+  const watched = execute('gh', ['run', 'watch', '--repo', `github.com/${repository}`, id, '--interval', '10'], {
+    stdio: 'inherit', timeout: 30 * 60 * 1000,
+  });
+  requireCondition(watched.status === 0, 'Could not watch the generation run. Check its GitHub Actions page.');
+}
+
 export function generateRemote([repository, ref, sourceSha, compilerSha, outputArg, project = '.'], {
   api = ghApi,
-  watch = (repository, id) => {
-    const watched = spawnSync('gh', ['run', 'watch', '--repo', `github.com/${repository}`, id, '--interval', '10'], {
-      stdio: 'inherit', timeout: 30 * 60 * 1000,
-    });
-    requireCondition(watched.status === 0, 'Could not watch the generation run. Check its GitHub Actions page.');
-  },
+  watch = watchRun,
   download = (repository, id, destination) => checked('gh', [
     'run', 'download', '--repo', `github.com/${repository}`, id, '--name', `tpf-node-generation-${id}-1`, '--dir', destination,
   ]),
   cwd,
+  runId,
 } = {}) {
   requireCondition(validRepository(repository) && ref && !ref.startsWith('-') &&
     validSha(sourceSha) && validSha(compilerSha) && outputArg,
   'Usage: node remote-node-generation.mjs OWNER/REPO REF SOURCE_SHA COMPILER_SHA NEW_OUTPUT_DIR [PROJECT_DIR]');
+  requireCondition(runId === undefined || (typeof runId === 'string' && /^[1-9][0-9]*$/.test(runId)),
+    'Provide a positive decimal --run-id.');
   checked('git', ['check-ref-format', `refs/heads/${ref}`], { cwd });
   cwd ??= checked('git', ['rev-parse', '--show-toplevel']).toString().trim();
   const output = resolve(outputArg);
   requireNewOutput(output);
   const inputs = committedInputs(cwd, sourceSha, project);
   const endpoint = `repos/${repository}`;
-  const remote = api(`${endpoint}/commits/${encodeURIComponent(ref)}`);
-  requireCondition(remote.sha === sourceSha, 'Push the committed revision and use a branch or tag pointing to its exact SHA.');
   const source = sourceIdentity(repository, sourceSha, project, inputs);
-  const dispatch = api(`${endpoint}/actions/workflows/${workflow}/dispatches`, {
-    ref, return_run_details: true, inputs: { source_sha: sourceSha, compiler_sha: compilerSha, project },
-  });
-  const id = String(dispatch.workflow_run_id);
-  requireCondition(/^\d+$/.test(id), 'GitHub did not return the dispatched run ID. Check Actions before retrying.');
+  let id = runId;
+  // A branch may move after dispatch. Recovery is bound to the original run
+  // and immutable inputs, not the branch's current tip.
+  if (id === undefined) {
+    const remote = api(`${endpoint}/commits/${encodeURIComponent(ref)}`);
+    requireCondition(remote.sha === sourceSha, 'Push the committed revision and use a branch or tag pointing to its exact SHA.');
+    const dispatch = api(`${endpoint}/actions/workflows/${workflow}/dispatches`, {
+      ref, return_run_details: true, inputs: { source_sha: sourceSha, compiler_sha: compilerSha, project },
+    });
+    id = String(dispatch.workflow_run_id);
+    requireCondition(/^\d+$/.test(id), 'GitHub did not return the dispatched run ID. Check Actions before retrying.');
+  }
   const runEndpoint = `${endpoint}/actions/runs/${id}`;
   const runUrl = `https://github.com/${repository}/actions/runs/${id}`;
   console.log(`Generation run ${runUrl}`);
+  console.log(`To resume without dispatching, repeat this command with --run-id ${id} and the same source/compiler/project.`);
+  if (runId !== undefined) verifyRun(api(runEndpoint), source, compilerSha, id, false);
   watch(repository, id);
   const run = api(runEndpoint);
   verifyRun(run, source, compilerSha, id);
@@ -163,13 +195,28 @@ export function generateRemote([repository, ref, sourceSha, compilerSha, outputA
   return output;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+// Node resolves module URLs through symlinks, but argv can retain the caller's path
+// (for example /tmp versus /private/tmp on macOS). Compare filesystem identities.
+function isCliEntryPoint() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // Importers may use a synthetic or no-longer-existing entry-point path.
+    return false;
+  }
+}
+
+if (isCliEntryPoint()) {
   try {
     const version = checked('gh', ['--version']).toString();
     const [, major, minor] = /^gh version (\d+)\.(\d+)/.exec(version) ?? [];
     requireCondition(Number(major) > 2 || (Number(major) === 2 && Number(minor) >= 100),
       'Install GitHub CLI 2.100 or newer and sign in with gh auth login.');
-    console.log(`Verified generated bindings in ${generateRemote(process.argv.slice(2))}`);
+    const { values, positionals } = parseArgs({ options: { 'run-id': { type: 'string' } }, allowPositionals: true });
+    requireCondition(positionals.length >= 5 && positionals.length <= 6,
+      'Usage: node remote-node-generation.mjs OWNER/REPO REF SOURCE_SHA COMPILER_SHA NEW_OUTPUT_DIR [PROJECT_DIR] [--run-id RUN_ID]');
+    console.log(`Verified generated bindings in ${generateRemote(positionals, { runId: values['run-id'] })}`);
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

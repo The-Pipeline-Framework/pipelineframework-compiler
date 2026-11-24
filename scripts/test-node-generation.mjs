@@ -1,18 +1,80 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
-  checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, profile,
+  bindingTarget, checked, compilerRepository, contractsVersion, diagnosticsFile, generatedFiles, gitInputs, profile,
   receiptFile, sha256, sourceIdentity, workflowPath,
 } from './node-generation-common.mjs';
 import { stageGitInputs } from './node-generation-host.mjs';
-import { generateRemote } from './remote-node-generation.mjs';
+import { generateRemote, watchRun } from './remote-node-generation.mjs';
 
 const repository = 'owner/app';
 const compilerSha = 'a'.repeat(40);
 const runId = '123456';
+
+test('selects only the pinned compiler targets and keeps the Node default', () => {
+  assert.deepEqual(bindingTarget(), {
+    compilerClass: 'org.pipelineframework.compiler.node.NodeLocalCompiler',
+    kind: 'compiler-node-local', files: ['application.ts', 'models.ts', 'projection.json'],
+  });
+  assert.deepEqual(bindingTarget('python'), {
+    compilerClass: 'org.pipelineframework.compiler.python.PythonLocalCompiler',
+    kind: 'compiler-python-local', files: ['application.py', 'models.py', 'projection.json'],
+  });
+  for (const target of ['', 'Python', 'unsupported', 'constructor']) {
+    assert.throws(() => bindingTarget(target), /Unsupported generation target/);
+  }
+});
+
+test('generation host rejects an unsupported target before creating an artifact', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'tpf-host-target-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const host = fileURLToPath(new URL('./node-generation-host.mjs', import.meta.url));
+  const output = join(directory, 'artifact');
+  const result = spawnSync(process.execPath, [host, directory, output], {
+    env: { PATH: directory, TPF_BINDING_TARGET: 'unsupported' }, encoding: 'utf8', timeout: 10_000,
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Unsupported generation target/);
+  absent(output);
+});
+
+test('CLI enters argument validation through both real and symlinked script paths', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'tpf-client-entry-'));
+  t.after(() => rmSync(directory, {recursive: true, force: true}));
+  // No GitHub account or network is involved: validation only needs the CLI version.
+  writeFileSync(join(directory, 'gh'), '#!/bin/sh\nprintf "gh version 2.100.0\\n"\n', {mode: 0o755});
+  const source = fileURLToPath(new URL('./remote-node-generation.mjs', import.meta.url));
+  const alias = join(directory, 'client.mjs');
+  symlinkSync(source, alias);
+  for (const path of [source, alias]) {
+    const result = spawnSync(process.execPath, [path], {
+      env: {...process.env, PATH: directory}, encoding: 'utf8', timeout: 10_000,
+    });
+    assert.equal(result.status, 1, `${path}: must not silently succeed without entering the CLI`);
+    assert.match(result.stderr, /Usage: node remote-node-generation.mjs/);
+    assert.equal(result.stdout, '');
+  }
+});
+
+test('module import tolerates an unresolvable entry-point argument', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'tpf-client-import-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const source = new URL('./remote-node-generation.mjs', import.meta.url).href;
+  for (const argument of ['-', join(directory, 'missing.mjs')]) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval',
+      `process.argv[1] = ${JSON.stringify(argument)}; await import(${JSON.stringify(source)});`], {
+      cwd: directory, env: { ...process.env, PATH: directory }, encoding: 'utf8', timeout: 10_000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout, '');
+  }
+});
 
 function fixture(t, { symlinkInput = false } = {}) {
   const cwd = mkdtempSync(join(tmpdir(), 'tpf-generation-test-'));
@@ -93,6 +155,20 @@ test('dispatches exact source, verifies this run and installs only the expected 
   assert.equal(events.length, 4);
   assert.throws(() => generateRemote(args, mock), /Output already exists/);
   assert.equal(events.length, 4);
+});
+
+test('Node retrieval rejects a Python artifact for its Node dispatch', t => {
+  const { args, files, mock, output, receipt } = fixture(t);
+  files['application.py'] = 'class HandlerRegistry: pass\n';
+  files['models.py'] = 'class InputValue: pass\n';
+  delete files['application.ts'];
+  delete files['models.ts'];
+  const projection = JSON.parse(files['projection.json']);
+  files['projection.json'] = JSON.stringify({ ...projection, kind: 'compiler-python-local' });
+  receipt.target = 'python';
+  receipt.files = Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, sha256(bytes)]));
+  assert.throws(() => generateRemote(args, mock), /does not match|unexpected set of files/);
+  absent(output);
 });
 
 test('rejects an unpushed or moved ref before dispatch', t => {
@@ -241,4 +317,162 @@ test('stages committed Git blobs at authored paths, including nested projects', 
       assert.deepEqual(readdirSync(join(cwd, 'host')), ['source']);
     });
   }
+});
+
+test('waits for the exact dispatched run to become visible before watching it', () => {
+  const calls = [];
+  const delays = [];
+  watchRun(repository, runId, {
+    execute(command, args) {
+      assert.equal(command, 'gh');
+      calls.push(args);
+      if (calls.length === 1) return { status: 1, stdout: Buffer.from('HTTP/2.0 404 Not Found\n') };
+      return { status: 0 };
+    },
+    pause: delay => delays.push(delay),
+  });
+  const read = ['api', '--hostname', 'github.com', '--include', '--silent',
+    `repos/${repository}/actions/runs/${runId}?exclude_pull_requests=true`];
+  assert.deepEqual(calls, [read, read,
+    ['run', 'watch', '--repo', `github.com/${repository}`, runId, '--interval', '10']]);
+  assert.deepEqual(delays, [1000]);
+});
+
+test('bounds retries when a dispatched run remains invisible', () => {
+  const delays = [];
+  let reads = 0;
+  assert.throws(() => watchRun(repository, runId, {
+    execute(command, args) {
+      assert.equal(command, 'gh');
+      assert.equal(args[0], 'api');
+      reads++;
+      return { status: 1, stdout: Buffer.from('HTTP/2.0 404 Not Found\n') };
+    },
+    pause: delay => delays.push(delay),
+  }), /not visible yet.*before dispatching again/);
+  assert.equal(reads, 5);
+  assert.deepEqual(delays, [1000, 2000, 4000, 8000]);
+});
+
+test('surfaces non-404 read errors without retrying or watching', () => {
+  let reads = 0;
+  assert.throws(() => watchRun(repository, runId, {
+    execute(command, args) {
+      assert.equal(command, 'gh');
+      assert.equal(args[0], 'api');
+      reads++;
+      return { status: 1, stdout: Buffer.from('HTTP/2.0 403 Forbidden\n'),
+        stderr: Buffer.from('gh: Forbidden (HTTP 403)\n') };
+    },
+    pause: () => assert.fail('Forbidden responses must not be retried.'),
+  }), /Could not read generation run 123456.*Forbidden \(HTTP 403\)/);
+  assert.equal(reads, 1);
+});
+
+for (const statusLine of ['HTTP/2.0 503 Service Unavailable', '']) {
+  test(`readiness decoding failure retains ${statusLine || 'unavailable status'} without retry`, () => {
+    let reads = 0;
+    assert.throws(() => watchRun(repository, runId, {
+      execute(command, args) {
+        assert.equal(command, 'gh');
+        assert.equal(args[0], 'api');
+        reads++;
+        return { status: 1, stdout: Buffer.from(`${statusLine}\nX-Private: do-not-echo\n`),
+          stderr: Buffer.from('unexpected end of JSON input') };
+      },
+      pause: () => assert.fail('Unclassified errors must not be retried.'),
+    }), error => {
+      assert.match(error.message, statusLine ? /HTTP 503/ : /HTTP status unavailable/);
+      assert.match(error.message, /unexpected end of JSON input.*before dispatching again/);
+      assert.doesNotMatch(error.message, /do-not-echo/);
+      return true;
+    });
+    assert.equal(reads, 1);
+  });
+}
+
+async function testSharedRetrievalCases(t, resuming = false) {
+  const vectors = JSON.parse(readFileSync(new URL('./node-generation-client-cases.json', import.meta.url)));
+  for (const { name, change, error, workflowFailure } of vectors.cases) {
+    await t.test(name, t => {
+      const { args, files, mock, output, receipt, run } = fixture(t);
+      if (resuming) {
+        mock.runId = runId;
+        const api = mock.api;
+        mock.api = (path, body) => {
+          assert.equal(body, undefined, 'recovery must never dispatch');
+          assert.equal(path, `repos/${repository}/actions/runs/${runId}`, 'no mutable ref lookup');
+          return api(path, body);
+        };
+      }
+      files['application.ts'] = vectors.application;
+      files['models.ts'] = vectors.models;
+      for (const file of generatedFiles) receipt.files[file] = sha256(files[file]);
+      if (workflowFailure) {
+        run.conclusion = 'failure';
+        receipt.status = 'failed';
+        for (const file of generatedFiles) delete files[file];
+        files[diagnosticsFile] = 'pipeline.yaml:8 unsupported transport\n';
+        receipt.files = { [diagnosticsFile]: sha256(files[diagnosticsFile]) };
+      }
+      if (change) {
+        const [target, path, value] = change;
+        if (target === 'file') files[path] = value;
+        else {
+          const projection = target === 'projection' ? JSON.parse(files['projection.json']) : undefined;
+          const latest = structuredClone(run);
+          const root = { receipt, run, projection, latest }[target];
+          const keys = path.split('.');
+          const leaf = keys.pop();
+          keys.reduce((object, key) => object[key], root)[leaf] = value;
+          if (target === 'projection') {
+            files['projection.json'] = JSON.stringify(projection);
+            receipt.files['projection.json'] = sha256(files['projection.json']);
+          }
+          if (target === 'latest') {
+            const api = mock.api;
+            let reads = 0;
+            mock.api = (path, body) => path.endsWith(`/runs/${runId}`) && ++reads === (resuming ? 3 : 2) ? latest : api(path, body);
+          }
+        }
+      }
+      if (error) {
+        assert.throws(() => generateRemote(args, mock), { message: new RegExp(error) });
+        absent(output);
+      } else {
+        assert.equal(generateRemote(args, mock), output);
+        for (const [name, bytes] of Object.entries(files)) {
+          assert.deepEqual(readFileSync(join(output, name)), Buffer.from(bytes));
+        }
+      }
+    });
+  }
+}
+
+test('accepts and rejects the shared Node/Python retrieval cases', testSharedRetrievalCases);
+
+
+test('recovery preserves every shared run/receipt/artifact rejection without dispatch', t => testSharedRetrievalCases(t, true));
+
+test('recovers after an accepted dispatch loses readiness, without a second dispatch', t => {
+  const { args, events, mock, output, run } = fixture(t);
+  mock.watch = () => { throw new Error('HTTP 500 after dispatch'); };
+  assert.throws(() => generateRemote(args, mock), /HTTP 500/);
+  absent(output);
+  assert.equal(events.filter(path => path.endsWith('/dispatches')).length, 1);
+  run.status = 'in_progress';
+  mock.watch = () => { run.status = 'completed'; };
+  assert.equal(generateRemote(args, { ...mock, runId }), output);
+  assert.equal(events.filter(path => path.endsWith('/dispatches')).length, 1);
+  assert.equal(events.filter(path => path.includes('/commits/')).length, 1);
+  assert.throws(() => generateRemote(args, { ...mock, runId }), /Output already exists/);
+});
+
+test('recovery rejects malformed run IDs before any API or download', t => {
+  const { args, mock, events, output } = fixture(t);
+  for (const runId of ['', '0', '-1', '123/other', '1?x', 123, null]) {
+    assert.throws(() => generateRemote(args, { ...mock, runId }), /positive decimal/);
+  }
+  assert.deepEqual(events, []);
+  absent(output);
 });

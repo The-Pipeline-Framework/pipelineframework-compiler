@@ -125,6 +125,34 @@ class StepArtifactGenerationServiceTest {
     }
 
     @Test
+    void descriptorConflictNamesBothAuthoredStepsAndTheirKindsWithoutChangingItsScope() {
+        var ctx = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());
+        var model = new PipelineStepModel.Builder().serviceName("ProcessFooService")
+            .generatedName("ProcessFooService").servicePackage("example")
+            .serviceClassName(ClassName.get("example", "Foo"))
+            .streamingShape(StreamingShape.UNARY_UNARY).executionMode(ExecutionMode.DEFAULT).build();
+        var command = mock(org.pipelineframework.processor.ir.StepDefinition.class);
+        when(command.name()).thenReturn("foo");
+        when(command.kind()).thenReturn(org.pipelineframework.processor.ir.StepKind.COMMAND);
+        var ordinary = new org.pipelineframework.processor.ir.StepDefinition("Process foo",
+            org.pipelineframework.processor.ir.StepKind.INTERNAL, ClassName.get("example", "Foo"), null,
+            org.pipelineframework.processor.ir.MapperFallbackMode.NONE, null, null, null);
+        ctx.recordAwaitDescriptorOrigin(model, command);
+        ctx.recordAwaitDescriptorOrigin(model, ordinary);
+        var descriptor = java.util.Map.<String, Object>of("stepId", "ProcessFooService");
+        ctx.recordAwaitRuntimeDescriptor(model, descriptor);
+        assertDoesNotThrow(() -> ctx.recordAwaitRuntimeDescriptor(model, descriptor));
+        var conflict = assertThrows(IllegalStateException.class,
+            () -> ctx.recordAwaitRuntimeDescriptor(model, java.util.Map.of("callbackContract", "completed")));
+        assertTrue(conflict.getMessage().contains("'foo' (COMMAND)"), conflict.getMessage());
+        assertTrue(conflict.getMessage().contains("'Process foo' (INTERNAL)"), conflict.getMessage());
+        assertEquals(descriptor, ctx.awaitRuntimeDescriptor(model).orElseThrow());
+        var otherDefinition = model.toBuilder()
+            .definition(new org.pipelineframework.processor.composition.PipelineReference("other")).build();
+        assertDoesNotThrow(() -> ctx.recordAwaitRuntimeDescriptor(otherDefinition, java.util.Map.of("stepId", "other")));
+    }
+
+    @Test
     void resolvedFunctionPlatformReachesBothRenderersWithoutProcessorOption() throws Exception {
         var ctx = new PipelineCompilationContext(processingEnv, org.pipelineframework.processor.Jsr269SourceInventory.empty());
         ctx.setGeneratedSourcesRoot(tempDir);
