@@ -126,36 +126,65 @@ public class PipelineContractMetadataGenerator {
     }
 
     /**
-     * Renders the coordinator Contract for an already admitted whole-bundle native worker.
-     * Runtime and handler names belong to the executable projection, not the logical Contract.
+     * Renders a class-free schema v3 coordinator Contract for a canonical v3 polyglot application
+     * (ADR-0092). Canonical type definitions omit {@code runtimeClass} so the Java execution engine
+     * validates {@code TypedDurablePayload} boundaries directly against {@code CanonicalTypeCatalogue}.
      *
-     * @param model canonical DSL model admitted by the native compiler
-     * @param profile admitted native execution profile
-     * @param retryLimits admitted retry limits in model step order
-     * @return serialized coordinator Contract
+     * @param model normalized v3 pipeline template model
+     * @param yamlConfig parsed YAML configuration carrying step kinds and connector bindings
+     * @return deterministic serialized schema v3 pipeline contract JSON
      */
-    public String renderNativeWorkerContract(
-        PipelineTemplateConfig model, String profile, List<Integer> retryLimits
-    ) {
-        if (retryLimits.size() != model.steps().size()) {
-            throw new IllegalArgumentException("Native retry limits must correspond to each admitted step");
+    public String renderPolyglotContract(PipelineTemplateConfig model, PipelineYamlConfig yamlConfig) {
+        Objects.requireNonNull(model, "model must not be null");
+        if (model.dialect() != org.pipelineframework.config.template.PipelineTemplateDialect.V3) {
+            throw new IllegalArgumentException("Polyglot compilation requires DSL version 3");
         }
+        Map<String, Object> canonicalTypes = canonicalTypes(model.typeModel(), ignored -> Optional.empty());
+        if (canonicalTypes.isEmpty()) {
+            throw new IllegalArgumentException("Polyglot compilation requires canonical v3 type definitions");
+        }
+        if (model.steps().isEmpty()) {
+            throw new IllegalArgumentException("Polyglot compilation requires at least one pipeline step");
+        }
+        Map<String, PipelineYamlStep> yamlByToken = indexYamlSteps(yamlConfig);
         List<Map<String, Object>> steps = new ArrayList<>();
-        for (var step : model.steps()) {
-            steps.add(logicalStep(steps.size(), step.name(), "internal", step.cardinality(),
+        for (int i = 0; i < model.steps().size(); i++) {
+            var step = model.steps().get(i);
+            PipelineYamlStep yamlStep = yamlByToken.get(normalizeStepToken(step.name()));
+            String kind = yamlStep == null ? "internal" : yamlStep.kind();
+            String cardinality = normalizePolyglotCardinality(step.cardinality());
+            steps.add(logicalStep(i, step.name(), kind, cardinality,
                 step.inputTypeName(), step.outputTypeName()));
         }
-        var metadata = contractMetadata(2, model.appName(), model.platform().name(), model.transport(),
+        String inputContract = model.inputContract() != null && !model.inputContract().isBlank()
+            ? model.inputContract()
+            : model.steps().getFirst().inputTypeName();
+        String outputContract = model.outputContract() != null && !model.outputContract().isBlank()
+            ? model.outputContract()
+            : model.steps().getLast().outputTypeName();
+        var metadata = contractMetadata(3, model.appName(), model.platform().name(), model.transport(),
             Optional.empty(), false, Optional.of(PipelineRuntimeMapping.Layout.MONOLITH.name()),
-            steps, canonicalTypes(model.typeModel(), ignored -> Optional.empty()));
+            steps, canonicalTypes);
+        metadata.put("rootBoundary", immutableSortedMap(Map.of(
+            "schemaVersion", 1,
+            "inputCanonicalTypeId", inputContract,
+            "outputCanonicalTypeId", outputContract)));
+        metadata.put("importedDefinitions", List.of());
+        metadata.put("capabilityImports", List.of());
         metadata.put("capabilities", capabilities(List.of("local", "rest")));
+        return renderContract(metadata, Optional.empty());
+    }
 
-        // Schema 2 has no native policy field. Include the language-neutral part of
-        // the exact projection in the compiler identity without extending the wire shape.
-        var policy = new LinkedHashMap<String, Object>();
-        policy.put("profile", profile);
-        policy.put("retryLimits", List.copyOf(retryLimits));
-        return renderContract(metadata, Optional.of(policy));
+    private static String normalizePolyglotCardinality(String raw) {
+        String normalized = raw == null ? "ONE_TO_ONE" : raw.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "ONE_TO_ONE", "SIDE_EFFECT" -> "ONE_TO_ONE";
+            case "ONE_TO_MANY", "EXPANSION" -> "ONE_TO_MANY";
+            case "MANY_TO_ONE", "REDUCTION" -> "MANY_TO_ONE";
+            case "MANY_TO_MANY" -> throw new IllegalArgumentException(
+                "Full-duplex MANY_TO_MANY streaming is intentionally deferred from the initial polyglot delivery surface (ADR-0092)");
+            default -> throw new IllegalArgumentException("Unsupported polyglot step cardinality: " + raw);
+        };
     }
 
     private static Map<String, Object> contractMetadata(
