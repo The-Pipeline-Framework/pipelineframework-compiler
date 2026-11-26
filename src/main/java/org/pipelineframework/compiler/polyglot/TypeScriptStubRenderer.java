@@ -117,11 +117,9 @@ final class TypeScriptStubRenderer {
 
             sb.append("export interface CommandDispatchIdentity {\n");
             sb.append("  readonly commandId: string;\n");
-            sb.append("  readonly executionId: string;\n");
-            sb.append("  readonly tenantId: string;\n");
-            sb.append("  readonly stepId: string;\n");
+            sb.append("  readonly occurrenceId: string;\n");
+            sb.append("  readonly attemptId: string;\n");
             sb.append("  readonly providerIdempotencyKey: string;\n");
-            sb.append("  readonly attemptNumber: number;\n");
             sb.append("}\n\n");
 
             sb.append("export interface CommandConnectorContext {\n");

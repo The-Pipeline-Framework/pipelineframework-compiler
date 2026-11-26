@@ -110,11 +110,9 @@ final class PythonStubRenderer {
             sb.append("@dataclass(frozen=True, slots=True)\n");
             sb.append("class CommandDispatchIdentity:\n");
             sb.append("    command_id: str\n");
-            sb.append("    execution_id: str\n");
-            sb.append("    tenant_id: str\n");
-            sb.append("    step_id: str\n");
-            sb.append("    provider_idempotency_key: str\n");
-            sb.append("    attempt_number: int\n\n");
+            sb.append("    occurrence_id: str\n");
+            sb.append("    attempt_id: str\n");
+            sb.append("    provider_idempotency_key: str\n\n");
 
             sb.append("@dataclass(frozen=True, slots=True)\n");
             sb.append("class CommandConnectorContext:\n");
@@ -579,7 +577,7 @@ final class PythonStubRenderer {
             sb.append("                env = _loads_exact(body)\n");
             sb.append("                inp = _decode_named('").append(escapePy(c.inputCanonicalTypeId())).append("', env['input'])\n");
             sb.append("                di = env['dispatchIdentity']\n");
-            sb.append("                ident = t.CommandDispatchIdentity(command_id=di['commandId'], execution_id=di['executionId'], tenant_id=di['tenantId'], step_id=di['stepId'], provider_idempotency_key=di['providerIdempotencyKey'], attempt_number=int(di['attemptNumber']))\n");
+            sb.append("                ident = t.CommandDispatchIdentity(command_id=di['commandId'], occurrence_id=di['occurrenceId'], attempt_id=di['attemptId'], provider_idempotency_key=di['providerIdempotencyKey'])\n");
             sb.append("                ctx = t.CommandConnectorContext(operation='").append(escapePy(c.operationId()))
                 .append("', dispatch_identity=ident, secrets=env.get('secrets') or {}, scope=env.get('scope'))\n");
             sb.append("                res = dict(connectors.dispatch_").append(base).append("(inp, ctx))\n");
@@ -596,7 +594,7 @@ final class PythonStubRenderer {
                 sb.append("                    return\n");
                 sb.append("                env = _loads_exact(body)\n");
                 sb.append("                di = env['dispatchIdentity']\n");
-                sb.append("                ident = t.CommandDispatchIdentity(command_id=di['commandId'], execution_id=di['executionId'], tenant_id=di['tenantId'], step_id=di['stepId'], provider_idempotency_key=di['providerIdempotencyKey'], attempt_number=int(di['attemptNumber']))\n");
+                sb.append("                ident = t.CommandDispatchIdentity(command_id=di['commandId'], occurrence_id=di['occurrenceId'], attempt_id=di['attemptId'], provider_idempotency_key=di['providerIdempotencyKey'])\n");
                 sb.append("                ctx = t.CommandReconcileContext(operation='").append(escapePy(c.operationId()))
                     .append("', recovery_target_identity=env.get('recoveryTargetIdentity', ''), dispatch_identity=ident, secrets=env.get('secrets') or {})\n");
                 sb.append("                res = dict(connectors.reconcile_").append(base).append("(ctx))\n");

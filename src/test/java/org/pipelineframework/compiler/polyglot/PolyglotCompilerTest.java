@@ -566,7 +566,7 @@ class PolyglotCompilerTest {
             assertTrue(queryResp.body().contains("secret:sk-live-99"));
 
             String cmdBody = """
-                {"operation":"ledger.settle","input":{"totalSeq":9007199254740995,"totalAmount":99999999999999999999.123456789,"lineCount":2},"dispatchIdentity":{"commandId":"cmd-1","executionId":"exec-1","tenantId":"t1","stepId":"post-settlement","providerIdempotencyKey":"idem-77","attemptNumber":1},"secrets":{"apiKey":"sk-live-99"}}""";
+                {"operation":"ledger.settle","input":{"totalSeq":9007199254740995,"totalAmount":99999999999999999999.123456789,"lineCount":2},"dispatchIdentity":{"commandId":"cmd-1","occurrenceId":"occ-1","attemptId":"att-1","providerIdempotencyKey":"idem-77"},"secrets":{"apiKey":"sk-live-99"}}""";
             HttpResponse<String> cmdResp = sendSigned(client, baseUri, "/tpf/connector/command/ledger.settle/dispatch",
                 cmdBody.getBytes(StandardCharsets.UTF_8), cmdBody.getBytes(StandardCharsets.UTF_8), "application/json");
             assertEquals(200, cmdResp.statusCode(), cmdResp.body());
@@ -576,7 +576,7 @@ class PolyglotCompilerTest {
             assertTrue(cmdResp.body().contains("ledger-rcpt-42"));
 
             String recBody = """
-                {"operation":"ledger.settle","recoveryTargetIdentity":"target-ledger","dispatchIdentity":{"commandId":"cmd-1","executionId":"exec-1","tenantId":"t1","stepId":"post-settlement","providerIdempotencyKey":"idem-77","attemptNumber":1},"secrets":{"apiKey":"sk-live-99"}}""";
+                {"operation":"ledger.settle","recoveryTargetIdentity":"target-ledger","dispatchIdentity":{"commandId":"cmd-1","occurrenceId":"occ-1","attemptId":"att-1","providerIdempotencyKey":"idem-77"},"secrets":{"apiKey":"sk-live-99"}}""";
             HttpResponse<String> recResp = sendSigned(client, baseUri, "/tpf/connector/command/ledger.settle/reconcile",
                 recBody.getBytes(StandardCharsets.UTF_8), recBody.getBytes(StandardCharsets.UTF_8), "application/json");
             assertEquals(200, recResp.statusCode(), recResp.body());
