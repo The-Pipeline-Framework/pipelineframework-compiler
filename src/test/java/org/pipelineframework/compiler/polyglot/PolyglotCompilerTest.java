@@ -556,7 +556,38 @@ class PolyglotCompilerTest {
             assertTrue(reduceResp.body().contains("99999999999999999999.123456789"), "Exact decimal required: " + reduceResp.body());
             assertTrue(reduceResp.body().contains("\"lineCount\":2"));
 
-            // 6. Tier-2 Custom Polyglot Connector Query + Command Dispatch + Reconcile
+            // 6. Tier-2 Loopback Connector Listener Mutual Challenge/Response (ADR-0092 §4)
+            String challenge = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+            String challengeBody = "{\"challenge\":\"" + challenge + "\"}";
+            HttpResponse<String> challengeResp = sendSigned(client, baseUri, "/tpf/connector/auth/challenge",
+                challengeBody.getBytes(StandardCharsets.UTF_8), challengeBody.getBytes(StandardCharsets.UTF_8), "application/json");
+            assertEquals(200, challengeResp.statusCode(), challengeResp.body());
+            JsonObject challengeJson = JsonParser.parseString(challengeResp.body()).getAsJsonObject();
+            assertEquals("OK", challengeJson.get("status").getAsString());
+            assertEquals(challenge, challengeJson.get("challenge").getAsString());
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(SHARED_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            String expectedProof = java.util.HexFormat.of().formatHex(
+                mac.doFinal(("tpf-connector-listener-auth-v1\n" + challenge).getBytes(StandardCharsets.UTF_8)));
+            assertEquals(expectedProof, challengeJson.get("proof").getAsString());
+
+            // Unauthenticated / bad signature challenge -> HTTP 401
+            HttpRequest badChallenge = HttpRequest.newBuilder(baseUri.resolve("/tpf/connector/auth/challenge"))
+                .header("Content-Type", "application/json")
+                .header(TransitionWorkerSignature.TIMESTAMP_HEADER, Instant.now().toString())
+                .header(TransitionWorkerSignature.NONCE_HEADER, UUID.randomUUID().toString())
+                .header(TransitionWorkerSignature.SIGNATURE_HEADER, "deadbeef")
+                .POST(HttpRequest.BodyPublishers.ofString(challengeBody))
+                .build();
+            assertEquals(401, client.send(badChallenge, HttpResponse.BodyHandlers.ofString()).statusCode());
+
+            // Blank challenge -> HTTP 400
+            String blankChallenge = "{\"challenge\":\"   \"}";
+            HttpResponse<String> blankChallengeResp = sendSigned(client, baseUri, "/tpf/connector/auth/challenge",
+                blankChallenge.getBytes(StandardCharsets.UTF_8), blankChallenge.getBytes(StandardCharsets.UTF_8), "application/json");
+            assertEquals(400, blankChallengeResp.statusCode(), blankChallengeResp.body());
+
+            // 7. Tier-2 Custom Polyglot Connector Query + Command Dispatch + Reconcile
             String queryBody = """
                 {"operation":"ledger.rate","input":{"lineSeq":9007199254740993,"amount":42.50},"secrets":{"apiKey":"sk-live-99"}}""";
             HttpResponse<String> queryResp = sendSigned(client, baseUri, "/tpf/connector/query/ledger.rate",

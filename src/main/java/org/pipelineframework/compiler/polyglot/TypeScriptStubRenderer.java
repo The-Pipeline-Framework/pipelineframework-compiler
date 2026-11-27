@@ -655,6 +655,19 @@ final class TypeScriptStubRenderer {
         }
 
         // Tier-2 custom polyglot connector routes
+        if (hasConnectors) {
+            sb.append("      if (path === '/tpf/connector/auth/challenge') {\n");
+            sb.append("        const body = await readBody(req, maxBodyBytes);\n");
+            sb.append("        if (!verifyHmac(req, path, body, options.sharedSecret, maxSkewMs)) { sendJson(res, 401, { status: 'ERROR', code: 'unauthorized' }); return; }\n");
+            sb.append("        const env = parseWithRawNumbers(body.toString('utf8'));\n");
+            sb.append("        const rawChallenge = env && typeof env === 'object' && !Array.isArray(env) ? (env as Record<string, unknown>).challenge : undefined;\n");
+            sb.append("        const challenge = typeof rawChallenge === 'string' ? rawChallenge.trim() : '';\n");
+            sb.append("        if (!challenge || challenge.length > 256) { sendJson(res, 400, { status: 'ERROR', code: 'invalid_challenge' }); return; }\n");
+            sb.append("        const proof = crypto.createHmac('sha256', options.sharedSecret).update(`tpf-connector-listener-auth-v1\\n${challenge}`, 'utf8').digest('hex');\n");
+            sb.append("        sendJson(res, 200, { status: 'OK', challenge, proof });\n");
+            sb.append("        return;\n");
+            sb.append("      }\n");
+        }
         for (CompiledConnectorOperation q : plan.polyglotQueries()) {
             sb.append("      if (path === '").append(escapeJs(q.dispatchPath())).append("') {\n");
             sb.append("        const body = await readBody(req, maxBodyBytes);\n");
