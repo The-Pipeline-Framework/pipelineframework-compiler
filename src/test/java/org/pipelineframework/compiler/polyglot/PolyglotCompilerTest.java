@@ -387,8 +387,8 @@ class PolyglotCompilerTest {
                 assertTrue(respHdr.toString().startsWith("HTTP/1.1 200"), respHdr.toString());
 
                 // Read output item #1 BEFORE sending item #2!
-                String out1 = readHttpChunkLine(in);
-                assertNotNull(out1);
+                ChunkedNdjsonReader reader = new ChunkedNdjsonReader(in);
+                String out1 = reader.nextFrame().orElseThrow(() -> new AssertionError("Expected output frame #1"));
                 assertTrue(out1.contains("\"event\":\"item\""), out1);
                 assertTrue(out1.contains("9007199254740994"), "Exact int64 required: " + out1);
                 assertTrue(out1.contains("99999999999999999999.123456789"), "Exact decimal required: " + out1);
@@ -400,11 +400,9 @@ class PolyglotCompilerTest {
                 out.write("0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
                 out.flush();
 
-                String out2 = readHttpChunkLine(in);
-                assertNotNull(out2);
+                String out2 = reader.nextFrame().orElseThrow(() -> new AssertionError("Expected output frame #2"));
                 assertTrue(out2.contains("42") && out2.contains("12.5"), out2);
-                String complete = readHttpChunkLine(in);
-                assertNotNull(complete);
+                String complete = reader.nextFrame().orElseThrow(() -> new AssertionError("Expected complete frame"));
                 assertTrue(complete.contains("\"event\":\"complete\"") && complete.contains("\"itemCount\":2"), complete);
             }
         } finally {
@@ -423,23 +421,66 @@ class PolyglotCompilerTest {
         out.flush();
     }
 
-    private static String readHttpChunkLine(java.io.BufferedInputStream in) throws IOException {
-        StringBuilder sizeHex = new StringBuilder();
-        int c;
-        while ((c = in.read()) != -1) {
-            if (c == '\r') {
-                in.read();
-                break;
-            }
-            sizeHex.append((char) c);
+    private static final class ChunkedNdjsonReader {
+        private final java.io.BufferedInputStream in;
+        private final java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        private boolean eof;
+
+        private ChunkedNdjsonReader(java.io.BufferedInputStream in) {
+            this.in = in;
         }
-        if (sizeHex.isEmpty()) return null;
-        int sz = Integer.parseInt(sizeHex.toString().trim().split(";", 2)[0], 16);
-        if (sz == 0) return null;
-        byte[] data = in.readNBytes(sz);
-        in.read();
-        in.read();
-        return new String(data, StandardCharsets.UTF_8).trim();
+
+        private java.util.Optional<String> nextFrame() throws IOException {
+            while (true) {
+                byte[] current = buffer.toByteArray();
+                for (int i = 0; i < current.length; i++) {
+                    if (current[i] == '\n') {
+                        String frame = new String(current, 0, i, StandardCharsets.UTF_8).trim();
+                        buffer.reset();
+                        if (i + 1 < current.length) {
+                            buffer.write(current, i + 1, current.length - i - 1);
+                        }
+                        if (!frame.isEmpty()) {
+                            return java.util.Optional.of(frame);
+                        }
+                        current = buffer.toByteArray();
+                        i = -1;
+                    }
+                }
+                if (eof) {
+                    if (current.length == 0) {
+                        return java.util.Optional.empty();
+                    }
+                    String trailing = new String(current, StandardCharsets.UTF_8).trim();
+                    buffer.reset();
+                    return trailing.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(trailing);
+                }
+                StringBuilder sizeHex = new StringBuilder();
+                int c;
+                while ((c = in.read()) != -1) {
+                    if (c == '\r') {
+                        in.read();
+                        break;
+                    }
+                    sizeHex.append((char) c);
+                }
+                if (sizeHex.isEmpty()) {
+                    eof = true;
+                    continue;
+                }
+                int sz = Integer.parseInt(sizeHex.toString().trim().split(";", 2)[0], 16);
+                if (sz == 0) {
+                    in.read();
+                    in.read();
+                    eof = true;
+                    continue;
+                }
+                byte[] data = in.readNBytes(sz);
+                in.read();
+                in.read();
+                buffer.write(data);
+            }
+        }
     }
 
     @Test
