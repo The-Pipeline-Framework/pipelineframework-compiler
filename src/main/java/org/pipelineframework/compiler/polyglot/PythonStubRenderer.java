@@ -548,6 +548,23 @@ final class PythonStubRenderer {
             }
         }
 
+        if (hasConnectors) {
+            sb.append("            if path == '/tpf/connector/auth/challenge':\n");
+            sb.append("                body = self._read_body()\n");
+            sb.append("                if not _verify_hmac(self.headers, 'POST', path, body, shared_secret, signature_tolerance_s):\n");
+            sb.append("                    self._send_json(401, {'status': 'ERROR', 'code': 'unauthorized'})\n");
+            sb.append("                    return\n");
+            sb.append("                env = _loads_exact(body)\n");
+            sb.append("                raw_challenge = env.get('challenge') if isinstance(env, dict) else None\n");
+            sb.append("                challenge = raw_challenge.strip() if isinstance(raw_challenge, str) else ''\n");
+            sb.append("                if not challenge or len(challenge) > 256:\n");
+            sb.append("                    self._send_json(400, {'status': 'ERROR', 'code': 'invalid_challenge'})\n");
+            sb.append("                    return\n");
+            sb.append("                proof = hmac.new(shared_secret.encode('utf-8'), f'tpf-connector-listener-auth-v1\\n{challenge}'.encode('utf-8'), hashlib.sha256).hexdigest()\n");
+            sb.append("                self._send_json(200, {'status': 'OK', 'challenge': challenge, 'proof': proof})\n");
+            sb.append("                return\n");
+        }
+
         for (CompiledConnectorOperation q : plan.polyglotQueries()) {
             String fn = "query_" + PolyglotCompiler.toSnakeCase(q.operationId());
             sb.append("            if path == '").append(escapePy(q.dispatchPath())).append("':\n");
