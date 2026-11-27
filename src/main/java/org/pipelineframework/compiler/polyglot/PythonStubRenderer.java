@@ -95,6 +95,9 @@ final class PythonStubRenderer {
                     case "MANY_TO_ONE" -> sb.append("    def ").append(pyMethod)
                         .append("(self, inputs: Iterator[").append(step.inputCanonicalTypeId())
                         .append("], ctx: FunctionContext) -> ").append(step.outputCanonicalTypeId()).append(": ...\n");
+                    case "MANY_TO_MANY" -> sb.append("    def ").append(pyMethod)
+                        .append("(self, inputs: Iterator[").append(step.inputCanonicalTypeId())
+                        .append("], ctx: FunctionContext) -> Iterator[").append(step.outputCanonicalTypeId()).append("]: ...\n");
                     default -> throw new IllegalStateException("Unsupported cardinality: " + step.cardinality());
                 }
             }
@@ -384,6 +387,8 @@ final class PythonStubRenderer {
                     return False
                 try:
                     parsed = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                    if parsed.tzinfo is None:
+                        return False
                     if abs((datetime.now(timezone.utc) - parsed).total_seconds()) > max_skew_s:
                         return False
                 except ValueError:
@@ -542,6 +547,50 @@ final class PythonStubRenderer {
                         .append(escapePy(step.outputCanonicalTypeId())).append("'}, out)})\n");
                     sb.append("                except Exception as err:\n");
                     sb.append("                    self._send_json(200, {'status': 'ERROR', **_classify_failure(err)})\n");
+                    sb.append("                return\n");
+                }
+                case "MANY_TO_MANY" -> {
+                    sb.append("                if not _verify_hmac(self.headers, 'POST', path, STREAMING_BODY_DIGEST_SENTINEL, shared_secret, signature_tolerance_s):\n");
+                    sb.append("                    self._send_json(401, {'status': 'ERROR', 'code': 'UNAUTHORIZED'})\n");
+                    sb.append("                    return\n");
+                    sb.append("                ctx = t.FunctionContext(step_id='").append(escapePy(step.stepId()))
+                        .append("', step_index=").append(step.stepIndex()).append(")\n");
+                    sb.append("                self.send_response(200)\n");
+                    sb.append("                self.send_header('Content-Type', 'application/x-ndjson')\n");
+                    sb.append("                self.send_header('Transfer-Encoding', 'chunked')\n");
+                    sb.append("                self.end_headers()\n");
+                    sb.append("                def write_chunk(obj: Any) -> None:\n");
+                    sb.append("                    line = _dumps_canonical(obj) + b'\\n'\n");
+                    sb.append("                    self.wfile.write(f'{len(line):x}\\r\\n'.encode('ascii') + line + b'\\r\\n')\n");
+                    sb.append("                    self.wfile.flush()\n");
+                    sb.append("                def iter_inputs() -> Iterator[Any]:\n");
+                    sb.append("                    saw_complete = False\n");
+                    sb.append("                    for raw_line in self._iter_ndjson_lines():\n");
+                    sb.append("                        if not raw_line.strip():\n");
+                    sb.append("                            continue\n");
+                    sb.append("                        frame = _loads_exact(raw_line)\n");
+                    sb.append("                        if frame.get('event') == 'complete':\n");
+                    sb.append("                            saw_complete = True\n");
+                    sb.append("                            break\n");
+                    sb.append("                        if frame.get('event') == 'error':\n");
+                    sb.append("                            raise t.TpfTransientError('UPSTREAM_ERROR', str(frame.get('message') or 'Upstream stream failed'))\n");
+                    sb.append("                        if frame.get('event') == 'item':\n");
+                    sb.append("                            yield _decode_named('").append(escapePy(step.inputCanonicalTypeId())).append("', frame['payload'])\n");
+                    sb.append("                    if not saw_complete:\n");
+                    sb.append("                        raise t.TpfTransientError('TRUNCATED_STREAM', 'Missing complete sentinel')\n");
+                    sb.append("                try:\n");
+                    sb.append("                    item_count = 0\n");
+                    sb.append("                    for item in handlers.").append(pyMethod).append("(iter_inputs(), ctx):\n");
+                    sb.append("                        item_count += 1\n");
+                    sb.append("                        write_chunk({'event': 'item', 'outputTypeId': '")
+                        .append(escapePy(step.outputCanonicalTypeId())).append("', 'payload': _to_json_tree({'kind': 'named', 'id': '")
+                        .append(escapePy(step.outputCanonicalTypeId())).append("'}, item)})\n");
+                    sb.append("                    write_chunk({'event': 'complete', 'itemCount': item_count})\n");
+                    sb.append("                except Exception as err:\n");
+                    sb.append("                    write_chunk({'event': 'error', **_classify_failure(err)})\n");
+                    sb.append("                finally:\n");
+                    sb.append("                    self.wfile.write(b'0\\r\\n\\r\\n')\n");
+                    sb.append("                    self.wfile.flush()\n");
                     sb.append("                return\n");
                 }
                 default -> throw new IllegalStateException("Unexpected cardinality: " + step.cardinality());

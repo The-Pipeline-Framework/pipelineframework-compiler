@@ -99,6 +99,9 @@ final class TypeScriptStubRenderer {
                 case "MANY_TO_ONE" ->
                     "(inputs: AsyncIterable<" + step.inputCanonicalTypeId() + ">, ctx: FunctionContext) => Promise<"
                         + step.outputCanonicalTypeId() + ">";
+                case "MANY_TO_MANY" ->
+                    "(inputs: AsyncIterable<" + step.inputCanonicalTypeId() + ">, ctx: FunctionContext) => AsyncIterable<"
+                        + step.outputCanonicalTypeId() + ">";
                 default -> throw new IllegalStateException("Unsupported cardinality: " + step.cardinality());
             };
             sb.append("  /** Step #").append(step.stepIndex()).append(": ").append(step.authoredName())
@@ -646,6 +649,51 @@ final class TypeScriptStubRenderer {
                     sb.append("        } catch (err) {\n");
                     sb.append("          const f = classifyFailure(err);\n");
                     sb.append("          sendJson(res, 200, { status: 'ERROR', ...f });\n");
+                    sb.append("        }\n");
+                    sb.append("        return;\n");
+                }
+                case "MANY_TO_MANY" -> {
+                    sb.append("        if (!verifyHmac(req, path, Buffer.from(STREAMING_BODY_DIGEST_SENTINEL, 'utf8'), options.sharedSecret, maxSkewMs)) { sendJson(res, 401, { status: 'ERROR', code: 'UNAUTHORIZED' }); return; }\n");
+                    sb.append("        const ctx: FunctionContext = { stepId: '").append(escapeJs(step.stepId()))
+                        .append("', stepIndex: ").append(step.stepIndex()).append(" };\n");
+                    sb.append("        res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Transfer-Encoding': 'chunked' });\n");
+                    sb.append("        res.flushHeaders();\n");
+                    sb.append("        const rl = readline.createInterface({ input: req, crlfDelay: Infinity });\n");
+                    sb.append("        async function* streamInputs() {\n");
+                    sb.append("          let sawComplete = false;\n");
+                    sb.append("          for await (const line of rl) {\n");
+                    sb.append("            const trimmed = line.trim();\n");
+                    sb.append("            if (!trimmed) continue;\n");
+                    sb.append("            const frame = parseWithRawNumbers(trimmed) as Record<string, unknown>;\n");
+                    sb.append("            if (frame.event === 'complete') { sawComplete = true; break; }\n");
+                    sb.append("            if (frame.event === 'error') { throw new TpfTransientError('UPSTREAM_ERROR', String(frame.message ?? 'Upstream stream failed')); }\n");
+                    sb.append("            if (frame.event === 'item') {\n");
+                    sb.append("              yield decodeValue({ kind: 'named', id: '").append(escapeJs(step.inputCanonicalTypeId()))
+                        .append("' }, frame.payload) as never;\n");
+                    sb.append("            }\n");
+                    sb.append("          }\n");
+                    sb.append("          if (!sawComplete) throw new TpfTransientError('TRUNCATED_STREAM', 'Missing complete sentinel');\n");
+                    sb.append("        }\n");
+                    sb.append("        try {\n");
+                    sb.append("          let itemCount = 0;\n");
+                    sb.append("          for await (const item of handlers.").append(step.handlerKey()).append("(streamInputs(), ctx)) {\n");
+                    sb.append("            if (res.destroyed || res.writableEnded) return;\n");
+                    sb.append("            itemCount += 1;\n");
+                    sb.append("            res.write(JSON.stringify({ event: 'item', outputTypeId: '").append(escapeJs(step.outputCanonicalTypeId()))
+                        .append("', payload: encodeValue({ kind: 'named', id: '").append(escapeJs(step.outputCanonicalTypeId()))
+                        .append("' }, item) }) + '\\n');\n");
+                    sb.append("          }\n");
+                    sb.append("          if (!res.destroyed && !res.writableEnded) {\n");
+                    sb.append("            res.write(JSON.stringify({ event: 'complete', itemCount }) + '\\n');\n");
+                    sb.append("          }\n");
+                    sb.append("        } catch (err) {\n");
+                    sb.append("          if (!res.destroyed && !res.writableEnded) {\n");
+                    sb.append("            const f = classifyFailure(err);\n");
+                    sb.append("            res.write(JSON.stringify({ event: 'error', ...f }) + '\\n');\n");
+                    sb.append("          }\n");
+                    sb.append("        } finally {\n");
+                    sb.append("          rl.close();\n");
+                    sb.append("          if (!res.writableEnded) res.end();\n");
                     sb.append("        }\n");
                     sb.append("        return;\n");
                 }

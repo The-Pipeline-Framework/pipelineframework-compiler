@@ -34,7 +34,8 @@ import org.pipelineframework.processor.util.PipelineContractMetadataGenerator;
  * Class-free canonical v3 polyglot compiler (ADR-0092).
  *
  * <p>Reads a canonical v3 {@code pipeline.yaml} using TPF's shared DSL loaders, validates step
- * boundaries and cardinalities ({@code ONE_TO_ONE}, {@code ONE_TO_MANY}, {@code MANY_TO_ONE}),
+ * boundaries and cardinalities ({@code ONE_TO_ONE}, {@code ONE_TO_MANY}, {@code MANY_TO_ONE},
+ * {@code MANY_TO_MANY}),
  * emits a class-free schema v3 {@code META-INF/pipeline/pipeline-contract.json}, emits a
  * {@code META-INF/pipeline/polyglot-manifest.json} wiring descriptor for the Java execution engine
  * ({@code CanonicalFunctionHost*} and Tier-2 {@code PolyglotConnectorProvider}), and renders thin
@@ -365,6 +366,7 @@ public final class PolyglotCompiler {
                     case "ONE_TO_ONE" -> FUNCTION_PATH_PREFIX + stepId;
                     case "ONE_TO_MANY" -> FUNCTION_PATH_PREFIX + stepId + "/stream";
                     case "MANY_TO_ONE" -> FUNCTION_PATH_PREFIX + stepId + "/reduce";
+                    case "MANY_TO_MANY" -> FUNCTION_PATH_PREFIX + stepId + "/duplex";
                     default -> throw new IllegalStateException("Unexpected cardinality: " + cardinality);
                 };
                 compiledSteps.add(new CompiledStep(
@@ -512,9 +514,7 @@ public final class PolyglotCompiler {
             case "ONE_TO_ONE", "SIDE_EFFECT" -> "ONE_TO_ONE";
             case "ONE_TO_MANY", "EXPANSION" -> "ONE_TO_MANY";
             case "MANY_TO_ONE", "REDUCTION" -> "MANY_TO_ONE";
-            case "MANY_TO_MANY" -> throw new IllegalArgumentException(
-                "Step '" + stepName + "' uses MANY_TO_MANY cardinality; full-duplex MANY_TO_MANY streaming "
-                    + "is intentionally deferred from the initial polyglot delivery surface (ADR-0092)");
+            case "MANY_TO_MANY" -> "MANY_TO_MANY";
             default -> throw new IllegalArgumentException(
                 "Step '" + stepName + "' declares unsupported polyglot cardinality '" + raw + "'");
         };
