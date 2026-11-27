@@ -535,6 +535,24 @@ final class TypeScriptStubRenderer {
               res.end(body);
             }
 
+            function writeChunkWithBackpressure(res: http.ServerResponse, chunk: string): Promise<boolean> {
+              if (res.destroyed || res.writableEnded) return Promise.resolve(false);
+              if (res.write(chunk)) return Promise.resolve(true);
+              return new Promise((resolve, reject) => {
+                const cleanup = () => {
+                  res.off('drain', onDrain);
+                  res.off('close', onClose);
+                  res.off('error', onError);
+                };
+                const onDrain = () => { cleanup(); resolve(true); };
+                const onClose = () => { cleanup(); resolve(false); };
+                const onError = (err: Error) => { cleanup(); reject(err); };
+                res.once('drain', onDrain);
+                res.once('close', onClose);
+                res.once('error', onError);
+              });
+            }
+
             export interface HostOptions {
               readonly port?: number;
               readonly host?: string;
@@ -659,10 +677,13 @@ final class TypeScriptStubRenderer {
                     sb.append("        res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Transfer-Encoding': 'chunked' });\n");
                     sb.append("        res.flushHeaders();\n");
                     sb.append("        const rl = readline.createInterface({ input: req, crlfDelay: Infinity });\n");
+                    sb.append("        const lineIterator = rl[Symbol.asyncIterator]();\n");
                     sb.append("        async function* streamInputs() {\n");
                     sb.append("          let sawComplete = false;\n");
-                    sb.append("          for await (const line of rl) {\n");
-                    sb.append("            const trimmed = line.trim();\n");
+                    sb.append("          while (true) {\n");
+                    sb.append("            const next = await lineIterator.next();\n");
+                    sb.append("            if (next.done) break;\n");
+                    sb.append("            const trimmed = next.value.trim();\n");
                     sb.append("            if (!trimmed) continue;\n");
                     sb.append("            const frame = parseWithRawNumbers(trimmed) as Record<string, unknown>;\n");
                     sb.append("            if (frame.event === 'complete') { sawComplete = true; break; }\n");
@@ -677,19 +698,17 @@ final class TypeScriptStubRenderer {
                     sb.append("        try {\n");
                     sb.append("          let itemCount = 0;\n");
                     sb.append("          for await (const item of handlers.").append(step.handlerKey()).append("(streamInputs(), ctx)) {\n");
-                    sb.append("            if (res.destroyed || res.writableEnded) return;\n");
                     sb.append("            itemCount += 1;\n");
-                    sb.append("            res.write(JSON.stringify({ event: 'item', outputTypeId: '").append(escapeJs(step.outputCanonicalTypeId()))
+                    sb.append("            const written = await writeChunkWithBackpressure(res, JSON.stringify({ event: 'item', outputTypeId: '").append(escapeJs(step.outputCanonicalTypeId()))
                         .append("', payload: encodeValue({ kind: 'named', id: '").append(escapeJs(step.outputCanonicalTypeId()))
                         .append("' }, item) }) + '\\n');\n");
+                    sb.append("            if (!written) return;\n");
                     sb.append("          }\n");
-                    sb.append("          if (!res.destroyed && !res.writableEnded) {\n");
-                    sb.append("            res.write(JSON.stringify({ event: 'complete', itemCount }) + '\\n');\n");
-                    sb.append("          }\n");
+                    sb.append("          await writeChunkWithBackpressure(res, JSON.stringify({ event: 'complete', itemCount }) + '\\n');\n");
                     sb.append("        } catch (err) {\n");
                     sb.append("          if (!res.destroyed && !res.writableEnded) {\n");
                     sb.append("            const f = classifyFailure(err);\n");
-                    sb.append("            res.write(JSON.stringify({ event: 'error', ...f }) + '\\n');\n");
+                    sb.append("            await writeChunkWithBackpressure(res, JSON.stringify({ event: 'error', ...f }) + '\\n').catch(() => undefined);\n");
                     sb.append("          }\n");
                     sb.append("        } finally {\n");
                     sb.append("          rl.close();\n");

@@ -458,8 +458,13 @@ final class PythonStubRenderer {
         sb.append("                if buf.strip():\n");
         sb.append("                    yield buf\n");
         sb.append("            else:\n");
-        sb.append("                for line in self._read_body().splitlines():\n");
-        sb.append("                    yield line\n\n");
+        sb.append("                remaining = int(self.headers.get('Content-Length', '0'))\n");
+        sb.append("                while remaining > 0:\n");
+        sb.append("                    line = self.rfile.readline(remaining)\n");
+        sb.append("                    if not line:\n");
+        sb.append("                        break\n");
+        sb.append("                    remaining -= len(line)\n");
+        sb.append("                    yield line.rstrip(b'\\r\\n')\n\n");
         sb.append("        def do_POST(self) -> None:\n");
         sb.append("            path = self.path.split('?', 1)[0]\n");
 
@@ -555,9 +560,11 @@ final class PythonStubRenderer {
                     sb.append("                    return\n");
                     sb.append("                ctx = t.FunctionContext(step_id='").append(escapePy(step.stepId()))
                         .append("', step_index=").append(step.stepIndex()).append(")\n");
+                    sb.append("                self.close_connection = True\n");
                     sb.append("                self.send_response(200)\n");
                     sb.append("                self.send_header('Content-Type', 'application/x-ndjson')\n");
                     sb.append("                self.send_header('Transfer-Encoding', 'chunked')\n");
+                    sb.append("                self.send_header('Connection', 'close')\n");
                     sb.append("                self.end_headers()\n");
                     sb.append("                def write_chunk(obj: Any) -> None:\n");
                     sb.append("                    line = _dumps_canonical(obj) + b'\\n'\n");

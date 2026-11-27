@@ -320,19 +320,33 @@ class PolyglotCompilerTest {
         pb.environment().put("TPF_SECRET", SHARED_SECRET);
         Process proc = pb.start();
         try {
-            String readyLine = null;
-            try (var reader = proc.inputReader(StandardCharsets.UTF_8)) {
-                long deadline = System.currentTimeMillis() + 10_000;
-                while (System.currentTimeMillis() < deadline) {
-                    String line = reader.readLine();
-                    if (line == null) break;
-                    if (line.startsWith("READY ")) {
-                        readyLine = line.substring("READY ".length()).trim();
-                        break;
+            StringBuilder startupOutput = new StringBuilder();
+            java.util.concurrent.CompletableFuture<String> readyFuture = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try (var reader = proc.inputReader(StandardCharsets.UTF_8)) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        synchronized (startupOutput) {
+                            startupOutput.append(line).append('\n');
+                        }
+                        if (line.startsWith("READY ")) {
+                            return line.substring("READY ".length()).trim();
+                        }
                     }
+                    return null;
+                } catch (java.io.IOException e) {
+                    return null;
+                }
+            });
+            String readyLine;
+            try {
+                readyLine = readyFuture.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException timeout) {
+                proc.destroyForcibly();
+                synchronized (startupOutput) {
+                    throw new AssertionError("Duplex host timed out waiting for READY URL; output:\n" + startupOutput, timeout);
                 }
             }
-            assertNotNull(readyLine, "Duplex host failed to print READY URL");
+            assertNotNull(readyLine, "Duplex host failed to print READY URL; output:\n" + startupOutput);
             URI uri = URI.create(readyLine);
             String path = "/tpf/functions/stream-transform/duplex";
 
