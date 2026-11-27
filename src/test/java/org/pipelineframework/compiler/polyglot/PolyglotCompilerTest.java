@@ -227,7 +227,7 @@ class PolyglotCompilerTest {
     }
 
     @Test
-    void rejectsManyToManyWithExplicitAdr0092Message(@TempDir Path temp) throws IOException {
+    void compilesAndExecutesFullDuplexManyToManyInterleavedOnTypeScriptAndPython(@TempDir Path temp) throws Exception {
         Path yaml = temp.resolve("m2m.yaml");
         Files.writeString(yaml, """
             version: 3
@@ -236,20 +236,251 @@ class PolyglotCompilerTest {
             transport: LOCAL
             platform: COMPUTE
             types:
-              Frame:
+              InFrame:
                 fields:
-                  - name: id
-                    type: string
+                  - name: seq
+                    type: int64
+                  - name: amount
+                    type: decimal
+              OutFrame:
+                fields:
+                  - name: seq
+                    type: int64
+                  - name: doubledAmount
+                    type: decimal
             steps:
-              - name: Echo Stream
+              - name: Stream Transform
                 cardinality: MANY_TO_MANY
-                input: Frame
-                output: Frame
+                input: InFrame
+                output: OutFrame
             """);
-        IllegalArgumentException err = assertThrows(IllegalArgumentException.class,
-            () -> PolyglotCompiler.compile(PolyglotCompiler.Target.TYPESCRIPT, yaml, temp.resolve("out")));
-        assertTrue(err.getMessage().contains("MANY_TO_MANY"));
-        assertTrue(err.getMessage().contains("ADR-0092"));
+
+        Path tsOut = temp.resolve("duplex-ts");
+        Path pyOut = temp.resolve("duplex-py");
+        PolyglotCompiler.compile(PolyglotCompiler.Target.TYPESCRIPT, yaml, tsOut);
+        PolyglotCompiler.compile(PolyglotCompiler.Target.PYTHON, yaml, pyOut);
+
+        JsonObject tsManifest = JsonParser.parseString(
+            Files.readString(tsOut.resolve(PolyglotCompiler.MANIFEST_RELATIVE_PATH))).getAsJsonObject();
+        JsonObject step0 = tsManifest.getAsJsonArray("steps").get(0).getAsJsonObject();
+        assertEquals("MANY_TO_MANY", step0.get("cardinality").getAsString());
+        assertEquals("/tpf/functions/stream-transform/duplex", step0.get("endpointPath").getAsString());
+
+        String tsTypes = Files.readString(tsOut.resolve("types.ts"));
+        assertTrue(tsTypes.contains("(inputs: AsyncIterable<InFrame>, ctx: FunctionContext) => AsyncIterable<OutFrame>"));
+        String pyTypes = Files.readString(pyOut.resolve("types.py"));
+        assertTrue(pyTypes.contains("def stream_transform(self, inputs: Iterator[InFrame], ctx: FunctionContext) -> Iterator[OutFrame]:"));
+
+        // Live Node TypeScript full-duplex host
+        Path tsRunner = tsOut.resolve("run.ts");
+        Files.writeString(tsRunner, """
+            import { startAppHost } from './host.ts';
+            import type { FunctionHandlers } from './types.ts';
+            const handlers: FunctionHandlers = {
+              async *streamTransform(inputs) {
+                for await (const frame of inputs) {
+                  yield { seq: frame.seq + 1n, doubledAmount: frame.amount };
+                }
+              },
+            };
+            const running = await startAppHost(handlers, { sharedSecret: process.env.TPF_SECRET! });
+            console.log('READY ' + running.baseUrl);
+            process.on('SIGTERM', async () => { await running.close(); process.exit(0); });
+            """);
+        verifyLiveInterleavedDuplex(List.of("node", tsRunner.toString()), tsOut);
+
+        // Live Python full-duplex host
+        Path pyPkg = temp.resolve("py_duplex_pkg");
+        Files.createDirectories(pyPkg);
+        Files.writeString(pyPkg.resolve("__init__.py"), "");
+        Files.copy(pyOut.resolve("types.py"), pyPkg.resolve("types.py"));
+        Files.copy(pyOut.resolve("host.py"), pyPkg.resolve("host.py"));
+        Path pyRunner = temp.resolve("run_duplex.py");
+        Files.writeString(pyRunner, """
+            import os, signal, sys, time
+            from py_duplex_pkg import host, types as t
+            class Handlers:
+                def stream_transform(self, inputs, ctx):
+                    for frame in inputs:
+                        yield t.OutFrame(seq=frame.seq + 1, doubledAmount=frame.amount)
+            running = host.start_app_host(Handlers(), shared_secret=os.environ['TPF_SECRET'])
+            print('READY ' + running.base_url, flush=True)
+            def stop(_s, _f):
+                running.close()
+                sys.exit(0)
+            signal.signal(signal.SIGTERM, stop)
+            while True:
+                time.sleep(0.2)
+            """);
+        verifyLiveInterleavedDuplex(List.of("python3", pyRunner.toString()), temp);
+    }
+
+    private static void verifyLiveInterleavedDuplex(List<String> command, Path workDir) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder(command).directory(workDir.toFile()).redirectErrorStream(true);
+        pb.environment().put("TPF_SECRET", SHARED_SECRET);
+        Process proc = pb.start();
+        try {
+            StringBuilder startupOutput = new StringBuilder();
+            java.util.concurrent.CompletableFuture<String> readyFuture = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try (var reader = proc.inputReader(StandardCharsets.UTF_8)) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        synchronized (startupOutput) {
+                            startupOutput.append(line).append('\n');
+                        }
+                        if (line.startsWith("READY ")) {
+                            return line.substring("READY ".length()).trim();
+                        }
+                    }
+                    return null;
+                } catch (java.io.IOException e) {
+                    return null;
+                }
+            });
+            String readyLine;
+            try {
+                readyLine = readyFuture.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException timeout) {
+                proc.destroyForcibly();
+                synchronized (startupOutput) {
+                    throw new AssertionError("Duplex host timed out waiting for READY URL; output:\n" + startupOutput, timeout);
+                }
+            }
+            assertNotNull(readyLine, "Duplex host failed to print READY URL; output:\n" + startupOutput);
+            URI uri = URI.create(readyLine);
+            String path = "/tpf/functions/stream-transform/duplex";
+
+            // True full-duplex interleaved exchange over raw HTTP/1.1 chunked socket:
+            // Send item #1 ONLY, receive output #1 BEFORE sending item #2!
+            String ts = Instant.now().toString();
+            String nonce = UUID.randomUUID().toString();
+            String sig = TransitionWorkerSignature.sign(
+                SHARED_SECRET, "POST", path, ts, nonce, "STREAMING-NDJSON-V1".getBytes(StandardCharsets.UTF_8));
+            try (var socket = new java.net.Socket(uri.getHost(), uri.getPort())) {
+                socket.setTcpNoDelay(true);
+                socket.setSoTimeout(5_000);
+                var out = socket.getOutputStream();
+                var in = new java.io.BufferedInputStream(socket.getInputStream());
+                String headers = "POST " + path + " HTTP/1.1\r\n"
+                    + "Host: " + uri.getHost() + ":" + uri.getPort() + "\r\n"
+                    + "Content-Type: application/x-ndjson\r\n"
+                    + "Accept: application/x-ndjson\r\n"
+                    + "Transfer-Encoding: chunked\r\n"
+                    + "Connection: close\r\n"
+                    + TransitionWorkerSignature.TIMESTAMP_HEADER + ": " + ts + "\r\n"
+                    + TransitionWorkerSignature.NONCE_HEADER + ": " + nonce + "\r\n"
+                    + TransitionWorkerSignature.SIGNATURE_HEADER + ": " + sig + "\r\n\r\n";
+                out.write(headers.getBytes(StandardCharsets.US_ASCII));
+                out.flush();
+
+                // Write item #1 (keep request stream open!)
+                writeHttpChunk(out,
+                    "{\"event\":\"item\",\"inputTypeId\":\"InFrame\",\"payload\":{\"seq\":9007199254740993,\"amount\":99999999999999999999.123456789}}\n");
+
+                // Read HTTP 200 headers
+                StringBuilder respHdr = new StringBuilder();
+                int b;
+                while ((b = in.read()) != -1) {
+                    respHdr.append((char) b);
+                    if (respHdr.toString().endsWith("\r\n\r\n")) break;
+                }
+                assertTrue(respHdr.toString().startsWith("HTTP/1.1 200"), respHdr.toString());
+
+                // Read output item #1 BEFORE sending item #2!
+                ChunkedNdjsonReader reader = new ChunkedNdjsonReader(in);
+                String out1 = reader.nextFrame().orElseThrow(() -> new AssertionError("Expected output frame #1"));
+                assertTrue(out1.contains("\"event\":\"item\""), out1);
+                assertTrue(out1.contains("9007199254740994"), "Exact int64 required: " + out1);
+                assertTrue(out1.contains("99999999999999999999.123456789"), "Exact decimal required: " + out1);
+
+                // Now send item #2 + complete sentinel + 0-chunk
+                writeHttpChunk(out,
+                    "{\"event\":\"item\",\"inputTypeId\":\"InFrame\",\"payload\":{\"seq\":41,\"amount\":12.50}}\n");
+                writeHttpChunk(out, "{\"event\":\"complete\"}\n");
+                out.write("0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                out.flush();
+
+                String out2 = reader.nextFrame().orElseThrow(() -> new AssertionError("Expected output frame #2"));
+                assertTrue(out2.contains("42") && out2.contains("12.5"), out2);
+                String complete = reader.nextFrame().orElseThrow(() -> new AssertionError("Expected complete frame"));
+                assertTrue(complete.contains("\"event\":\"complete\"") && complete.contains("\"itemCount\":2"), complete);
+            }
+        } finally {
+            proc.destroy();
+            if (!proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                proc.destroyForcibly();
+            }
+        }
+    }
+
+    private static void writeHttpChunk(java.io.OutputStream out, String frame) throws IOException {
+        byte[] bytes = frame.getBytes(StandardCharsets.UTF_8);
+        out.write((Integer.toHexString(bytes.length) + "\r\n").getBytes(StandardCharsets.US_ASCII));
+        out.write(bytes);
+        out.write("\r\n".getBytes(StandardCharsets.US_ASCII));
+        out.flush();
+    }
+
+    private static final class ChunkedNdjsonReader {
+        private final java.io.BufferedInputStream in;
+        private final java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        private boolean eof;
+
+        private ChunkedNdjsonReader(java.io.BufferedInputStream in) {
+            this.in = in;
+        }
+
+        private java.util.Optional<String> nextFrame() throws IOException {
+            while (true) {
+                byte[] current = buffer.toByteArray();
+                for (int i = 0; i < current.length; i++) {
+                    if (current[i] == '\n') {
+                        String frame = new String(current, 0, i, StandardCharsets.UTF_8).trim();
+                        buffer.reset();
+                        if (i + 1 < current.length) {
+                            buffer.write(current, i + 1, current.length - i - 1);
+                        }
+                        if (!frame.isEmpty()) {
+                            return java.util.Optional.of(frame);
+                        }
+                        current = buffer.toByteArray();
+                        i = -1;
+                    }
+                }
+                if (eof) {
+                    if (current.length == 0) {
+                        return java.util.Optional.empty();
+                    }
+                    String trailing = new String(current, StandardCharsets.UTF_8).trim();
+                    buffer.reset();
+                    return trailing.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(trailing);
+                }
+                StringBuilder sizeHex = new StringBuilder();
+                int c;
+                while ((c = in.read()) != -1) {
+                    if (c == '\r') {
+                        in.read();
+                        break;
+                    }
+                    sizeHex.append((char) c);
+                }
+                if (sizeHex.isEmpty()) {
+                    eof = true;
+                    continue;
+                }
+                int sz = Integer.parseInt(sizeHex.toString().trim().split(";", 2)[0], 16);
+                if (sz == 0) {
+                    in.read();
+                    in.read();
+                    eof = true;
+                    continue;
+                }
+                byte[] data = in.readNBytes(sz);
+                in.read();
+                in.read();
+                buffer.write(data);
+            }
+        }
     }
 
     @Test

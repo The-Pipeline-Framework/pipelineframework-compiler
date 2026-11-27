@@ -181,8 +181,7 @@ public class PipelineContractMetadataGenerator {
             case "ONE_TO_ONE", "SIDE_EFFECT" -> "ONE_TO_ONE";
             case "ONE_TO_MANY", "EXPANSION" -> "ONE_TO_MANY";
             case "MANY_TO_ONE", "REDUCTION" -> "MANY_TO_ONE";
-            case "MANY_TO_MANY" -> throw new IllegalArgumentException(
-                "Full-duplex MANY_TO_MANY streaming is intentionally deferred from the initial polyglot delivery surface (ADR-0092)");
+            case "MANY_TO_MANY" -> "MANY_TO_MANY";
             default -> throw new IllegalArgumentException("Unsupported polyglot step cardinality: " + raw);
         };
     }
